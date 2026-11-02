@@ -8,6 +8,7 @@ import * as THREE from 'three';
  * - Rust-orange tunic with belt & silver buckle
  * - Leather backpack with rolled bedroll strapped on top
  * - Sturdy leather boots and a wooden walking staff
+ * - Supports both hiking/waddling on land and swimming/treading in ponds & rivers!
  */
 export class DwarfCharacter {
   public readonly root = new THREE.Group();
@@ -17,9 +18,15 @@ export class DwarfCharacter {
   private leftArm = new THREE.Group();
   private rightArm = new THREE.Group();
   private headGroup = new THREE.Group();
+  private handStaff!: THREE.Mesh;
+  private stowedStaff!: THREE.Mesh;
+  private swimRippleRing!: THREE.Mesh;
+  private swimOuterRing!: THREE.Mesh;
 
   private walkPhase = 0;
-  public heading = 0; // Radians around Y axis (0 = facing -Z / North)
+  private swimTime = 0;
+  private swimBlend = 0; // Smooth 0..1 transition between land stance and swimming posture
+  public heading = 0;    // Radians around Y axis
 
   constructor() {
     this.buildMesh();
@@ -90,7 +97,16 @@ export class DwarfCharacter {
     bedroll.rotation.z = Math.PI / 2;
     bedroll.position.set(0, 0.29, 0.02);
 
-    packGroup.add(mainBag, flap, packBuckle, bedroll);
+    // Stowed walking staff on backpack (shown while swimming so hands are free!)
+    this.stowedStaff = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026, 0.022, 1.25, 8),
+      matStaff
+    );
+    this.stowedStaff.position.set(0.05, 0.12, -0.16);
+    this.stowedStaff.rotation.z = 0.52;
+    this.stowedStaff.visible = false;
+
+    packGroup.add(mainBag, flap, packBuckle, bedroll, this.stowedStaff);
     this.bodyGroup.add(packGroup);
 
     // --- HEAD, BEARD & POINTED GREEN HAT ---
@@ -134,11 +150,13 @@ export class DwarfCharacter {
       arm.add(sleeve, hand);
 
       if (isRight) {
-        // Wooden walking stick held in right hand
-        const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.022, 1.32, 8), matStaff);
-        staff.position.set(0, -0.12, 0.12);
-        staff.rotation.x = 0.18;
-        arm.add(staff);
+        this.handStaff = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.026, 0.022, 1.32, 8),
+          matStaff
+        );
+        this.handStaff.position.set(0, -0.12, 0.12);
+        this.handStaff.rotation.x = 0.18;
+        arm.add(this.handStaff);
       }
       return arm;
     };
@@ -153,9 +171,38 @@ export class DwarfCharacter {
 
     this.bodyGroup.add(this.leftArm, this.rightArm);
 
+    // --- SWIMMING WATER WAKE / FOAM RINGS ---
+    const ringGeo1 = new THREE.RingGeometry(0.42, 0.56, 24);
+    ringGeo1.rotateX(-Math.PI / 2);
+    const ringMat1 = new THREE.MeshBasicMaterial({
+      color: 0xe8f7ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+    });
+    this.swimRippleRing = new THREE.Mesh(ringGeo1, ringMat1);
+    this.swimRippleRing.position.y = 0.56;
+    this.root.add(this.swimRippleRing);
+
+    const ringGeo2 = new THREE.RingGeometry(0.62, 0.72, 24);
+    ringGeo2.rotateX(-Math.PI / 2);
+    const ringMat2 = new THREE.MeshBasicMaterial({
+      color: 0xd0efff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+    });
+    this.swimOuterRing = new THREE.Mesh(ringGeo2, ringMat2);
+    this.swimOuterRing.position.y = 0.55;
+    this.root.add(this.swimOuterRing);
+
     // Enable shadow casting & receiving across all dwarf parts
     this.root.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
+      if (
+        obj instanceof THREE.Mesh &&
+        obj !== this.swimRippleRing &&
+        obj !== this.swimOuterRing
+      ) {
         obj.castShadow = true;
         obj.receiveShadow = true;
       }
@@ -163,7 +210,7 @@ export class DwarfCharacter {
   }
 
   /**
-   * Updates position, ground alignment, and procedural waddle walk animation.
+   * Updates position, ground/water alignment, and either walking or swimming animation.
    */
   public update(
     dt: number,
@@ -171,48 +218,109 @@ export class DwarfCharacter {
     worldY: number,
     worldZ: number,
     moveSpeed: number,
-    targetHeading: number | null
+    targetHeading: number | null,
+    isSwimming = false
   ): void {
     this.root.position.set(worldX, worldY, worldZ);
 
     if (targetHeading !== null) {
-      // Smooth shortest-angle rotation toward movement direction
       let diff = targetHeading - this.heading;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.heading += diff * Math.min(1, dt * 12);
+      this.heading += diff * Math.min(1, dt * (isSwimming ? 7 : 12));
     }
 
-    // Our dwarf's front (+Z in local mesh) faces the movement vector
     this.root.rotation.y = this.heading;
 
+    // Smoothly blend in/out of swimming state
+    const targetBlend = isSwimming ? 1 : 0;
+    this.swimBlend = THREE.MathUtils.lerp(this.swimBlend, targetBlend, Math.min(1, dt * 8));
+
+    // Stow walking stick on backpack while swimming so hands can paddle
+    this.handStaff.visible = !isSwimming;
+    this.stowedStaff.visible = isSwimming;
+
     const isMoving = moveSpeed > 0.15;
-    if (isMoving) {
-      const cadence = THREE.MathUtils.clamp(moveSpeed * 1.45, 4.0, 14.0);
-      this.walkPhase += dt * cadence;
 
-      const stride = Math.sin(this.walkPhase);
-      const bounce = Math.abs(Math.cos(this.walkPhase));
+    if (isSwimming) {
+      this.swimTime += dt * (isMoving ? 5.5 : 2.6);
+      const stroke = Math.sin(this.swimTime);
+      const sweep = Math.cos(this.swimTime);
+      const kick = Math.sin(this.swimTime * 2.0);
 
-      this.leftLeg.rotation.x = stride * 0.55;
-      this.rightLeg.rotation.x = -stride * 0.55;
-      this.leftArm.rotation.x = -stride * 0.42;
-      this.rightArm.rotation.x = stride * 0.35;
+      // Tilt body forward horizontally when swimming forward, or semi-upright when treading water
+      const targetPitch = isMoving ? 0.92 : 0.34;
+      this.bodyGroup.rotation.x = THREE.MathUtils.lerp(
+        this.bodyGroup.rotation.x,
+        targetPitch,
+        Math.min(1, dt * 8)
+      );
+      this.bodyGroup.rotation.z = stroke * (isMoving ? 0.09 : 0.04);
 
-      // Cheerful dwarf waddle sway & vertical step bob
-      this.bodyGroup.position.y = bounce * 0.065;
-      this.bodyGroup.rotation.z = stride * 0.055;
-      this.bodyGroup.rotation.x = 0.06; // Slight forward lean while hiking
+      // Keep head tilted up so face, beard, and hat stay clearly above water looking ahead!
+      this.headGroup.rotation.x = THREE.MathUtils.lerp(
+        this.headGroup.rotation.x,
+        isMoving ? -0.68 : -0.22,
+        Math.min(1, dt * 8)
+      );
+
+      // Buoyant bobbing on the water waves
+      this.bodyGroup.position.y = Math.sin(this.swimTime * 0.85) * 0.055;
+
+      // Breaststroke / dog-paddle arm sweep
+      this.leftArm.rotation.x = -1.15 + stroke * 0.68;
+      this.rightArm.rotation.x = -1.15 - stroke * 0.68;
+      this.leftArm.rotation.z = 0.48 + Math.max(0, sweep) * 0.52;
+      this.rightArm.rotation.z = -0.48 - Math.max(0, -sweep) * 0.52;
+
+      // Flutter kick legs behind
+      this.leftLeg.rotation.x = kick * 0.48;
+      this.rightLeg.rotation.x = -kick * 0.48;
+
+      // Animate foam wake rings on the water surface around the dwarf
+      const ring1Phase = (this.swimTime * 0.45) % 1;
+      const ring2Phase = (this.swimTime * 0.45 + 0.5) % 1;
+      this.swimRippleRing.scale.setScalar(0.85 + ring1Phase * (isMoving ? 1.1 : 0.65));
+      (this.swimRippleRing.material as THREE.MeshBasicMaterial).opacity =
+        (1.0 - ring1Phase) * 0.55 * this.swimBlend;
+
+      this.swimOuterRing.scale.setScalar(0.85 + ring2Phase * (isMoving ? 1.25 : 0.75));
+      (this.swimOuterRing.material as THREE.MeshBasicMaterial).opacity =
+        (1.0 - ring2Phase) * 0.4 * this.swimBlend;
     } else {
-      // Smoothly settle back to idle stance
+      // Fade out water ripple rings on land
+      (this.swimRippleRing.material as THREE.MeshBasicMaterial).opacity = 0;
+      (this.swimOuterRing.material as THREE.MeshBasicMaterial).opacity = 0;
+
       const damp = Math.min(1, dt * 10);
-      this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, damp);
-      this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, damp);
-      this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, 0, damp);
-      this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0, damp);
-      this.bodyGroup.position.y = THREE.MathUtils.lerp(this.bodyGroup.position.y, 0, damp);
-      this.bodyGroup.rotation.z = THREE.MathUtils.lerp(this.bodyGroup.rotation.z, 0, damp);
-      this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0, damp);
+      this.headGroup.rotation.x = THREE.MathUtils.lerp(this.headGroup.rotation.x, 0, damp);
+      this.leftArm.rotation.z = THREE.MathUtils.lerp(this.leftArm.rotation.z, 0.18, damp);
+      this.rightArm.rotation.z = THREE.MathUtils.lerp(this.rightArm.rotation.z, -0.18, damp);
+
+      if (isMoving) {
+        const cadence = THREE.MathUtils.clamp(moveSpeed * 1.45, 4.0, 14.0);
+        this.walkPhase += dt * cadence;
+
+        const stride = Math.sin(this.walkPhase);
+        const bounce = Math.abs(Math.cos(this.walkPhase));
+
+        this.leftLeg.rotation.x = stride * 0.55;
+        this.rightLeg.rotation.x = -stride * 0.55;
+        this.leftArm.rotation.x = -stride * 0.42;
+        this.rightArm.rotation.x = stride * 0.35;
+
+        this.bodyGroup.position.y = bounce * 0.065;
+        this.bodyGroup.rotation.z = stride * 0.055;
+        this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0.06, damp);
+      } else {
+        this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, damp);
+        this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, damp);
+        this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, 0, damp);
+        this.rightArm.rotation.x = THREE.MathUtils.lerp(this.rightArm.rotation.x, 0, damp);
+        this.bodyGroup.position.y = THREE.MathUtils.lerp(this.bodyGroup.position.y, 0, damp);
+        this.bodyGroup.rotation.z = THREE.MathUtils.lerp(this.bodyGroup.rotation.z, 0, damp);
+        this.bodyGroup.rotation.x = THREE.MathUtils.lerp(this.bodyGroup.rotation.x, 0, damp);
+      }
     }
   }
 }

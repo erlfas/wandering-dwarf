@@ -132,11 +132,19 @@ export class ExplorerCamera {
     let actualSpeed = 0;
     let targetHeading: number | null = null;
 
+    // Check terrain depth vs water level to determine if the dwarf is swimming
+    const preGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+    const isSwimming =
+      this.config.enableWater &&
+      !this.config.blankClayMode &&
+      preGroundY < this.config.waterLevel - 0.38;
+
     if (moveLen > 0.001) {
       moveX /= moveLen;
       moveZ /= moveLen;
 
-      const modeSpeedMultiplier = this.config.cameraMode === 'free' ? 2.5 : 1.0;
+      const modeSpeedMultiplier =
+        this.config.cameraMode === 'free' ? 2.5 : isSwimming ? 0.78 : 1.0;
       actualSpeed = baseSpeed * modeSpeedMultiplier;
 
       this.playerPos.x += moveX * actualSpeed * dt;
@@ -144,11 +152,13 @@ export class ExplorerCamera {
       targetHeading = Math.atan2(moveX, moveZ);
     }
 
-    // Clamp player height to the rendered triangle surface (or shallow wading depth in rivers/ponds)
+    // Clamp player height to the rendered triangle surface (or buoyant swimming elevation in rivers/ponds)
     const groundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
-    this.playerPos.y = this.config.enableWater
-      ? Math.max(groundY, this.config.waterLevel - 0.32)
-      : groundY;
+    const swimSurfaceY = this.config.waterLevel - 0.54;
+    this.playerPos.y =
+      this.config.enableWater && !this.config.blankClayMode
+        ? Math.max(groundY, swimSurfaceY)
+        : groundY;
 
     // Always keep the dwarf visible unless explicitly unchecked in the debug panel
     this.dwarf.root.visible = this.config.showDwarfProxy;
@@ -158,7 +168,8 @@ export class ExplorerCamera {
       this.playerPos.y,
       this.playerPos.z,
       actualSpeed,
-      targetHeading
+      targetHeading,
+      isSwimming
     );
 
     // Smooth camera target follow
