@@ -1,0 +1,169 @@
+import GUI from 'lil-gui';
+import * as THREE from 'three';
+import { WorldConfig } from '../world/Config';
+import { ChunkManager } from '../world/ChunkManager';
+import { TerrainNoise } from '../world/TerrainNoise';
+
+export class DebugOverlay {
+  public readonly gui: GUI;
+
+  constructor(
+    config: WorldConfig,
+    noise: TerrainNoise,
+    chunkManager: ChunkManager,
+    fog: THREE.FogExp2,
+    getPlayerPos: () => THREE.Vector3
+  ) {
+    this.gui = new GUI({ title: 'World Planner (Phase 3)' });
+
+    const rebuild = () => {
+      const p = getPlayerPos();
+      chunkManager.rebuildAll(p.x, p.y, p.z);
+    };
+
+    // 1. Trees & Open Groves Folder
+    const forestFolder = this.gui.addFolder('Trees & Open Groves');
+    forestFolder
+      .add(config, 'enableTrees')
+      .name('Enable 3D Trees')
+      .onChange(rebuild);
+
+    forestFolder
+      .add(config, 'forestCoverage', 0.0, 0.85, 0.05)
+      .name('Grove vs Open Area')
+      .onFinishChange(rebuild);
+
+    forestFolder
+      .add(config, 'treeDensity', 0.1, 0.85, 0.05)
+      .name('Grove Sparseness')
+      .onFinishChange(rebuild);
+
+    forestFolder
+      .add(config, 'treeScale', 0.5, 1.8, 0.05)
+      .name('Tree Size')
+      .onFinishChange(rebuild);
+
+    // 2. Rivers & Ponds Folder
+    const waterFolder = this.gui.addFolder('Rivers & Ponds');
+    waterFolder
+      .add(config, 'enableWater')
+      .name('Enable Water')
+      .onChange(rebuild);
+
+    waterFolder
+      .add(config, 'waterLevel', -12, 6, 0.5)
+      .name('Water Level (m)')
+      .onFinishChange(rebuild);
+
+    waterFolder
+      .add(config, 'riverCarveStrength', 0, 1, 0.05)
+      .name('River Valley Carve')
+      .onFinishChange(rebuild);
+
+    waterFolder
+      .add(config, 'riverWidth', 6, 28, 1)
+      .name('River Width (m)')
+      .onFinishChange(rebuild);
+
+    waterFolder
+      .add(config, 'pondFrequency', 0, 1, 0.05)
+      .name('Pond Basin Frequency')
+      .onFinishChange(rebuild);
+
+    // 3. Meadow & 3D Grass Folder
+    const grassFolder = this.gui.addFolder('Meadow & 3D Grass');
+    grassFolder
+      .add(config, 'enableGrassBlades')
+      .name('3D Grass Blades')
+      .onChange(rebuild);
+
+    grassFolder
+      .add(config, 'enableFlowers')
+      .name('Wildflowers')
+      .onChange(rebuild);
+
+    grassFolder
+      .add(config, 'grassDensity', 400, 6000, 200)
+      .name('Tufts per Chunk')
+      .onFinishChange(rebuild);
+
+    grassFolder
+      .add(config, 'grassHeight', 0.4, 2.2, 0.05)
+      .name('Grass Height')
+      .onFinishChange(rebuild);
+
+    grassFolder
+      .add(config, 'windSpeed', 0, 5, 0.1)
+      .name('Wind Speed');
+
+    grassFolder
+      .add(config, 'windStrength', 0, 0.8, 0.02)
+      .name('Wind Gust Strength');
+
+    grassFolder
+      .add(config, 'blankClayMode')
+      .name('Blank Clay Mode (Phase 1)')
+      .onChange(rebuild);
+    grassFolder.close();
+
+    // 4. Terrain Noise & Hill Shape Folder
+    const terrainFolder = this.gui.addFolder('Hills & Valleys (Noise)');
+    terrainFolder
+      .add(config, 'seed', 1, 99999, 1)
+      .name('World Seed')
+      .onFinishChange((v: number) => {
+        noise.reseed(v);
+        rebuild();
+      });
+
+    terrainFolder
+      .add(config, 'macroAmplitude', 0, 80, 1)
+      .name('Broad Hill Height (m)')
+      .onFinishChange(rebuild);
+
+    terrainFolder
+      .add(config, 'mesoAmplitude', 0, 35, 0.5)
+      .name('Ridge / Knoll Height (m)')
+      .onFinishChange(rebuild);
+
+    terrainFolder
+      .add(config, 'domainWarpStrength', 0, 100, 1)
+      .name('Organic Hill Flow')
+      .onFinishChange(rebuild);
+    terrainFolder.close();
+
+    // 5. Debug & Camera
+    const debugFolder = this.gui.addFolder('Camera & Debug');
+    debugFolder
+      .add(config, 'cameraMode', ['dwarf', 'free'])
+      .name('Camera Mode (C)')
+      .listen();
+
+    debugFolder
+      .add(config, 'showDwarfProxy')
+      .name('Show Dwarf Proxy');
+
+    debugFolder
+      .add(config, 'wireframe')
+      .name('Wireframe Mesh (M)')
+      .listen()
+      .onChange((v: boolean) => {
+        chunkManager.material.wireframe = v;
+      });
+
+    debugFolder
+      .add(config, 'showChunkBorders')
+      .name('Show Chunk Borders')
+      .onChange((v: boolean) => {
+        chunkManager.setBordersVisible(v);
+      });
+
+    debugFolder
+      .add(config, 'fogDensity', 0, 0.008, 0.0002)
+      .name('Horizon Mist Density')
+      .onChange((v: number) => {
+        fog.density = v;
+      });
+    debugFolder.close();
+  }
+}

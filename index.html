@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Endless Procedural World — Phase 1 (Blank Terrain)</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!-- Compass & HUD matching concept art layout -->
+    <div id="hud">
+      <div id="compass-container" title="Compass">
+        <div class="compass-label north">N</div>
+        <div class="compass-label east">E</div>
+        <div class="compass-label south">S</div>
+        <div class="compass-label west">W</div>
+        <div id="compass-needle">
+          <div class="needle-north"></div>
+          <div class="needle-south"></div>
+        </div>
+      </div>
+
+      <!-- Treasure Score & Nearest Chest Tracker -->
+      <div id="treasure-hud">
+        <div class="chest-icon">🪙</div>
+        <div class="treasure-details">
+          <div class="score-row">
+            <span id="score-value">0</span>
+            <span class="score-unit">GOLD</span>
+          </div>
+          <div class="sub-row">
+            <span id="chests-value">0 Chests</span>
+            <span class="dot-sep">•</span>
+            <span id="nearest-chest-hint">Scanning...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating Pickup Toasts -->
+      <div id="pickup-toasts"></div>
+
+      <div id="stats-badge">
+        <div class="badge-header">
+          <div class="badge-title">PHASE 3: FOREST GROVES, PONDS &amp; RIVERS</div>
+          <button id="music-toggle" type="button" title="Toggle Background Music (P)">
+            ♪ Wandering Through the Pines
+          </button>
+        </div>
+        <div id="coords-readout">Pos: (0, 0) | Elev: 0.0m | Chunks: 0</div>
+        <div class="controls-hint">
+          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Arrows</kbd> Move</span>
+          <span><kbd>Shift</kbd> Sprint</span>
+          <span><kbd>Drag Mouse</kbd> Orbit Camera</span>
+          <span><kbd>Scroll</kbd> Zoom</span>
+          <span><kbd>V</kbd> Camera View</span>
+          <span><kbd>M</kbd> Wireframe</span>
+          <span><kbd>P</kbd> Music</span>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

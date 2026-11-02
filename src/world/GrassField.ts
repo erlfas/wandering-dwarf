@@ -1,0 +1,356 @@
+import * as THREE from 'three';
+import { WorldConfig } from './Config';
+import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+
+export interface GrassUniforms {
+  uTime: { value: number };
+  uWindSpeed: { value: number };
+  uWindStrength: { value: number };
+  uPlayerPos: { value: THREE.Vector3 };
+  uMaxDistance: { value: number };
+}
+
+/**
+ * Builds a shared 5-blade stylized grass tuft BufferGeometry.
+ * Each blade is a 3-segment curved, tapered ribbon arranged in a natural clump.
+ * uv.y goes from 0.0 at the ground root to 1.0 at the blade tip.
+ */
+function createGrassTuftGeometry(): THREE.BufferGeometry {
+  const bladesPerTuft = 5;
+  const segments = 3; // 3 vertical quads + 1 tip triangle = 7 vertices per blade
+
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let b = 0; b < bladesPerTuft; b++) {
+    const baseVertex = b * 7;
+    const angle = (b / bladesPerTuft) * Math.PI * 2 + (b % 2 === 0 ? 0.22 : -0.18);
+    const radiusOffset = b === 0 ? 0.0 : 0.14 + (b % 2) * 0.06;
+    const offsetX = Math.cos(angle) * radiusOffset;
+    const offsetZ = Math.sin(angle) * radiusOffset;
+
+    // Blade orientation and natural outward lean
+    const bladeYaw = angle + 0.35 * ((b % 3) - 1);
+    const cosY = Math.cos(bladeYaw);
+    const sinY = Math.sin(bladeYaw);
+    const lean = 0.14 + (b % 3) * 0.06;
+    const heightScale = 0.82 + ((b * 37) % 10) * 0.035;
+    const baseHalfWidth = 0.065;
+
+    for (let s = 0; s < segments; s++) {
+      const t = s / segments; // 0, 0.33, 0.66
+      const y = t * 0.58 * heightScale;
+      const curveForward = t * t * lean;
+      const halfW = baseHalfWidth * (1.0 - t * 0.55);
+
+      // Left & right points of the ribbon segment in local blade space
+      const lx = -halfW;
+      const rx = halfW;
+      const lz = curveForward;
+
+      // Rotate by bladeYaw and translate by clump offset
+      const wLx = offsetX + lx * cosY - lz * sinY;
+      const wLz = offsetZ + lx * sinY + lz * cosY;
+      const wRx = offsetX + rx * cosY - lz * sinY;
+      const wRz = offsetZ + rx * sinY + lz * cosY;
+
+      positions.push(wLx, y, wLz, wRx, y, wRz);
+      // Upward-biased normals so grass catches soft sunlight from all angles without harsh backfaces
+      normals.push(
+        -sinY * 0.25, 0.96, cosY * 0.25,
+        -sinY * 0.25, 0.96, cosY * 0.25
+      );
+      uvs.push(0, t, 1, t);
+    }
+
+    // Tip vertex (index + 6)
+    const tipY = 0.58 * heightScale;
+    const tipForward = lean;
+    const tipX = offsetX - tipForward * sinY;
+    const tipZ = offsetZ + tipForward * cosY;
+    positions.push(tipX, tipY, tipZ);
+    normals.push(0, 1, 0);
+    uvs.push(0.5, 1.0);
+
+    // Segment quads
+    for (let s = 0; s < segments - 1; s++) {
+      const row0 = baseVertex + s * 2;
+      const row1 = row0 + 2;
+      indices.push(row0, row0 + 1, row1);
+      indices.push(row0 + 1, row1 + 1, row1);
+    }
+
+    // Top triangle to tip
+    const lastRow = baseVertex + (segments - 1) * 2;
+    const tipIdx = baseVertex + 6;
+    indices.push(lastRow, lastRow + 1, tipIdx);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+/**
+ * Builds a tiny 3-blossom wildflower cluster geometry that sits among the grass tufts.
+ */
+function createWildflowerClusterGeometry(): THREE.BufferGeometry {
+  const geo = new THREE.ConeGeometry(0.085, 0.06, 5);
+  geo.rotateX(Math.PI); // Open petals upward
+  geo.translate(0, 0.42, 0);
+  // Set uv.y = 0.85 so flowers sway with the upper part of the grass blades
+  const uvAttr = geo.attributes.uv as THREE.BufferAttribute;
+  for (let i = 0; i < uvAttr.count; i++) {
+    uvAttr.setY(i, 0.85);
+  }
+  // Point normals upward for bright, cheerful petal lighting
+  const normAttr = geo.attributes.normal as THREE.BufferAttribute;
+  for (let i = 0; i < normAttr.count; i++) {
+    normAttr.setXYZ(i, 0, 1, 0);
+  }
+  return geo;
+}
+
+/**
+ * Creates a MeshStandardMaterial enhanced with vertex wind waves, dwarf push interaction,
+ * root-to-tip ambient occlusion/sunlit gradient, and smooth distance scale fade.
+ */
+export function createGrassMaterial(
+  uniforms: GrassUniforms,
+  isFlower = false
+): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: isFlower ? 0.55 : 0.78,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  });
+
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uWindSpeed = uniforms.uWindSpeed;
+    shader.uniforms.uWindStrength = uniforms.uWindStrength;
+    shader.uniforms.uPlayerPos = uniforms.uPlayerPos;
+    shader.uniforms.uMaxDistance = uniforms.uMaxDistance;
+
+    shader.vertexShader =
+      `
+      uniform float uTime;
+      uniform float uWindSpeed;
+      uniform float uWindStrength;
+      uniform vec3 uPlayerPos;
+      uniform float uMaxDistance;
+      varying float vBladeFrac;
+      ` + shader.vertexShader;
+
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `
+      #include <begin_vertex>
+      vBladeFrac = uv.y;
+
+      // World position of this grass instance's root
+      vec4 instWorldPos = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+
+      // Smoothly taper grass height to 0 near the outer grass radius so chunks never pop
+      float distToPlayer = length(instWorldPos.xz - uPlayerPos.xz);
+      float distFade = 1.0 - smoothstep(uMaxDistance * 0.72, uMaxDistance, distToPlayer);
+      transformed *= distFade;
+
+      // Rolling wind wave displacement (quadratic bend from root to tip)
+      float bendFactor = uv.y * uv.y;
+      float wavePhase = instWorldPos.x * 0.14 + instWorldPos.z * 0.11 + uTime * uWindSpeed;
+      float gust = sin(wavePhase) + 0.45 * cos(instWorldPos.x * 0.06 - instWorldPos.z * 0.08 + uTime * uWindSpeed * 0.7);
+      transformed.x += gust * uWindStrength * bendFactor;
+      transformed.z += cos(wavePhase * 0.85) * uWindStrength * 0.65 * bendFactor;
+
+      // Subtle dwarf push-away when walking through the grass
+      vec2 toBlade = instWorldPos.xz - uPlayerPos.xz;
+      float playerDist = length(toBlade);
+      if (playerDist < 1.35 && playerDist > 0.001) {
+        float push = (1.0 - playerDist / 1.35) * 0.55 * bendFactor;
+        vec2 pushDir = toBlade / playerDist;
+        transformed.x += pushDir.x * push;
+        transformed.z += pushDir.y * push;
+        transformed.y -= push * 0.35;
+      }
+      `
+    );
+
+    if (!isFlower) {
+      shader.fragmentShader =
+        `
+        varying float vBladeFrac;
+        ` + shader.fragmentShader;
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        // Root-to-tip gradient: darker mossy root AO blending into warm sunlit tips
+        vec3 rootTint = diffuseColor.rgb * 0.58;
+        vec3 tipTint = diffuseColor.rgb * vec3(1.22, 1.26, 0.92);
+        diffuseColor.rgb = mix(rootTint, tipTint, smoothstep(0.0, 1.0, vBladeFrac));
+        `
+      );
+    }
+  };
+
+  return mat;
+}
+
+// Shared geometries so all chunks reuse the same GPU vertex buffers
+let sharedTuftGeo: THREE.BufferGeometry | null = null;
+let sharedFlowerGeo: THREE.BufferGeometry | null = null;
+
+const FLOWER_PALETTE = [
+  new THREE.Color(0xfff9e6), // Crisp meadow daisy white
+  new THREE.Color(0xffd633), // Golden buttercup yellow
+  new THREE.Color(0x74b9ff), // Sky-blue forget-me-not
+  new THREE.Color(0xff9ff3), // Soft pink clover accent
+];
+
+export class ChunkGrass {
+  public readonly group = new THREE.Group();
+  private grassInstanced?: THREE.InstancedMesh;
+  private flowerInstanced?: THREE.InstancedMesh;
+
+  constructor(
+    cx: number,
+    cz: number,
+    size: number,
+    densityMultiplier: number,
+    config: WorldConfig,
+    noise: TerrainNoise,
+    grassMaterial: THREE.Material,
+    flowerMaterial: THREE.Material
+  ) {
+    if (!sharedTuftGeo) sharedTuftGeo = createGrassTuftGeometry();
+    if (!sharedFlowerGeo) sharedFlowerGeo = createWildflowerClusterGeometry();
+
+    const maxCount = Math.floor(config.grassDensity * densityMultiplier);
+    if (maxCount <= 0) return;
+
+    // Deterministic per-chunk PRNG
+    const chunkSeed = ((cx * 73856093) ^ (cz * 19349663) ^ config.seed) >>> 0;
+    const rng = createSeededRandom(chunkSeed);
+
+    const grassMesh = new THREE.InstancedMesh(sharedTuftGeo, grassMaterial, maxCount);
+    grassMesh.castShadow = false;
+    grassMesh.receiveShadow = true;
+
+    const maxFlowers = config.enableFlowers ? Math.floor(maxCount * 0.075) : 0;
+    const flowerMesh =
+      maxFlowers > 0
+        ? new THREE.InstancedMesh(sharedFlowerGeo, flowerMaterial, maxFlowers)
+        : undefined;
+
+    const dummy = new THREE.Object3D();
+    const normal = new THREE.Vector3();
+    const baseColor = new THREE.Color();
+    const flowerColor = new THREE.Color();
+
+    const worldOffsetX = cx * size;
+    const worldOffsetZ = cz * size;
+
+    let grassIdx = 0;
+    let flowerIdx = 0;
+
+    for (let i = 0; i < maxCount; i++) {
+      const lx = (rng() - 0.5) * size;
+      const lz = (rng() - 0.5) * size;
+      const wx = worldOffsetX + lx;
+      const wz = worldOffsetZ + lz;
+
+      noise.getNormal(wx, wz, normal);
+
+      // Skip very steep rocky slopes so dirt/rock ledges peek through naturally
+      if (normal.y < 0.72) continue;
+
+      const patch = noise.getMeadowPatch(wx, wz);
+      // Create natural clumping: slightly sparser in some pockets, thicker in lush patches
+      if (rng() > 0.35 + patch * 0.65) continue;
+
+      const wy = noise.getHeight(wx, wz);
+
+      // Keep 3D grass blades above pond & river shorelines so sandy banks stay clean
+      if (config.enableWater && wy < config.waterLevel + 0.52) continue;
+
+      dummy.position.set(lx, wy - 0.03, lz);
+      dummy.rotation.set(
+        (rng() - 0.5) * 0.15,
+        rng() * Math.PI * 2,
+        (rng() - 0.5) * 0.15
+      );
+
+      const scaleXZ = (0.75 + rng() * 0.65) * (0.85 + patch * 0.3);
+      const scaleY =
+        (0.65 + rng() * 0.75) *
+        (0.75 + patch * 0.45) *
+        config.grassHeight;
+      dummy.scale.set(scaleXZ, scaleY, scaleXZ);
+      dummy.updateMatrix();
+
+      grassMesh.setMatrixAt(grassIdx, dummy.matrix);
+
+      // Match the exact terrain surface color with slight per-tuft organic variation
+      noise.getSurfaceColor(wx, wy, wz, normal, baseColor);
+      baseColor.offsetHSL(
+        (rng() - 0.5) * 0.03,
+        (rng() - 0.5) * 0.08,
+        (rng() - 0.5) * 0.06
+      );
+      grassMesh.setColorAt(grassIdx, baseColor);
+      grassIdx++;
+
+      // Occasionally place a wildflower blossom in lush patches (matching concept art)
+      if (
+        flowerMesh &&
+        flowerIdx < maxFlowers &&
+        patch > 0.42 &&
+        rng() < 0.095
+      ) {
+        dummy.scale.setScalar(0.85 + rng() * 0.55);
+        dummy.updateMatrix();
+        flowerMesh.setMatrixAt(flowerIdx, dummy.matrix);
+
+        const palettePick =
+          rng() < 0.48
+            ? FLOWER_PALETTE[0] // White daisies most common
+            : rng() < 0.82
+            ? FLOWER_PALETTE[1] // Yellow buttercups
+            : rng() < 0.94
+            ? FLOWER_PALETTE[2] // Sky-blue forget-me-nots
+            : FLOWER_PALETTE[3];
+        flowerColor.copy(palettePick);
+        flowerMesh.setColorAt(flowerIdx, flowerColor);
+        flowerIdx++;
+      }
+    }
+
+    grassMesh.count = grassIdx;
+    grassMesh.instanceMatrix.needsUpdate = true;
+    if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+    this.grassInstanced = grassMesh;
+    this.group.add(grassMesh);
+
+    if (flowerMesh && flowerIdx > 0) {
+      flowerMesh.count = flowerIdx;
+      flowerMesh.instanceMatrix.needsUpdate = true;
+      if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
+      this.flowerInstanced = flowerMesh;
+      this.group.add(flowerMesh);
+    }
+  }
+
+  public dispose(): void {
+    this.grassInstanced?.dispose();
+    this.flowerInstanced?.dispose();
+  }
+}
