@@ -65,6 +65,7 @@ interface FishInstance {
   attractedToBobber: boolean;
   nibbleCount: number;
   nibbleTimer: number;
+  fleeTimer: number;
 }
 
 /**
@@ -667,7 +668,12 @@ export class FishingAndFishManager {
 
     // 3. Update active Fishing Mode state machine & 3D visuals
     if (this.state !== 'inactive') {
-      this.updateFishingState(dt, elapsedTime, playerPos, aimForwardInput, aimRightInput);
+      const playerGroundY = this.sampleGroundHeight(playerPos.x, playerPos.z);
+      if (this.config.enableWater && playerGroundY < this.config.waterLevel - 0.38) {
+        this.exitFishingMode();
+      } else {
+        this.updateFishingState(dt, elapsedTime, playerPos, aimForwardInput, aimRightInput);
+      }
     }
 
     // 4. Animate water splash rings
@@ -822,12 +828,18 @@ export class FishingAndFishManager {
       attractedToBobber: false,
       nibbleCount: 0,
       nibbleTimer: 0,
+      fleeTimer: 0,
     };
   }
 
   private updateSwimmingFish(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
     const waterY = this.config.waterLevel;
     const maxSimDistSq = 68 * 68;
+    const playerGroundY = this.sampleGroundHeight(playerPos.x, playerPos.z);
+    const isPlayerInWater =
+      this.config.enableWater && !this.config.blankClayMode && playerGroundY < waterY - 0.08;
+    const scareRadius = 8.2;
+    const scareRadiusSq = scareRadius * scareRadius;
 
     for (const fishList of this.activeChunkFish.values()) {
       for (const f of fishList) {
@@ -842,10 +854,67 @@ export class FishingAndFishManager {
 
         const dxP = playerPos.x - f.pos.x;
         const dzP = playerPos.z - f.pos.z;
-        if (dxP * dxP + dzP * dzP > maxSimDistSq) continue;
+        const distSqToPlayer = dxP * dxP + dzP * dzP;
+        if (distSqToPlayer > maxSimDistSq) continue;
 
-        // Check if fish is attracted to the floating bobber
-        if (f.attractedToBobber && this.state === 'floating') {
+        if (f.fleeTimer > 0) {
+          f.fleeTimer = Math.max(0, f.fleeTimer - dt);
+        }
+
+        // Dart away if the dwarf wades or swims near the fish!
+        if (isPlayerInWater && distSqToPlayer < scareRadiusSq) {
+          if (f.fleeTimer <= 0.1 && distSqToPlayer < 5.5 * 5.5 && this.splashTimer <= 0.2) {
+            this.triggerWaterSplash(f.pos.x, f.pos.z);
+          }
+          f.fleeTimer = 1.1;
+          if (f.attractedToBobber) {
+            f.attractedToBobber = false;
+            f.nibbleCount = 0;
+            if (this.attractingFish === f) {
+              this.attractingFish = null;
+            }
+          }
+        }
+
+        if (f.fleeTimer > 0) {
+          // Swim rapidly away from the dwarf, steering around shallow banks so fish stay in deep water
+          const awayAngle = Math.atan2(-dxP, -dzP);
+          let bestAngle = awayAngle;
+          let deepestGround = Infinity;
+          const candidateOffsets = [0, 0.45, -0.45, 0.95, -0.95, 1.5, -1.5, 2.2, -2.2];
+          for (let i = 0; i < candidateOffsets.length; i++) {
+            const testAng = awayAngle + candidateOffsets[i];
+            const probeX = f.pos.x + Math.sin(testAng) * 1.35;
+            const probeZ = f.pos.z + Math.cos(testAng) * 1.35;
+            const gY = this.sampleGroundHeight(probeX, probeZ);
+            if (gY < waterY - 0.28) {
+              bestAngle = testAng;
+              deepestGround = gY;
+              break;
+            }
+            if (gY < deepestGround) {
+              deepestGround = gY;
+              bestAngle = testAng;
+            }
+          }
+
+          let diff = bestAngle - f.heading;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          f.heading += diff * Math.min(1, dt * 11.0);
+
+          const distToPlayer = Math.sqrt(distSqToPlayer);
+          const urgency = THREE.MathUtils.clamp(1.0 - distToPlayer / (scareRadius + 2.0), 0.25, 1.0);
+          const fleeSpeed = f.speed * (2.4 + urgency * 1.9);
+          const nextX = f.pos.x + Math.sin(f.heading) * fleeSpeed * dt;
+          const nextZ = f.pos.z + Math.cos(f.heading) * fleeSpeed * dt;
+          if (this.sampleGroundHeight(nextX, nextZ) < waterY - 0.22) {
+            f.pos.x = nextX;
+            f.pos.z = nextZ;
+          }
+          f.swimPhase += dt * (18.0 + urgency * 10.0);
+          f.pos.y = THREE.MathUtils.lerp(f.pos.y, waterY - 0.36, Math.min(1, dt * 6));
+        } else if (f.attractedToBobber && this.state === 'floating') {
           const toBobX = this.bobberPos.x - f.pos.x;
           const toBobZ = this.bobberPos.z - f.pos.z;
           const distToBob = Math.hypot(toBobX, toBobZ);
@@ -895,10 +964,16 @@ export class FishingAndFishManager {
           }
 
           // Gently steer back toward home basin if wandering > 5.5m from homePos
+          // (unless the dwarf is currently swimming near homePos!)
           const hx = f.homePos.x - f.pos.x;
           const hz = f.homePos.z - f.pos.z;
           const homeDist = Math.hypot(hx, hz);
-          if (homeDist > 5.2) {
+          const playerNearHome =
+            isPlayerInWater &&
+            (playerPos.x - f.homePos.x) * (playerPos.x - f.homePos.x) +
+              (playerPos.z - f.homePos.z) * (playerPos.z - f.homePos.z) <
+              scareRadiusSq;
+          if (homeDist > 5.2 && !playerNearHome) {
             const homeHeading = Math.atan2(hx, hz);
             let diff = homeHeading - f.heading;
             while (diff > Math.PI) diff -= Math.PI * 2;
