@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import oakModelUrl from '../../3dmodels/oak tree 3d model.glb?url';
 import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
 import { WorldConfig } from './Config';
 import { ChunkSurfaceSampler, GrassUniforms } from './GrassField';
@@ -346,7 +347,92 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
   );
 }
 
-let sharedBroadleafGeo: THREE.BufferGeometry | null = null;
+let fallbackBroadleafGeo: THREE.BufferGeometry | null = null;
+let sharedOakGeo: THREE.BufferGeometry | null = null;
+let sharedOakMat: THREE.MeshStandardMaterial | null = null;
+let oakLoadStarted = false;
+const activeBroadleafMeshes = new Set<THREE.InstancedMesh>();
+
+/**
+ * Asynchronously loads `3dmodels/oak tree 3d model.glb`, normalizes its transform and scale
+ * to ~6.6m tall with roots at Y=0, applies the wind shader to its PBR material, and upgrades
+ * all active near-LOD broadleaf/oak InstancedMeshes across the world.
+ */
+export function loadOakTreeModel(uniforms: GrassUniforms): void {
+  if (oakLoadStarted) return;
+  oakLoadStarted = true;
+
+  const loader = new GLTFLoader();
+  loader.load(
+    oakModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      // Clone geometry and bake the GLTF node hierarchy transform so it stands upright (Y-up)
+      const geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+
+      // Strip skinning attributes from the static instanced mesh if present
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      // Normalize bounding box: center X/Z at 0, place root base at Y=0, and scale to 6.6m height
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const height = Math.max(0.01, box.max.y - box.min.y);
+      const targetHeight = 6.6;
+      const scaleFactor = targetHeight / height;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const oakMat = (origMat as THREE.MeshStandardMaterial).clone();
+      oakMat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
+      oakMat.roughness = 0.85;
+      oakMat.metalness = 0.02;
+      applyWindShaderToMaterial(oakMat, uniforms, true);
+
+      sharedOakGeo = geo;
+      sharedOakMat = oakMat;
+
+      const customDepth = (
+        oakMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
+      ).customDepthMaterial;
+
+      // Hot-swap all currently active near-LOD oak InstancedMeshes to the loaded 3D GLB model & material
+      for (const inst of activeBroadleafMeshes) {
+        inst.geometry = sharedOakGeo;
+        inst.material = sharedOakMat;
+        if (customDepth) {
+          inst.customDepthMaterial = customDepth;
+        }
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load oak tree 3D model:', err);
+    }
+  );
+}
+
 let sharedRockGeo: THREE.BufferGeometry | null = null;
 
 const forestDummy = new THREE.Object3D();
@@ -374,7 +460,7 @@ export class ChunkForest {
     this.treeMaterial = treeMaterial;
     this.isNearLOD = isNearLOD;
     if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
-    if (!sharedBroadleafGeo) sharedBroadleafGeo = createBroadleafTreeGeometry();
+    if (!fallbackBroadleafGeo) fallbackBroadleafGeo = createBroadleafTreeGeometry();
     if (!sharedRockGeo) sharedRockGeo = createShorelineRockGeometry();
 
     // Use a 9.6m jittered grid (5x5 = 25 candidate cells per 48m chunk) so trees NEVER overlap
@@ -505,16 +591,19 @@ export class ChunkForest {
     }
 
     if (broadleafTransforms.length > 0 && broadleafTransforms.length <= maxCandidates) {
+      const useHighPoly = isNearLOD && sharedOakGeo && sharedOakMat;
+      const activeGeo = useHighPoly ? sharedOakGeo! : fallbackBroadleafGeo;
+      const activeMat = useHighPoly ? sharedOakMat! : treeMaterial;
       this.broadleafInstanced = new THREE.InstancedMesh(
-        sharedBroadleafGeo,
-        treeMaterial,
+        activeGeo,
+        activeMat,
         broadleafTransforms.length
       );
       this.broadleafInstanced.castShadow = castShadow;
       this.broadleafInstanced.receiveShadow = true;
       this.broadleafInstanced.boundingSphere = chunkBoundSphere;
       const customDepth = (
-        treeMaterial as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
+        activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
       if (customDepth) {
         this.broadleafInstanced.customDepthMaterial = customDepth;
@@ -526,6 +615,9 @@ export class ChunkForest {
       this.broadleafInstanced.instanceMatrix.needsUpdate = true;
       if (this.broadleafInstanced.instanceColor)
         this.broadleafInstanced.instanceColor.needsUpdate = true;
+      if (isNearLOD) {
+        activeBroadleafMeshes.add(this.broadleafInstanced);
+      }
       this.group.add(this.broadleafInstanced);
     }
 
@@ -549,10 +641,12 @@ export class ChunkForest {
   }
 
   public setLOD(isNearLOD: boolean, castShadow: boolean): void {
+    const lodChanged = this.isNearLOD !== isNearLOD;
+    this.isNearLOD = isNearLOD;
+
     if (this.pineInstanced) {
       this.pineInstanced.castShadow = castShadow;
-      if (this.isNearLOD !== isNearLOD) {
-        this.isNearLOD = isNearLOD;
+      if (lodChanged) {
         if (isNearLOD) {
           activePineMeshes.add(this.pineInstanced);
           if (sharedPineGeo && sharedPineMat) {
@@ -582,6 +676,33 @@ export class ChunkForest {
     }
     if (this.broadleafInstanced) {
       this.broadleafInstanced.castShadow = castShadow;
+      if (lodChanged) {
+        if (isNearLOD) {
+          activeBroadleafMeshes.add(this.broadleafInstanced);
+          if (sharedOakGeo && sharedOakMat) {
+            this.broadleafInstanced.geometry = sharedOakGeo;
+            this.broadleafInstanced.material = sharedOakMat;
+            const customDepth = (
+              sharedOakMat as THREE.MeshStandardMaterial & {
+                customDepthMaterial?: THREE.MeshDepthMaterial;
+              }
+            ).customDepthMaterial;
+            if (customDepth) this.broadleafInstanced.customDepthMaterial = customDepth;
+          }
+        } else {
+          activeBroadleafMeshes.delete(this.broadleafInstanced);
+          if (fallbackBroadleafGeo) {
+            this.broadleafInstanced.geometry = fallbackBroadleafGeo;
+            this.broadleafInstanced.material = this.treeMaterial;
+            const customDepth = (
+              this.treeMaterial as THREE.MeshStandardMaterial & {
+                customDepthMaterial?: THREE.MeshDepthMaterial;
+              }
+            ).customDepthMaterial;
+            if (customDepth) this.broadleafInstanced.customDepthMaterial = customDepth;
+          }
+        }
+      }
     }
     if (this.rockInstanced) {
       this.rockInstanced.castShadow = castShadow;
@@ -593,7 +714,10 @@ export class ChunkForest {
       activePineMeshes.delete(this.pineInstanced);
       this.pineInstanced.dispose();
     }
-    this.broadleafInstanced?.dispose();
+    if (this.broadleafInstanced) {
+      activeBroadleafMeshes.delete(this.broadleafInstanced);
+      this.broadleafInstanced.dispose();
+    }
     this.rockInstanced?.dispose();
   }
 }
