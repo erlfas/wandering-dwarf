@@ -39,6 +39,7 @@ export interface WorldConfig {
   grassDensity: number;       // Number of grass tufts per chunk (inner ring)
   grassRadiusChunks: number;  // Chunk distance radius that spawns 3D grass blades
   grassHeight: number;        // Blade height multiplier
+  tallGrassCoverage: number;  // Coverage of dense waist-high grass areas (0..1)
   windSpeed: number;          // Speed of rolling wind waves
   windStrength: number;       // How far grass bends in the wind
   enableFlowers: boolean;     // Scattered white/yellow/blue meadow wildflowers
@@ -98,6 +99,7 @@ export const defaultWorldConfig: WorldConfig = {
   grassDensity: 2600,
   grassRadiusChunks: 2.6,
   grassHeight: 1.0,
+  tallGrassCoverage: 0.55,
   windSpeed: 1.8,
   windStrength: 0.32,
   enableFlowers: true,

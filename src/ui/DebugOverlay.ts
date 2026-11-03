@@ -128,6 +128,11 @@ export class DebugOverlay {
       .onFinishChange(rebuild);
 
     grassFolder
+      .add(config, 'tallGrassCoverage', 0.0, 1.0, 0.05)
+      .name('Waist-High Grass Areas')
+      .onFinishChange(rebuild);
+
+    grassFolder
       .add(config, 'blankClayMode')
       .name('Blank Clay Mode (Phase 1)')
       .onChange(rebuild);

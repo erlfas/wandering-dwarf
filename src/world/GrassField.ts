@@ -107,6 +107,103 @@ function createGrassTuftGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Builds a dense 17-strand tall grass & seed-stalk cluster geometry calibrated to reach
+ * the waist (~0.75m - 0.92m) of the ~1.40m tall dwarf.
+ * Combines 13 broad, arching waist-high grass ribbons with 4 taller seed-head stalks
+ * arranged in concentric rings so adjacent clusters form a thick, continuous sea of grass.
+ */
+function createTallGrassClusterGeometry(): THREE.BufferGeometry {
+  const bladesPerCluster = 17;
+  const segments = 3; // 3 vertical quads + 1 tip triangle = 7 vertices per blade
+
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let b = 0; b < bladesPerCluster; b++) {
+    const baseVertex = b * 7;
+    const isSeedStalk = b >= 13;
+
+    // Golden-angle spiral distribution for natural, gap-free volume from every viewing angle
+    const goldenAngle = b * 2.399963229728653;
+    const ringFrac = b === 0 ? 0.0 : Math.sqrt(b / bladesPerCluster);
+    const radiusOffset = isSeedStalk
+      ? 0.08 + (b - 13) * 0.055
+      : ringFrac * 0.31;
+    const offsetX = Math.cos(goldenAngle) * radiusOffset;
+    const offsetZ = Math.sin(goldenAngle) * radiusOffset;
+
+    // Outward splay + slight organic yaw twist
+    const bladeYaw = goldenAngle + ((b % 5) - 2) * 0.24;
+    const cosY = Math.cos(bladeYaw);
+    const sinY = Math.sin(bladeYaw);
+
+    // Waist-high blade height (~0.74m - 0.88m for main blades, ~0.90m - 0.98m for seed stalks)
+    const bladeHeight = isSeedStalk
+      ? 0.88 + ((b * 19) % 5) * 0.025
+      : 0.72 + ((b * 31) % 9) * 0.02;
+    const lean = isSeedStalk
+      ? 0.14 + (b % 3) * 0.045
+      : 0.17 + (b % 4) * 0.045;
+    const baseHalfWidth = isSeedStalk ? 0.046 : 0.058;
+
+    for (let s = 0; s < segments; s++) {
+      const t = s / segments; // 0, 0.33, 0.66
+      const y = t * bladeHeight;
+      const curveForward = t * t * lean;
+      // Seed stalks swell slightly near the upper plume before tapering to the tip
+      const widthProfile = isSeedStalk && s === 2 ? 0.78 : 1.0 - t * 0.52;
+      const halfW = baseHalfWidth * widthProfile;
+
+      const lx = -halfW;
+      const rx = halfW;
+      const lz = curveForward;
+
+      const wLx = offsetX + lx * cosY - lz * sinY;
+      const wLz = offsetZ + lx * sinY + lz * cosY;
+      const wRx = offsetX + rx * cosY - lz * sinY;
+      const wRz = offsetZ + rx * sinY + lz * cosY;
+
+      positions.push(wLx, y, wLz, wRx, y, wRz);
+      normals.push(
+        -sinY * 0.28, 0.95, cosY * 0.28,
+        -sinY * 0.28, 0.95, cosY * 0.28
+      );
+      uvs.push(0, t, 1, t);
+    }
+
+    // Tip vertex (index + 6)
+    const tipY = bladeHeight;
+    const tipForward = lean;
+    const tipX = offsetX - tipForward * sinY;
+    const tipZ = offsetZ + tipForward * cosY;
+    positions.push(tipX, tipY, tipZ);
+    normals.push(0, 1, 0);
+    uvs.push(0.5, 1.0);
+
+    for (let s = 0; s < segments - 1; s++) {
+      const row0 = baseVertex + s * 2;
+      const row1 = row0 + 2;
+      indices.push(row0, row0 + 1, row1);
+      indices.push(row0 + 1, row1 + 1, row1);
+    }
+
+    const lastRow = baseVertex + (segments - 1) * 2;
+    const tipIdx = baseVertex + 6;
+    indices.push(lastRow, lastRow + 1, tipIdx);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+/**
  * Builds a tiny 3-blossom wildflower cluster geometry that sits among the grass tufts.
  */
 function createWildflowerClusterGeometry(): THREE.BufferGeometry {
@@ -183,13 +280,13 @@ export function applyGrassWindShader(
       transformed.x += gust * uWindStrength * bendFactor;
       transformed.z += cos(wavePhase * 0.85) * uWindStrength * 0.65 * bendFactor;
 
-      // Subtle dwarf push-away when walking through the grass
-      if (distToPlayer < 1.45 && distToPlayer > 0.001) {
-        float push = (1.0 - distToPlayer / 1.45) * 0.58 * bendFactor;
+      // Dwarf push-away when wading through short & waist-high grass
+      if (distToPlayer < 1.65 && distToPlayer > 0.001) {
+        float push = (1.0 - distToPlayer / 1.65) * 0.68 * bendFactor;
         vec2 pushDir = toBlade / distToPlayer;
         transformed.x += pushDir.x * push;
         transformed.z += pushDir.y * push;
-        transformed.y -= push * 0.35;
+        transformed.y -= push * 0.34;
       }
       `
     );
@@ -250,6 +347,7 @@ export function createGrassMaterial(
 
 // Shared geometries so all chunks reuse the same GPU vertex buffers
 let sharedTuftGeo: THREE.BufferGeometry | null = null;
+let sharedTallGrassGeo: THREE.BufferGeometry | null = null;
 let sharedFlowerGeo: THREE.BufferGeometry | null = null;
 let sharedClumpGeo: THREE.BufferGeometry | null = null;
 let sharedClumpMat: THREE.MeshStandardMaterial | null = null;
@@ -338,9 +436,11 @@ const sharedFlowerColor = new THREE.Color();
 export class ChunkGrass {
   public readonly group = new THREE.Group();
   private grassInstanced?: THREE.InstancedMesh;
+  private tallGrassInstanced?: THREE.InstancedMesh;
   private clumpInstanced?: THREE.InstancedMesh;
   private flowerInstanced?: THREE.InstancedMesh;
   private fullGrassCount = 0;
+  private fullTallGrassCount = 0;
   private fullFlowerCount = 0;
 
   constructor(
@@ -356,6 +456,7 @@ export class ChunkGrass {
   ) {
     this.group.matrixAutoUpdate = false;
     if (!sharedTuftGeo) sharedTuftGeo = createGrassTuftGeometry();
+    if (!sharedTallGrassGeo) sharedTallGrassGeo = createTallGrassClusterGeometry();
     if (!sharedFlowerGeo) sharedFlowerGeo = createWildflowerClusterGeometry();
 
     // Always build at full capacity (1.0) so LOD transitions (1.0 <-> 0.55 <-> 0.0) only scale .count/.visible in O(1)
@@ -368,11 +469,11 @@ export class ChunkGrass {
 
     const bounds = sampler?.getElevationBounds?.();
     const minH = bounds ? bounds.minH : -15;
-    const maxH = bounds ? bounds.maxH + 1.2 : 35;
+    const maxH = bounds ? bounds.maxH + 1.5 : 35;
     const centerY = (minH + maxH) * 0.5;
     const halfY = (maxH - minH) * 0.5;
     const halfSize = size * 0.5;
-    const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 1.0;
+    const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 1.2;
     const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
 
     const grassMesh = new THREE.InstancedMesh(sharedTuftGeo, grassMaterial, maxCount);
@@ -380,6 +481,20 @@ export class ChunkGrass {
     grassMesh.receiveShadow = true;
     grassMesh.boundingSphere = chunkBoundSphere;
     grassMesh.matrixAutoUpdate = false;
+
+    // Dedicated dense waist-high grass strand clusters (~0.75m - 0.92m tall, matching dwarf waist height)
+    const maxTallGrass =
+      config.tallGrassCoverage > 0.001 ? Math.floor(maxCount * 0.95) : 0;
+    const tallGrassMesh =
+      maxTallGrass > 0
+        ? new THREE.InstancedMesh(sharedTallGrassGeo, grassMaterial, maxTallGrass)
+        : undefined;
+    if (tallGrassMesh) {
+      tallGrassMesh.castShadow = false;
+      tallGrassMesh.receiveShadow = true;
+      tallGrassMesh.boundingSphere = chunkBoundSphere;
+      tallGrassMesh.matrixAutoUpdate = false;
+    }
 
     // 3D modelled tall grass & seed-head clumps (`3dmodels/grass clump 3d model.glb`)
     // Visible only on close-range LOD chunks (dist <= 1.5, where densityMultiplier >= 0.9)
@@ -418,8 +533,10 @@ export class ChunkGrass {
         : noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85);
 
     let grassIdx = 0;
+    let tallGrassIdx = 0;
     let clumpIdx = 0;
     let flowerIdx = 0;
+    const margin = halfSize - 0.15;
 
     for (let i = 0; i < maxCount; i++) {
       const lx = (rng() - 0.5) * size;
@@ -446,8 +563,22 @@ export class ChunkGrass {
       const isTrackVerge = trackW >= 0.06 && trackW <= 0.44;
 
       const patch = noise.getMeadowPatch(wx, wz);
-      // Create natural clumping: lush framing along track verges, natural pockets in open meadows
-      const keepProb = isTrackVerge ? 0.88 : 0.35 + patch * 0.65;
+
+      // Evaluate dense waist-high grass zone factor, tapering smoothly off footpaths and steep slopes
+      let tallGrass = noise.getTallGrassFactor(wx, wz);
+      if (tallGrass > 0) {
+        if (trackW > 0.16) {
+          tallGrass *= 1.0 - THREE.MathUtils.clamp((trackW - 0.16) / 0.22, 0, 1);
+        }
+        if (sharedNormal.y < 0.84) {
+          tallGrass *= THREE.MathUtils.clamp((sharedNormal.y - 0.72) / 0.12, 0, 1);
+        }
+      }
+
+      // Create natural clumping: high retention in tall-grass areas & track verges
+      const keepProb = isTrackVerge
+        ? 0.88
+        : Math.max(0.35 + patch * 0.65, tallGrass > 0.05 ? 0.55 + tallGrass * 0.43 : 0);
       if (rng() > keepProb) continue;
 
       sharedDummy.position.set(lx, wy - 0.03, lz);
@@ -464,11 +595,14 @@ export class ChunkGrass {
           : 1.18
         : 1.0;
 
-      const scaleXZ = (0.75 + rng() * 0.65) * (0.85 + patch * 0.3);
+      // Smoothly ramp understory grass height into tall-grass zones so patch borders blend organically
+      const tallUnderstoryBoost = 1.0 + tallGrass * 0.42;
+      const scaleXZ = (0.75 + rng() * 0.65) * (0.85 + patch * 0.3) * (1.0 + tallGrass * 0.25);
       const scaleY =
         (0.65 + rng() * 0.75) *
         (0.75 + patch * 0.45) *
         vergeHeightMod *
+        tallUnderstoryBoost *
         config.grassHeight;
       sharedDummy.scale.set(scaleXZ, scaleY, scaleXZ);
       sharedDummy.updateMatrix();
@@ -493,18 +627,65 @@ export class ChunkGrass {
       grassMesh.setColorAt(grassIdx, sharedBaseColor);
       grassIdx++;
 
-      // Spawn the 3D modelled tall grass clump in lush meadow patches & along track shoulders
-      const clumpChance = isTrackVerge && trackW < 0.32 ? 0.11 : 0.055 * (0.6 + patch * 0.8);
+      // Spawn dense, overlapping waist-high grass strand clusters (~0.75m - 0.92m) inside tall-grass areas
+      if (tallGrassMesh && tallGrassIdx < maxTallGrass && tallGrass > 0.08) {
+        // Place 1 to 3 closely packed 17-blade clusters per sample to form a thick, continuous waist-high bed
+        const subCount = tallGrass > 0.52 ? 3 : tallGrass > 0.25 ? 2 : 1;
+        for (let sc = 0; sc < subCount && tallGrassIdx < maxTallGrass; sc++) {
+          const jx = sc === 0 ? lx : THREE.MathUtils.clamp(lx + (rng() - 0.5) * 0.82, -margin, margin);
+          const jz = sc === 0 ? lz : THREE.MathUtils.clamp(lz + (rng() - 0.5) * 0.82, -margin, margin);
+
+          let jy = wy;
+          if (sc > 0 && sampler) {
+            jy = sampler.sampleHeightAndNormal(jx, jz, sharedNormal);
+            if (sharedNormal.y < 0.75) continue;
+            if (config.enableWater && jy < config.waterLevel + 0.55) continue;
+          }
+
+          // Calibrated so full tall-grass zones reach ~0.75m - 0.92m (right at the 1.40m dwarf's waist)
+          const heightRamp = THREE.MathUtils.lerp(0.62, 1.04, tallGrass);
+          const tallScaleXZ = (0.92 + rng() * 0.38) * (0.88 + tallGrass * 0.24);
+          const tallScaleY = (0.88 + rng() * 0.24) * heightRamp * config.grassHeight;
+
+          sharedDummy.position.set(jx, jy - 0.035, jz);
+          sharedDummy.rotation.set(
+            (rng() - 0.5) * 0.14,
+            rng() * Math.PI * 2,
+            (rng() - 0.5) * 0.14
+          );
+          sharedDummy.scale.set(tallScaleXZ, tallScaleY, tallScaleXZ);
+          sharedDummy.updateMatrix();
+          tallGrassMesh.setMatrixAt(tallGrassIdx, sharedDummy.matrix);
+
+          // Rich sunlit golden-green meadow tint for waist-high grass strands
+          sharedClumpColor.copy(sharedBaseColor).offsetHSL(
+            (rng() - 0.45) * 0.035,
+            0.03 + (rng() - 0.5) * 0.06,
+            0.02 + (rng() - 0.5) * 0.05
+          );
+          tallGrassMesh.setColorAt(tallGrassIdx, sharedClumpColor);
+          tallGrassIdx++;
+        }
+      }
+
+      // Spawn the 3D modelled tall grass clump in tall-grass areas, lush meadow patches & along track shoulders
+      const clumpChance =
+        tallGrass > 0.2
+          ? 0.095 * (0.5 + tallGrass * 0.8)
+          : isTrackVerge && trackW < 0.32
+          ? 0.11
+          : 0.055 * (0.6 + patch * 0.8);
       if (
         clumpMesh &&
         clumpIdx < maxClumps &&
-        (patch > 0.35 || isTrackVerge) &&
+        (tallGrass > 0.2 || patch > 0.35 || isTrackVerge) &&
         rng() < clumpChance
       ) {
-        const clumpScaleXZ = (0.78 + rng() * 0.52) * (0.85 + patch * 0.3);
+        const clumpScaleXZ =
+          (0.78 + rng() * 0.52) * (0.85 + Math.max(patch, tallGrass) * 0.32);
         const clumpScaleY =
-          (0.75 + rng() * 0.55) *
-          (0.85 + patch * 0.35) *
+          (0.82 + rng() * 0.45) *
+          (0.85 + Math.max(patch, tallGrass) * 0.32) *
           config.grassHeight;
         sharedDummy.position.set(lx, wy - 0.04, lz);
         sharedDummy.scale.set(clumpScaleXZ, clumpScaleY, clumpScaleXZ);
@@ -558,6 +739,7 @@ export class ChunkGrass {
     }
 
     this.fullGrassCount = grassIdx;
+    this.fullTallGrassCount = tallGrassIdx;
     this.fullFlowerCount = flowerIdx;
 
     if (grassIdx > 0) {
@@ -574,6 +756,24 @@ export class ChunkGrass {
       this.group.add(grassMesh);
     } else {
       grassMesh.dispose();
+    }
+
+    if (tallGrassMesh) {
+      if (tallGrassIdx > 0) {
+        tallGrassMesh.count = tallGrassIdx;
+        tallGrassMesh.instanceMatrix.clearUpdateRanges();
+        tallGrassMesh.instanceMatrix.addUpdateRange(0, tallGrassIdx * 16);
+        tallGrassMesh.instanceMatrix.needsUpdate = true;
+        if (tallGrassMesh.instanceColor) {
+          tallGrassMesh.instanceColor.clearUpdateRanges();
+          tallGrassMesh.instanceColor.addUpdateRange(0, tallGrassIdx * 3);
+          tallGrassMesh.instanceColor.needsUpdate = true;
+        }
+        this.tallGrassInstanced = tallGrassMesh;
+        this.group.add(tallGrassMesh);
+      } else {
+        tallGrassMesh.dispose();
+      }
     }
 
     if (clumpMesh) {
@@ -626,6 +826,9 @@ export class ChunkGrass {
     if (this.grassInstanced) {
       this.grassInstanced.count = Math.floor(this.fullGrassCount * ratio);
     }
+    if (this.tallGrassInstanced) {
+      this.tallGrassInstanced.count = Math.floor(this.fullTallGrassCount * ratio);
+    }
     if (this.flowerInstanced) {
       this.flowerInstanced.count = Math.floor(this.fullFlowerCount * ratio);
     }
@@ -636,6 +839,7 @@ export class ChunkGrass {
 
   public dispose(): void {
     this.grassInstanced?.dispose();
+    this.tallGrassInstanced?.dispose();
     if (this.clumpInstanced) {
       activeClumpMeshes.delete(this.clumpInstanced);
       this.clumpInstanced.dispose();

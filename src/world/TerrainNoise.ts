@@ -394,6 +394,52 @@ export class TerrainNoise {
   }
 
   /**
+   * Returns a smooth [0, 1] intensity for dense, waist-high grass areas (~0.75m - 0.95m tall).
+   * Forms contiguous, natural tall-grass swales in open meadows and along sunny clearings,
+   * including scenic starter patches just off the footpath near player spawn.
+   */
+  public getTallGrassFactor(x: number, z: number): number {
+    const coverage = this.config.tallGrassCoverage;
+    if (coverage <= 0.001) return 0;
+
+    // Scenic starter tall-grass meadows right beside the initial footpath near (0, 0)
+    let starterBoost = 0;
+    const dx1 = x - 9.5;
+    const dz1 = z - 10.5;
+    const dSq1 = dx1 * dx1 + dz1 * dz1;
+    if (dSq1 < 132.0) {
+      starterBoost = 1.0 - THREE.MathUtils.smoothstep(dSq1, 28.0, 132.0);
+    }
+    const dx2 = x + 11.5;
+    const dz2 = z - 6.0;
+    const dSq2 = dx2 * dx2 + dz2 * dz2;
+    if (dSq2 < 110.0) {
+      starterBoost = Math.max(
+        starterBoost,
+        1.0 - THREE.MathUtils.smoothstep(dSq2, 22.0, 110.0)
+      );
+    }
+
+    // Broad organic tall-grass zones (~30-45m across) with irregular feathered borders
+    const n1 = this.meadowNoise(x * 0.017 - 31.4, z * 0.017 + 47.8);
+    const n2 = 0.45 * this.pondNoise(x * 0.043 + 18.2, z * 0.043 - 24.6);
+    const raw = (n1 + n2) / 1.45; // [-1, 1]
+    const normalized = raw * 0.5 + 0.5;
+
+    const cutoff = 0.72 - coverage * 0.42;
+    let zone = 0;
+    if (normalized > cutoff) {
+      zone = THREE.MathUtils.smoothstep(
+        normalized,
+        cutoff,
+        Math.min(0.98, cutoff + 0.22)
+      );
+    }
+
+    return Math.max(zone, starterBoost * THREE.MathUtils.clamp(coverage * 1.4, 0, 1));
+  }
+
+  /**
    * Returns [0, 1] forest grove intensity at world (x, z).
    * Returns 0 in open meadows/clearings (~50-60% of the world) and 0..1 inside wooded groves,
    * ensuring distinct open areas and non-crowded tree clusters.
