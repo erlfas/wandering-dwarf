@@ -123,13 +123,13 @@ This caused two problems:
 ## 6. Close-Range 3D Asset LODs & Frustum Culling (`ForestField.ts` & `GrassField.ts`)
 
 ### Close-Range GLB LOD Architecture
-Inspecting the binary `.glb` assets revealed that `pine tree 3d model.glb` contains **39,784 vertices / 18,926 triangles**, `oak tree 3d model.glb` contains **28,477 vertices / 20,066 triangles**, and `grass clump 3d model.glb` contains **22,709 vertices / 18,955 triangles**. Instancing these across all 137 chunks would produce 30M–60M triangles per frame.
+Inspecting the binary `.glb` assets revealed that `pine tree 3d model.glb` contains **39,784 vertices / 18,926 triangles**, `oak tree 3d model.glb` contains **28,477 vertices / 20,066 triangles**, `simple dwarven hut 3d model.glb` contains **23,556 vertices / 18,514 triangles**, and `grass clump 3d model.glb` contains **22,709 vertices / 18,955 triangles**. Instancing these across all 137 chunks would produce 30M–60M triangles per frame.
 
 To preserve the visual fidelity of the 3D models close to the player while eliminating distant GPU overload:
-1. **Pine & Oak Trees (`ChunkForest.setLOD`):**
-   - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the full 18,926-triangle `pine tree 3d model.glb` (`sharedPineGeo` + `sharedPineMat`) and 20,066-triangle `oak tree 3d model.glb` (`sharedOakGeo` + `sharedOakMat`).
-   - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Dynamically swaps `pineInstanced` and `broadleafInstanced` geometry and materials in-place to the lightweight procedural pine (`createPineTreeGeometry()`) and procedural broadleaf/oak (`createBroadleafTreeGeometry()`) geometries, reducing distant tree triangle counts by **>98.5%**.
-   - **Shadow Culling:** Tree and boulder shadow casting (`castShadow`) is enabled only within `dist <= 2.2` chunks.
+1. **Pine Trees, Oak Trees & Dwarven Huts (`ChunkForest.setLOD`):**
+   - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the full 18,926-triangle `pine tree 3d model.glb` (`sharedPineGeo` + `sharedPineMat`), 20,066-triangle `oak tree 3d model.glb` (`sharedOakGeo` + `sharedOakMat`), and 18,514-triangle `simple dwarven hut 3d model.glb` (`sharedHutGeo` + `sharedHutMat`).
+   - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Dynamically swaps `pineInstanced`, `broadleafInstanced`, and `hutInstanced` geometry and materials in-place to the lightweight procedural pine (`createPineTreeGeometry()`), procedural broadleaf/oak (`createBroadleafTreeGeometry()`), and 112-triangle procedural dwarven hut (`createDwarvenHutGeometry()`) geometries, reducing distant triangle counts by **>98.5%**.
+   - **Shadow Culling:** Tree, hut, and boulder shadow casting (`castShadow`) is enabled only within `dist <= 2.2` chunks.
 2. **Grass Clumps (`ChunkGrass`):**
    - **Close-Range LOD (`dist <= 1.5`, `densityMultiplier = 1.0`):** Spawns up to 16 instances per chunk of `grass clump 3d model.glb` with `castShadow = false` alongside full-density procedural grass tufts and wildflowers.
    - **Mid-Range LOD (`1.5 < dist <= 2.6`, `densityMultiplier = 0.55`):** Spawns only the 35-vertex procedural grass tufts (`maxClumps = 0`).

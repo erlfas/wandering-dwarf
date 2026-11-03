@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import oakModelUrl from '../../3dmodels/oak tree 3d model.glb?url';
 import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
+import hutModelUrl from '../../3dmodels/simple dwarven hut 3d model.glb?url';
 import { WorldConfig } from './Config';
 import { ChunkSurfaceSampler, GrassUniforms } from './GrassField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
@@ -143,6 +144,54 @@ function createBroadleafTreeGeometry(): THREE.BufferGeometry {
       )
     );
   }
+
+  const merged = mergeGeometries(parts, false);
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+/**
+ * Builds a low-poly procedural fallback geometry (< 120 tris) for the Dwarven Wooden Hut
+ * used in mid/far chunks (dist > 1.5), matching the silhouette and warm timber/stone colors
+ * of `3dmodels/simple dwarven hut 3d model.glb`.
+ */
+function createDwarvenHutGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+
+  // 1. Stone foundation plinth
+  const base = new THREE.CylinderGeometry(2.15, 2.28, 0.48, 8);
+  base.translate(0, 0.24, 0);
+  parts.push(
+    colorizeGeometry(base, new THREE.Color(0x524d46), new THREE.Color(0x736c62), 0.0)
+  );
+
+  // 2. Sturdy octagonal timber walls
+  const walls = new THREE.CylinderGeometry(1.92, 1.98, 1.82, 8);
+  walls.translate(0, 1.35, 0);
+  parts.push(
+    colorizeGeometry(walls, new THREE.Color(0x593a22), new THREE.Color(0x7d5332), 0.0)
+  );
+
+  // 3. Pitched wooden shingle / mossy roof cone
+  const roof = new THREE.ConeGeometry(2.48, 1.75, 8);
+  roof.translate(0, 3.02, 0);
+  parts.push(
+    colorizeGeometry(roof, new THREE.Color(0x3d2818), new THREE.Color(0x63452b), 0.0)
+  );
+
+  // 4. Front timber doorway porch projection
+  const porch = new THREE.BoxGeometry(0.96, 1.38, 0.68);
+  porch.translate(0, 0.95, 1.82);
+  parts.push(
+    colorizeGeometry(porch, new THREE.Color(0x452c19), new THREE.Color(0x694528), 0.0)
+  );
+
+  // 5. Small stone chimney stack on the side of the roof
+  const chimney = new THREE.BoxGeometry(0.44, 1.05, 0.44);
+  chimney.translate(1.05, 3.15, -0.45);
+  parts.push(
+    colorizeGeometry(chimney, new THREE.Color(0x59534b), new THREE.Color(0x7a7368), 0.0)
+  );
 
   const merged = mergeGeometries(parts, false);
   merged.computeBoundingSphere();
@@ -656,6 +705,81 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
   );
 }
 
+let fallbackHutGeo: THREE.BufferGeometry | null = null;
+let sharedHutGeo: THREE.BufferGeometry | null = null;
+let sharedHutMat: THREE.MeshStandardMaterial | null = null;
+let hutLoadStarted = false;
+const activeHutMeshes = new Set<THREE.InstancedMesh>();
+
+/**
+ * Asynchronously loads `3dmodels/simple dwarven hut 3d model.glb`, normalizes its transform and scale
+ * to ~3.85m tall with base at Y=0, and upgrades all active near-LOD dwarven hut InstancedMeshes.
+ */
+export function loadDwarvenHutModel(): void {
+  if (hutLoadStarted) return;
+  hutLoadStarted = true;
+
+  const loader = new GLTFLoader();
+  loader.load(
+    hutModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      const geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+
+      // Strip unused skinning attributes if present
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      // Normalize bounding box: center X/Z at 0, place foundation base at Y=0, and scale to ~3.85m height
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const height = Math.max(0.01, box.max.y - box.min.y);
+      const targetHeight = 3.85;
+      const scaleFactor = targetHeight / height;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const hutMat = (origMat as THREE.MeshStandardMaterial).clone();
+      hutMat.color.setHex(0xffffff);
+      hutMat.roughness = 0.85;
+      hutMat.metalness = 0.04;
+
+      sharedHutGeo = geo;
+      sharedHutMat = hutMat;
+
+      // Hot-swap all currently active near-LOD dwarven hut InstancedMeshes
+      for (const inst of activeHutMeshes) {
+        inst.geometry = sharedHutGeo;
+        inst.material = sharedHutMat;
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load simple dwarven hut 3D model:', err);
+    }
+  );
+}
+
 let sharedRockGeo: THREE.BufferGeometry | null = null;
 let sharedTrackCobbleGeo: THREE.BufferGeometry | null = null;
 let sharedTrackRootsGeo: THREE.BufferGeometry | null = null;
@@ -672,11 +796,14 @@ const sharedTint = new THREE.Color();
 
 // Pre-allocated scratch buffers for zero-allocation ChunkForest builds
 const MAX_GRID_INST = 25;
+const MAX_HUT_INST = 2;
 const MAX_TRACK_INST = 96;
 const pineMatBuf = new Float32Array(MAX_GRID_INST * 16);
 const pineColBuf = new Float32Array(MAX_GRID_INST * 3);
 const oakMatBuf = new Float32Array(MAX_GRID_INST * 16);
 const oakColBuf = new Float32Array(MAX_GRID_INST * 3);
+const hutMatBuf = new Float32Array(MAX_HUT_INST * 16);
+const hutColBuf = new Float32Array(MAX_HUT_INST * 3);
 const rockMatBuf = new Float32Array(MAX_GRID_INST * 16);
 const rockColBuf = new Float32Array(MAX_GRID_INST * 3);
 const cobbleMatBuf = new Float32Array(MAX_TRACK_INST * 16);
@@ -717,6 +844,7 @@ export class ChunkForest {
   public readonly group = new THREE.Group();
   private pineInstanced?: THREE.InstancedMesh;
   private broadleafInstanced?: THREE.InstancedMesh;
+  private hutInstanced?: THREE.InstancedMesh;
   private rockInstanced?: THREE.InstancedMesh;
   private cobbleInstanced?: THREE.InstancedMesh;
   private rootsInstanced?: THREE.InstancedMesh;
@@ -740,6 +868,7 @@ export class ChunkForest {
     this.isNearLOD = isNearLOD;
     if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
     if (!fallbackBroadleafGeo) fallbackBroadleafGeo = createBroadleafTreeGeometry();
+    if (!fallbackHutGeo) fallbackHutGeo = createDwarvenHutGeometry();
     if (!sharedRockGeo) sharedRockGeo = createShorelineRockGeometry();
     if (!sharedTrackCobbleGeo) sharedTrackCobbleGeo = createTrackCobbleClusterGeometry();
     if (!sharedTrackRootsGeo) sharedTrackRootsGeo = createTrackRootsGeometry();
@@ -771,6 +900,7 @@ export class ChunkForest {
 
     let pineCount = 0;
     let broadleafCount = 0;
+    let hutCount = 0;
     let rockCount = 0;
     let cobbleCount = 0;
     let rootsCount = 0;
@@ -837,6 +967,35 @@ export class ChunkForest {
           // Keep groves airy and non-crowded using config.treeDensity
           const spawnChance = groveDensity * config.treeDensity * 0.75;
           if (rng() > spawnChance) continue;
+
+          // Rare Dwarven Wooden Huts: only spawn inside dense wooded groves (where tree density is
+          // much higher than typical elsewhere), on level dry ground, and capped at 1 hut per chunk.
+          if (
+            hutCount === 0 &&
+            groveDensity >= 0.68 &&
+            forestNormal.y >= 0.88 &&
+            (!config.enableWater || distAboveWater >= 1.8) &&
+            (!chunkHasTrack || noise.getTrackWeight(wx, wz, wy) <= 0.08) &&
+            rng() < 0.055
+          ) {
+            const hutScale = (0.92 + rng() * 0.16) * config.treeScale;
+            forestDummy.position.set(lx, wy - 0.16, lz);
+            forestDummy.rotation.set(
+              (rng() - 0.5) * 0.03,
+              rng() * Math.PI * 2,
+              (rng() - 0.5) * 0.03
+            );
+            forestDummy.scale.setScalar(hutScale);
+            forestDummy.updateMatrix();
+
+            sharedTint.setHex(0xffffff).offsetHSL(
+              (rng() - 0.5) * 0.02,
+              (rng() - 0.5) * 0.05,
+              (rng() - 0.5) * 0.06
+            );
+            recordInstance(hutMatBuf, hutColBuf, hutCount++, forestDummy.matrix, sharedTint);
+            continue;
+          }
 
           // Trees near the edge of a grove are slightly smaller saplings; deeper grove trees are taller
           const groveScale = 0.68 + groveDensity * 0.42;
@@ -1021,6 +1180,22 @@ export class ChunkForest {
       this.group.add(this.broadleafInstanced);
     }
 
+    if (hutCount > 0 && hutCount <= MAX_HUT_INST) {
+      const useHighPoly = isNearLOD && sharedHutGeo && sharedHutMat;
+      const activeGeo = useHighPoly ? sharedHutGeo! : fallbackHutGeo;
+      const activeMat = useHighPoly ? sharedHutMat! : sharedStaticPropMat;
+      this.hutInstanced = new THREE.InstancedMesh(activeGeo, activeMat, hutCount);
+      this.hutInstanced.castShadow = castShadow;
+      this.hutInstanced.receiveShadow = true;
+      this.hutInstanced.boundingSphere = chunkBoundSphere;
+      this.hutInstanced.matrixAutoUpdate = false;
+      populateInstancedMesh(this.hutInstanced, hutMatBuf, hutColBuf, hutCount);
+      if (isNearLOD) {
+        activeHutMeshes.add(this.hutInstanced);
+      }
+      this.group.add(this.hutInstanced);
+    }
+
     if (rockCount > 0) {
       this.rockInstanced = new THREE.InstancedMesh(
         sharedRockGeo,
@@ -1142,6 +1317,24 @@ export class ChunkForest {
         }
       }
     }
+    if (this.hutInstanced) {
+      this.hutInstanced.castShadow = castShadow;
+      if (lodChanged) {
+        if (isNearLOD) {
+          activeHutMeshes.add(this.hutInstanced);
+          if (sharedHutGeo && sharedHutMat) {
+            this.hutInstanced.geometry = sharedHutGeo;
+            this.hutInstanced.material = sharedHutMat;
+          }
+        } else {
+          activeHutMeshes.delete(this.hutInstanced);
+          if (fallbackHutGeo && sharedStaticPropMat) {
+            this.hutInstanced.geometry = fallbackHutGeo;
+            this.hutInstanced.material = sharedStaticPropMat;
+          }
+        }
+      }
+    }
     if (this.rockInstanced) {
       this.rockInstanced.castShadow = castShadow;
     }
@@ -1155,6 +1348,10 @@ export class ChunkForest {
     if (this.broadleafInstanced) {
       activeBroadleafMeshes.delete(this.broadleafInstanced);
       this.broadleafInstanced.dispose();
+    }
+    if (this.hutInstanced) {
+      activeHutMeshes.delete(this.hutInstanced);
+      this.hutInstanced.dispose();
     }
     this.rockInstanced?.dispose();
     this.cobbleInstanced?.dispose();

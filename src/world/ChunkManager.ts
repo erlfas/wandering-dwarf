@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { WorldConfig } from './Config';
-import { createTreeMaterial, loadOakTreeModel, loadPineTreeModel } from './ForestField';
+import {
+  createTreeMaterial,
+  loadDwarvenHutModel,
+  loadOakTreeModel,
+  loadPineTreeModel,
+} from './ForestField';
 import { createGrassMaterial, GrassUniforms, loadGrassClumpModel } from './GrassField';
 import { TerrainChunk } from './TerrainChunk';
 import { TerrainNoise } from './TerrainNoise';
@@ -59,6 +64,7 @@ export class ChunkManager {
     this.waterMaterial = createWaterMaterial(this.grassUniforms);
     loadPineTreeModel(this.grassUniforms);
     loadOakTreeModel(this.grassUniforms);
+    loadDwarvenHutModel();
     loadGrassClumpModel(this.grassUniforms);
   }
 
