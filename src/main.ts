@@ -7,6 +7,7 @@ import { ExplorerCamera } from './controls/ExplorerCamera';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
+import { clearProgress, loadProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
@@ -64,6 +65,11 @@ scene.add(dirLight);
 scene.add(dirLight.target);
 
 // 5. Procedural Terrain, Chunk Streaming & Treasure Chests
+const savedProgress = loadProgress();
+if (savedProgress) {
+  config.seed = savedProgress.seed;
+}
+
 const noise = new TerrainNoise(config);
 const chunkManager = new ChunkManager(config, noise);
 scene.add(chunkManager.group);
@@ -91,7 +97,53 @@ const explorer = new ExplorerCamera(
   }
 );
 
-// Build initial chunks around (0, 0) immediately so first frame has full terrain + grass
+if (savedProgress) {
+  treasureManager.restoreProgress(
+    savedProgress.score,
+    savedProgress.chestsCollected,
+    savedProgress.collectedIds
+  );
+  explorer.setPose(
+    savedProgress.playerPos.x,
+    savedProgress.playerPos.z,
+    savedProgress.heading,
+    savedProgress.yaw,
+    savedProgress.pitch,
+    savedProgress.distance
+  );
+}
+
+let lastSavedX = explorer.playerPos.x;
+let lastSavedZ = explorer.playerPos.z;
+let lastSavedYaw = explorer.yaw;
+let lastSaveTime = 0;
+
+function persistCurrentProgress(): void {
+  lastSavedX = explorer.playerPos.x;
+  lastSavedZ = explorer.playerPos.z;
+  lastSavedYaw = explorer.yaw;
+  saveProgress({
+    version: 1,
+    seed: config.seed,
+    playerPos: {
+      x: explorer.playerPos.x,
+      y: explorer.playerPos.y,
+      z: explorer.playerPos.z,
+    },
+    heading: explorer.getHeading(),
+    yaw: explorer.yaw,
+    pitch: explorer.pitch,
+    distance: explorer.distance,
+    score: treasureManager.score,
+    chestsCollected: treasureManager.chestsCollected,
+    collectedIds: treasureManager.getCollectedIds(),
+  });
+}
+
+treasureManager.onChestCollected = persistCurrentProgress;
+window.addEventListener('beforeunload', persistCurrentProgress);
+
+// Build initial chunks around player position immediately so first frame has full terrain + grass
 chunkManager.update(
   explorer.playerPos.x,
   explorer.playerPos.y,
@@ -107,7 +159,24 @@ const debugOverlay = new DebugOverlay(
   chunkManager,
   treasureManager,
   fog,
-  () => explorer.playerPos
+  () => explorer.playerPos,
+  persistCurrentProgress,
+  () => {
+    clearProgress();
+    config.seed = defaultWorldConfig.seed;
+    noise.reseed(config.seed);
+    treasureManager.resetProgress();
+    explorer.resetToOrigin();
+    chunkManager.rebuildAll(
+      explorer.playerPos.x,
+      explorer.playerPos.y,
+      explorer.playerPos.z
+    );
+    debugOverlay.syncDisplay();
+    lastSavedX = explorer.playerPos.x;
+    lastSavedZ = explorer.playerPos.z;
+    lastSavedYaw = explorer.yaw;
+  }
 );
 new BackgroundMusic();
 
@@ -179,6 +248,15 @@ function animate(): void {
     if (nextCoords !== lastCoordsText) {
       lastCoordsText = nextCoords;
       coordsReadout.textContent = nextCoords;
+    }
+  }
+
+  // Auto-save player coordinates & camera pose every 2s when changed
+  if (elapsedTime - lastSaveTime >= 2.0) {
+    lastSaveTime = elapsedTime;
+    const movedSq = (px - lastSavedX) * (px - lastSavedX) + (pz - lastSavedZ) * (pz - lastSavedZ);
+    if (movedSq > 0.05 || Math.abs(explorer.yaw - lastSavedYaw) > 0.02) {
+      persistCurrentProgress();
     }
   }
 

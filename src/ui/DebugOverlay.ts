@@ -15,7 +15,9 @@ export class DebugOverlay {
     chunkManager: ChunkManager,
     treasureManager: TreasureManager,
     fog: THREE.FogExp2,
-    getPlayerPos: () => THREE.Vector3
+    getPlayerPos: () => THREE.Vector3,
+    onSaveProgress?: () => void,
+    onResetProgress?: () => void
   ) {
     this.gui = new GUI({ title: 'World Planner (Phase 3)' });
 
@@ -145,6 +147,7 @@ export class DebugOverlay {
       .name('World Seed')
       .onFinishChange((v: number) => {
         noise.reseed(v);
+        onSaveProgress?.();
         rebuild();
       });
 
@@ -195,6 +198,15 @@ export class DebugOverlay {
         fog.density = v;
       });
     debugFolder.close();
+
+    if (onResetProgress) {
+      const actions = {
+        resetProgress: () => {
+          onResetProgress();
+        },
+      };
+      this.gui.add(actions, 'resetProgress').name('↺ Reset Saved Progress');
+    }
   }
 
   public syncDisplay(): void {

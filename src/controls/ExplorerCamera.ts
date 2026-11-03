@@ -36,19 +36,47 @@ export class ExplorerCamera {
     private onToggleMode?: () => void
   ) {
     this.camera = camera;
-    this.lastGroundY = this.noise.getHeight(0, 0);
-    this.playerPos.y = this.lastGroundY;
-    this.smoothedTarget.copy(this.playerPos);
-
-    if (this.config.enableTracks) {
-      const trackHeading = this.noise.getTrackHeading(0, 0);
-      this.dwarf.heading = trackHeading;
-      this.dwarf.root.rotation.y = trackHeading;
-      // Camera sits behind the dwarf looking forward along the winding track
-      this.yaw = trackHeading + Math.PI;
-    }
-
+    this.resetToOrigin();
     this.bindEvents(domElement);
+  }
+
+  public getHeading(): number {
+    return this.dwarf.heading;
+  }
+
+  public setPose(
+    x: number,
+    z: number,
+    heading: number,
+    yaw: number,
+    pitch: number,
+    distance: number
+  ): void {
+    const groundY = this.noise.getHeight(x, z);
+    this.lastGroundY = groundY;
+    const swimSurfaceY = this.config.waterLevel - 0.54;
+    const y =
+      this.config.enableWater && !this.config.blankClayMode
+        ? Math.max(groundY, swimSurfaceY)
+        : groundY;
+
+    this.playerPos.set(x, y, z);
+    this.dwarf.heading = heading;
+    this.dwarf.root.position.copy(this.playerPos);
+    this.dwarf.root.rotation.y = heading;
+
+    this.yaw = yaw;
+    this.pitch = THREE.MathUtils.clamp(pitch, 0.08, Math.PI * 0.44);
+    this.distance = THREE.MathUtils.clamp(distance, 4.0, 45.0);
+
+    const lookHeightOffset = this.config.cameraMode === 'dwarf' ? 1.55 : 4.0;
+    this.smoothedTarget.set(x, y + lookHeightOffset, z);
+  }
+
+  public resetToOrigin(): void {
+    const trackHeading = this.config.enableTracks ? this.noise.getTrackHeading(0, 0) : 0;
+    const defaultYaw = this.config.enableTracks ? trackHeading + Math.PI : 0.35;
+    this.setPose(0, 0, trackHeading, defaultYaw, 0.46, 11.5);
   }
 
   private bindEvents(domElement: HTMLElement): void {

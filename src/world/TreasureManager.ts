@@ -229,6 +229,7 @@ export class TreasureManager {
   public readonly group = new THREE.Group();
   public score = 0;
   public chestsCollected = 0;
+  public onChestCollected?: () => void;
 
   private activeChests = new Map<number, ChestInstance[]>();
   private desiredKeys = new Set<number>();
@@ -556,15 +557,20 @@ export class TreasureManager {
     this.openingChests.push(chest);
     this.updateHUD(chest.points, chest.isRare);
     this.playPickupChime(chest.isRare);
+    this.onChestCollected?.();
   }
 
-  private updateHUD(addedPoints: number, isRare: boolean): void {
+  private syncHUDTotals(): void {
     if (this.scoreEl) {
       this.scoreEl.textContent = this.score.toLocaleString();
     }
     if (this.countEl) {
       this.countEl.textContent = `${this.chestsCollected} Chest${this.chestsCollected === 1 ? '' : 's'}`;
     }
+  }
+
+  private updateHUD(addedPoints: number, isRare: boolean): void {
+    this.syncHUDTotals();
 
     if (this.badgeEl) {
       this.badgeEl.classList.add('pop');
@@ -665,5 +671,29 @@ export class TreasureManager {
     this.activeChests.clear();
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
+  }
+
+  public getCollectedIds(): string[] {
+    return Array.from(this.collectedIds);
+  }
+
+  public restoreProgress(
+    score: number,
+    chestsCollected: number,
+    collectedIds: string[]
+  ): void {
+    this.score = Math.max(0, Math.floor(score));
+    this.chestsCollected = Math.max(0, Math.floor(chestsCollected));
+    this.collectedIds = new Set(collectedIds);
+    this.syncHUDTotals();
+    this.rebuildAll();
+  }
+
+  public resetProgress(): void {
+    this.score = 0;
+    this.chestsCollected = 0;
+    this.collectedIds.clear();
+    this.syncHUDTotals();
+    this.rebuildAll();
   }
 }
