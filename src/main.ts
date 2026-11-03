@@ -293,14 +293,14 @@ function animate(): void {
   if (elapsedTime - lastHudUpdate >= 0.2) {
     lastHudUpdate = elapsedTime;
     const nearest = treasureManager.getNearestChest(explorer.playerPos);
-    const nextHint = nearest ? `Nearest: ${nearest.dist.toFixed(0)}m` : 'Explore further!';
+    const nextHint = nearest ? nearest.label : 'Explore further!';
     if (nextHint !== lastChestHintText) {
       lastChestHintText = nextHint;
       nearestChestHint.textContent = nextHint;
     }
 
-    // Update compass chest pointer arrow (always visible with Lodestone Runes or when within 42m)
-    const pointerRange = hasLodestone ? 240 : 42;
+    // Update compass chest pointer arrow (visible with Lodestone Runes, active Map Hoards, or within 55m)
+    const pointerRange = hasLodestone ? 240 : 65;
     if (nearest && nearest.dist <= pointerRange) {
       const worldAngle = Math.atan2(nearest.pos.x - px, -(nearest.pos.z - pz));
       const relDeg = ((worldAngle + explorer.yaw) * 180) / Math.PI;

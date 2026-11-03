@@ -2,6 +2,15 @@ import * as THREE from 'three';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
+interface RunestoneNode {
+  index: number;
+  worldPos: THREE.Vector3;
+  activated: boolean;
+  mesh: THREE.Group;
+  crystalMesh: THREE.Mesh;
+  ringMesh: THREE.Mesh;
+}
+
 interface ChestInstance {
   id: string;
   cx: number;
@@ -9,29 +18,55 @@ interface ChestInstance {
   worldPos: THREE.Vector3;
   points: number;
   isRare: boolean;
+  isMythic: boolean;
+  sealed: boolean;
+  runestones: RunestoneNode[];
   root: THREE.Group;
   lidPivot: THREE.Group;
   goldMound: THREE.Mesh;
   glowRing: THREE.Mesh;
+  sealDome?: THREE.Mesh;
   state: 'idle' | 'opening' | 'collected';
   animTime: number;
   sparkles?: THREE.Points;
 }
 
+interface BuriedDigSite {
+  worldPos: THREE.Vector3;
+  points: number;
+  root: THREE.Group;
+  ringMesh: THREE.Mesh;
+  beamMesh: THREE.Mesh;
+}
+
 interface SharedChestAssets {
   matWoodStandard: THREE.MeshStandardMaterial;
   matWoodRare: THREE.MeshStandardMaterial;
+  matWoodMythic: THREE.MeshStandardMaterial;
   matTrimStandard: THREE.MeshStandardMaterial;
   matTrimRare: THREE.MeshStandardMaterial;
+  matTrimMythic: THREE.MeshStandardMaterial;
   matGoldInside: THREE.MeshStandardMaterial;
   ringMatStandard: THREE.MeshBasicMaterial;
   ringMatRare: THREE.MeshBasicMaterial;
+  ringMatMythic: THREE.MeshBasicMaterial;
+  matSealDome: THREE.MeshBasicMaterial;
+  matRunestonePillar: THREE.MeshStandardMaterial;
+  matCrystalDormant: THREE.MeshStandardMaterial;
+  matCrystalActive: THREE.MeshStandardMaterial;
+  matDigRing: THREE.MeshBasicMaterial;
+  matDigBeam: THREE.MeshBasicMaterial;
   baseWoodGeo: THREE.BufferGeometry;
   baseTrimGeo: THREE.BufferGeometry;
   lidWoodGeo: THREE.BufferGeometry;
   lidTrimGeo: THREE.BufferGeometry;
   goldGeo: THREE.BufferGeometry;
   ringGeo: THREE.BufferGeometry;
+  sealDomeGeo: THREE.BufferGeometry;
+  runestonePillarGeo: THREE.BufferGeometry;
+  runestoneCrystalGeo: THREE.BufferGeometry;
+  runestoneRingGeo: THREE.BufferGeometry;
+  digBeamGeo: THREE.BufferGeometry;
   sparklesGeo: THREE.BufferGeometry;
   sparklesMat: THREE.PointsMaterial;
 }
@@ -111,6 +146,11 @@ function getSharedChestAssets(): SharedChestAssets {
     roughness: 0.78,
     metalness: 0.08,
   });
+  const matWoodMythic = new THREE.MeshStandardMaterial({
+    color: 0x242038,
+    roughness: 0.55,
+    metalness: 0.35,
+  });
 
   const matTrimStandard = new THREE.MeshStandardMaterial({
     color: 0xd4a238,
@@ -125,6 +165,13 @@ function getSharedChestAssets(): SharedChestAssets {
     metalness: 0.82,
     emissive: 0x4a3200,
     emissiveIntensity: 0.4,
+  });
+  const matTrimMythic = new THREE.MeshStandardMaterial({
+    color: 0x5ce1e6,
+    roughness: 0.22,
+    metalness: 0.88,
+    emissive: 0x16697a,
+    emissiveIntensity: 0.75,
   });
 
   const matGoldInside = new THREE.MeshStandardMaterial({
@@ -146,6 +193,56 @@ function getSharedChestAssets(): SharedChestAssets {
     side: THREE.DoubleSide,
     transparent: true,
     opacity: 0.45,
+  });
+  const ringMatMythic = new THREE.MeshBasicMaterial({
+    color: 0x48cae4,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.62,
+  });
+
+  const matSealDome = new THREE.MeshBasicMaterial({
+    color: 0x48cae4,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.38,
+  });
+
+  const matRunestonePillar = new THREE.MeshStandardMaterial({
+    color: 0x5c646d,
+    roughness: 0.85,
+    metalness: 0.12,
+  });
+
+  const matCrystalDormant = new THREE.MeshStandardMaterial({
+    color: 0x3b4d5e,
+    roughness: 0.4,
+    metalness: 0.5,
+    emissive: 0x0d1b2a,
+    emissiveIntensity: 0.3,
+  });
+
+  const matCrystalActive = new THREE.MeshStandardMaterial({
+    color: 0x72efdd,
+    roughness: 0.18,
+    metalness: 0.8,
+    emissive: 0x00b4d8,
+    emissiveIntensity: 1.1,
+  });
+
+  const matDigRing = new THREE.MeshBasicMaterial({
+    color: 0xff595e,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.72,
+  });
+
+  const matDigBeam = new THREE.MeshBasicMaterial({
+    color: 0xffca3a,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.22,
+    depthWrite: false,
   });
 
   // Base wood geometry
@@ -187,6 +284,21 @@ function getSharedChestAssets(): SharedChestAssets {
   const ringGeo = new THREE.RingGeometry(0.58, 0.82, 24);
   ringGeo.rotateX(-Math.PI / 2);
 
+  // Protective Runic Seal Dome around locked Mythic Chests
+  const sealDomeGeo = new THREE.SphereGeometry(0.88, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5);
+
+  // Standing Dwarven Runestone Pillar & Crystal Obelisk
+  const runestonePillarGeo = new THREE.CylinderGeometry(0.22, 0.32, 1.15, 6);
+  runestonePillarGeo.translate(0, 0.575, 0);
+  const runestoneCrystalGeo = new THREE.OctahedronGeometry(0.24, 0);
+  runestoneCrystalGeo.scale(0.85, 1.45, 0.85);
+  const runestoneRingGeo = new THREE.RingGeometry(0.45, 0.64, 18);
+  runestoneRingGeo.rotateX(-Math.PI / 2);
+
+  // Buried Treasure Dig Site Vertical Sky Beam
+  const digBeamGeo = new THREE.CylinderGeometry(0.32, 0.85, 18.0, 12, 1, true);
+  digBeamGeo.translate(0, 9.0, 0);
+
   // Shared sparkle burst geometry & material for chest pickups
   const sparkleCount = 24;
   const sparklePositions = new Float32Array(sparkleCount * 3);
@@ -208,21 +320,42 @@ function getSharedChestAssets(): SharedChestAssets {
   sharedAssets = {
     matWoodStandard,
     matWoodRare,
+    matWoodMythic,
     matTrimStandard,
     matTrimRare,
+    matTrimMythic,
     matGoldInside,
     ringMatStandard,
     ringMatRare,
+    ringMatMythic,
+    matSealDome,
+    matRunestonePillar,
+    matCrystalDormant,
+    matCrystalActive,
+    matDigRing,
+    matDigBeam,
     baseWoodGeo,
     baseTrimGeo,
     lidWoodGeo,
     lidTrimGeo,
     goldGeo,
     ringGeo,
+    sealDomeGeo,
+    runestonePillarGeo,
+    runestoneCrystalGeo,
+    runestoneRingGeo,
+    digBeamGeo,
     sparklesGeo,
     sparklesMat,
   };
   return sharedAssets;
+}
+
+function formatCompassDir(dx: number, dz: number): string {
+  const angle = Math.atan2(dx, -dz); // 0 = North (-Z), PI/2 = East (+X)
+  const octant = Math.round((angle * 4) / Math.PI + 8) % 8;
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return dirs[octant];
 }
 
 export class TreasureManager {
@@ -231,21 +364,35 @@ export class TreasureManager {
   public chestsCollected = 0;
   public onChestCollected?: () => void;
 
+  // Gold Combo Streak state
+  public streakCount = 0;
+  public streakTimer = 0;
+  private readonly streakDuration = 45.0;
+
   private activeChests = new Map<number, ChestInstance[]>();
   private desiredKeys = new Set<number>();
   private collectedIds = new Set<string>();
   private cachedCollectedIds: string[] = [];
   private collectedIdsDirty = true;
   private openingChests: ChestInstance[] = [];
+  private activeDigSite: BuriedDigSite | null = null;
   private audioCtx: AudioContext | null = null;
+  private humCooldown = 0;
+
+  // Diegetic Golden Firefly Guiding Stream (world-space Points)
+  private readonly fireflyCount = 26;
+  private fireflyPoints!: THREE.Points;
+  private fireflyPosAttr!: THREE.BufferAttribute;
+  private fireflyPhase = new Float32Array(26);
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
-  private nearestResult = { dist: 0, pos: new THREE.Vector3() };
+  private nearestResult = { dist: 0, pos: new THREE.Vector3(), label: '' };
 
   private scoreEl: HTMLElement | null;
   private countEl: HTMLElement | null;
   private badgeEl: HTMLElement | null;
+  private streakEl: HTMLElement | null;
   private toastContainer: HTMLElement | null;
   private popTimer: number | null = null;
 
@@ -257,86 +404,168 @@ export class TreasureManager {
     this.scoreEl = document.getElementById('score-value');
     this.countEl = document.getElementById('chests-value');
     this.badgeEl = document.getElementById('treasure-hud');
+    this.streakEl = document.getElementById('streak-badge');
     this.toastContainer = document.getElementById('pickup-toasts');
+    this.buildGuidingFireflies();
+  }
+
+  private buildGuidingFireflies(): void {
+    const positions = new Float32Array(this.fireflyCount * 3);
+    for (let i = 0; i < this.fireflyCount; i++) {
+      positions[i * 3 + 1] = -9999;
+      this.fireflyPhase[i] = i / this.fireflyCount;
+    }
+    const geo = new THREE.BufferGeometry();
+    this.fireflyPosAttr = new THREE.BufferAttribute(positions, 3);
+    this.fireflyPosAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.fireflyPosAttr);
+
+    const mat = new THREE.PointsMaterial({
+      color: 0xffe866,
+      size: 0.26,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+    });
+    this.fireflyPoints = new THREE.Points(geo, mat);
+    this.fireflyPoints.frustumCulled = false;
+    this.group.add(this.fireflyPoints);
   }
 
   private getKey(cx: number, cz: number): number {
     return ((cx & 0xffff) << 16) | (cz & 0xffff);
   }
 
+  public getStreakMultiplier(): number {
+    if (this.streakCount <= 1 || this.streakTimer <= 0) return 1.0;
+    if (this.streakCount === 2) return 1.25;
+    if (this.streakCount === 3) return 1.5;
+    if (this.streakCount === 4) return 2.0;
+    return 2.5;
+  }
+
   /**
-   * Builds a 3D stylized dwarven treasure chest (wooden base, iron/gold straps, hinged curved lid,
-   * gold lock plate, and a subtle glowing ground ring so it reads clearly in the grass).
+   * Builds a 3D stylized dwarven treasure chest (standard, rare, or Rune-Sealed Mythic).
    */
-  private buildChestMesh(isRare: boolean): {
+  private buildChestMesh(
+    isRare: boolean,
+    isMythic: boolean
+  ): {
     root: THREE.Group;
     lidPivot: THREE.Group;
     goldMound: THREE.Mesh;
     glowRing: THREE.Mesh;
+    sealDome?: THREE.Mesh;
   } {
     const assets = getSharedChestAssets();
     const root = new THREE.Group();
     root.matrixAutoUpdate = false;
 
-    const matWood = isRare ? assets.matWoodRare : assets.matWoodStandard;
-    const matTrim = isRare ? assets.matTrimRare : assets.matTrimStandard;
-    const ringMat = isRare ? assets.ringMatRare : assets.ringMatStandard;
+    const matWood = isMythic
+      ? assets.matWoodMythic
+      : isRare
+        ? assets.matWoodRare
+        : assets.matWoodStandard;
+    const matTrim = isMythic
+      ? assets.matTrimMythic
+      : isRare
+        ? assets.matTrimRare
+        : assets.matTrimStandard;
+    const ringMat = isMythic
+      ? assets.ringMatMythic
+      : isRare
+        ? assets.ringMatRare
+        : assets.ringMatStandard;
 
-    // Chest base box (casts and receives shadow)
     const base = new THREE.Mesh(assets.baseWoodGeo, matWood);
     base.castShadow = true;
     base.receiveShadow = true;
     base.matrixAutoUpdate = false;
     root.add(base);
 
-    // Merged gold/brass vertical corner straps on base
     const baseTrim = new THREE.Mesh(assets.baseTrimGeo, matTrim);
-    baseTrim.castShadow = false;
-    baseTrim.receiveShadow = false;
     baseTrim.matrixAutoUpdate = false;
     root.add(baseTrim);
 
-    // Gold coins mound inside the base (hidden while closed, revealed when lid opens!)
     const goldMound = new THREE.Mesh(assets.goldGeo, assets.matGoldInside);
-    goldMound.castShadow = false;
-    goldMound.receiveShadow = false;
     goldMound.visible = false;
     goldMound.matrixAutoUpdate = false;
     root.add(goldMound);
 
-    // Hinged Lid Pivot at back top edge of base
     const lidPivot = new THREE.Group();
     lidPivot.position.set(0, 0.48, -0.31);
     lidPivot.updateMatrix();
     lidPivot.matrixAutoUpdate = false;
     root.add(lidPivot);
 
-    // Merged rounded chest lid wood (casts and receives shadow)
     const lidWood = new THREE.Mesh(assets.lidWoodGeo, matWood);
     lidWood.castShadow = true;
     lidWood.receiveShadow = true;
     lidWood.matrixAutoUpdate = false;
     lidPivot.add(lidWood);
 
-    // Merged lid gold straps + front golden lock clasp
     const lidTrim = new THREE.Mesh(assets.lidTrimGeo, matTrim);
-    lidTrim.castShadow = false;
-    lidTrim.receiveShadow = false;
     lidTrim.matrixAutoUpdate = false;
     lidPivot.add(lidTrim);
 
-    // Subtle ground glow ring so chests stand out amidst tall grass
     const glowRing = new THREE.Mesh(assets.ringGeo, ringMat);
     glowRing.position.y = 0.08;
     glowRing.updateMatrix();
     glowRing.matrixAutoUpdate = false;
     root.add(glowRing);
 
-    return { root, lidPivot, goldMound, glowRing };
+    let sealDome: THREE.Mesh | undefined;
+    if (isMythic) {
+      sealDome = new THREE.Mesh(assets.sealDomeGeo, assets.matSealDome);
+      sealDome.position.y = 0.05;
+      sealDome.updateMatrix();
+      sealDome.matrixAutoUpdate = false;
+      root.add(sealDome);
+    }
+
+    return { root, lidPivot, goldMound, glowRing, sealDome };
+  }
+
+  private buildRunestoneMesh(wx: number, wy: number, wz: number, index: number): RunestoneNode {
+    const assets = getSharedChestAssets();
+    const group = new THREE.Group();
+    group.position.set(wx, wy, wz);
+    group.updateMatrix();
+    group.matrixAutoUpdate = false;
+
+    const pillar = new THREE.Mesh(assets.runestonePillarGeo, assets.matRunestonePillar);
+    pillar.castShadow = true;
+    pillar.receiveShadow = true;
+    pillar.matrixAutoUpdate = false;
+    group.add(pillar);
+
+    const crystalMesh = new THREE.Mesh(assets.runestoneCrystalGeo, assets.matCrystalDormant);
+    crystalMesh.position.set(0, 1.48, 0);
+    crystalMesh.updateMatrix();
+    crystalMesh.matrixAutoUpdate = false;
+    group.add(crystalMesh);
+
+    const ringMesh = new THREE.Mesh(assets.runestoneRingGeo, assets.ringMatMythic);
+    ringMesh.position.set(0, 0.08, 0);
+    ringMesh.updateMatrix();
+    ringMesh.matrixAutoUpdate = false;
+    group.add(ringMesh);
+
+    this.group.add(group);
+    group.updateMatrixWorld(true);
+
+    return {
+      index,
+      worldPos: new THREE.Vector3(wx, wy, wz),
+      activated: false,
+      mesh: group,
+      crystalMesh,
+      ringMesh,
+    };
   }
 
   /**
-   * Synchronizes treasure chests with currently loaded chunk coordinates around the player.
+   * Synchronizes treasure chests, runestones, buried map caches, and guiding fireflies.
    */
   public update(
     dt: number,
@@ -344,6 +573,19 @@ export class TreasureManager {
     playerPos: THREE.Vector3,
     hasLodestone = false
   ): void {
+    // 1. Update Gold Streak Timer
+    if (this.streakTimer > 0) {
+      this.streakTimer = Math.max(0, this.streakTimer - dt);
+      if (this.streakTimer <= 0) {
+        this.streakCount = 0;
+      }
+      this.syncStreakHUD();
+    }
+
+    if (this.humCooldown > 0) {
+      this.humCooldown = Math.max(0, this.humCooldown - dt);
+    }
+
     const size = this.config.chunkSize;
     const r = this.config.renderRadius;
     const centerCx = Math.round(playerPos.x / size);
@@ -370,12 +612,15 @@ export class TreasureManager {
         }
       }
 
-      // Unload distant uncollected chests outside chunk radius
+      // Unload distant uncollected chests & their runestones outside chunk radius
       for (const [key, list] of this.activeChests.entries()) {
         if (!desiredKeys.has(key)) {
           for (const c of list) {
             if (c.state === 'idle') {
               this.group.remove(c.root);
+            }
+            for (const rs of c.runestones) {
+              this.group.remove(rs.mesh);
             }
           }
           this.activeChests.delete(key);
@@ -383,12 +628,31 @@ export class TreasureManager {
       }
     }
 
-    // Check proximity & animate idle glow / collection
+    // 2. Check Buried Map Dig Site proximity & animation
+    if (this.activeDigSite) {
+      const dig = this.activeDigSite;
+      const dx = playerPos.x - dig.worldPos.x;
+      const dz = playerPos.z - dig.worldPos.z;
+      const dSq = dx * dx + dz * dz;
+
+      const pulse = 1.0 + Math.sin(elapsedTime * 5.0) * 0.14;
+      dig.ringMesh.scale.setScalar(pulse);
+      dig.ringMesh.updateMatrix();
+      dig.beamMesh.rotation.y = elapsedTime * 1.5;
+      dig.beamMesh.updateMatrix();
+      dig.root.updateMatrixWorld(true);
+
+      if (dSq <= 2.8 * 2.8) {
+        this.unearthBuriedCache(dig, hasLodestone);
+      }
+    }
+
+    // 3. Check chest & runestone proximity
     const pickupRadius = hasLodestone ? 2.6 : 1.95;
     const pickupRadiusSq = pickupRadius * pickupRadius;
     const magnetRadiusSq = hasLodestone ? 8.5 * 8.5 : 0;
-    const glowAnimRadiusSq = 45 * 45;
-    const maxVisibleRadiusSq = 120 * 120;
+    const glowAnimRadiusSq = 48 * 48;
+    const maxVisibleRadiusSq = 125 * 125;
 
     for (const list of this.activeChests.values()) {
       for (const chest of list) {
@@ -401,11 +665,49 @@ export class TreasureManager {
         const isVisible = dSq < maxVisibleRadiusSq;
         if (chest.root.visible !== isVisible) {
           chest.root.visible = isVisible;
+          for (const rs of chest.runestones) {
+            rs.mesh.visible = isVisible;
+          }
         }
         if (!isVisible) continue;
 
-        if (hasLodestone && dSq < magnetRadiusSq && dSq > pickupRadiusSq) {
-          // Magnetically pull nearby chest toward the dwarf when Lodestone Runes are equipped
+        // Check Runestone activations for sealed Mythic Chests
+        if (chest.sealed) {
+          let activeCount = 0;
+          for (const rs of chest.runestones) {
+            // Rotate floating runestone crystal
+            rs.crystalMesh.rotation.y = elapsedTime * 2.2 + rs.index;
+            rs.crystalMesh.position.y = 1.48 + Math.sin(elapsedTime * 3.0 + rs.index) * 0.08;
+            rs.crystalMesh.updateMatrix();
+            rs.crystalMesh.matrixWorld.multiplyMatrices(rs.mesh.matrixWorld, rs.crystalMesh.matrix);
+
+            if (!rs.activated) {
+              const rdx = playerPos.x - rs.worldPos.x;
+              const rdz = playerPos.z - rs.worldPos.z;
+              if (rdx * rdx + rdz * rdz <= 2.5 * 2.5) {
+                rs.activated = true;
+                rs.crystalMesh.material = getSharedChestAssets().matCrystalActive;
+                activeCount += 1;
+                const totalNow = chest.runestones.filter((n) => n.activated).length;
+                this.playRunestoneChord(totalNow);
+                this.showToast(`🪨 Runestone Awakened! (${totalNow}/3)`, false);
+              }
+            } else {
+              activeCount += 1;
+            }
+          }
+
+          if (activeCount === chest.runestones.length && chest.runestones.length > 0) {
+            chest.sealed = false;
+            if (chest.sealDome) {
+              chest.sealDome.visible = false;
+            }
+            this.showToast('✨ Mythic Runic Chest Unsealed!', true);
+          }
+        }
+
+        if (!chest.sealed && hasLodestone && dSq < magnetRadiusSq && dSq > pickupRadiusSq) {
+          // Magnetically pull unsealed chest toward the dwarf when Lodestone Runes are equipped
           const dist = Math.sqrt(dSq);
           const pullStep = Math.min(dist, dt * 11.5);
           chest.worldPos.x += (dx / dist) * pullStep;
@@ -421,7 +723,6 @@ export class TreasureManager {
           chest.glowRing.visible = showGlow;
         }
         if (showGlow) {
-          // Pulse ground aura gently only for nearby chests
           const pulse = 1.0 + Math.sin(elapsedTime * 3.5 + chest.worldPos.x) * 0.08;
           chest.glowRing.scale.setScalar(pulse);
           chest.glowRing.updateMatrix();
@@ -432,35 +733,39 @@ export class TreasureManager {
         }
 
         if (dSq <= pickupRadiusSq) {
-          this.collectChest(chest, hasLodestone);
+          if (chest.sealed) {
+            if (this.humCooldown <= 0) {
+              this.humCooldown = 2.0;
+              const lit = chest.runestones.filter((r) => r.activated).length;
+              this.showToast(`🔒 Sealed! Awaken nearby Runestones (${lit}/3)`, false);
+            }
+          } else {
+            this.collectChest(chest, hasLodestone);
+          }
         }
       }
     }
 
-    // Animate opening chests (lid swing, gold sparkle burst, and scale-out)
+    // 4. Animate opening chests
     for (let i = this.openingChests.length - 1; i >= 0; i--) {
       const chest = this.openingChests[i];
       chest.animTime += dt;
       const t = chest.animTime;
 
-      // Swing lid open in first 0.35s
       const lidAngle = -Math.min(1, t / 0.32) * (Math.PI * 0.62);
       chest.lidPivot.rotation.x = lidAngle;
 
-      // Expand & fade ground ring
       chest.glowRing.scale.setScalar(1.0 + t * 2.5);
       (chest.glowRing.material as THREE.MeshBasicMaterial).opacity = Math.max(
         0,
         0.5 * (1 - t * 1.2)
       );
 
-      // Float sparkles upward
       if (chest.sparkles) {
         chest.sparkles.position.y = 0.5 + t * 2.2;
         chest.sparkles.rotation.y = t * 3.0;
       }
 
-      // Shrink chest out after 1.1s
       if (t > 1.1) {
         const shrink = Math.max(0.001, 1.0 - (t - 1.1) * 3.2);
         chest.root.scale.setScalar(shrink);
@@ -474,16 +779,80 @@ export class TreasureManager {
       if (t >= 1.42) {
         this.disposeOpeningChestResources(chest);
         this.group.remove(chest.root);
+        for (const rs of chest.runestones) {
+          this.group.remove(rs.mesh);
+        }
         chest.state = 'collected';
         this.openingChests.splice(i, 1);
       }
     }
+
+    // 5. Update Diegetic Guiding Fireflies & Harmonic Proximity Hum
+    this.updateGuidingFireflies(dt, elapsedTime, playerPos, hasLodestone);
+  }
+
+  private updateGuidingFireflies(
+    dt: number,
+    elapsedTime: number,
+    playerPos: THREE.Vector3,
+    hasLodestone: boolean
+  ): void {
+    const target = this.getNearestChest(playerPos);
+    const maxGuideDist = hasLodestone ? 115 : 58;
+    const posArr = this.fireflyPosAttr.array as Float32Array;
+
+    if (!target || target.dist > maxGuideDist || target.dist < 2.2) {
+      for (let i = 0; i < this.fireflyCount; i++) {
+        posArr[i * 3 + 1] = -9999;
+      }
+      this.fireflyPosAttr.needsUpdate = true;
+      return;
+    }
+
+    // Play a soft spatial harmonic hum when getting close (< 20m)
+    if (target.dist < 20.0 && this.humCooldown <= 0) {
+      this.humCooldown = THREE.MathUtils.clamp(target.dist * 0.22, 1.2, 3.8);
+      this.playProximityHum(target.dist);
+    }
+
+    const dx = target.pos.x - playerPos.x;
+    const dz = target.pos.z - playerPos.z;
+    const dist = Math.max(0.01, target.dist);
+    const dirX = dx / dist;
+    const dirZ = dz / dist;
+    const perpX = -dirZ;
+    const perpZ = dirX;
+    const trailSpan = Math.min(dist * 0.85, 16.0);
+
+    for (let i = 0; i < this.fireflyCount; i++) {
+      let phase = (this.fireflyPhase[i] + dt * 0.42) % 1.0;
+      this.fireflyPhase[i] = phase;
+
+      const along = 1.4 + phase * trailSpan;
+      const swirl = Math.sin(elapsedTime * 3.2 + i * 0.9) * (0.45 + phase * 0.65);
+      const wx = playerPos.x + dirX * along + perpX * swirl;
+      const wz = playerPos.z + dirZ * along + perpZ * swirl;
+      const groundY = this.noise.getHeight(wx, wz);
+      const wy =
+        Math.max(groundY, this.config.waterLevel - 0.2) +
+        0.85 +
+        Math.sin(elapsedTime * 4.5 + i * 1.3) * 0.32;
+
+      posArr[i * 3] = wx;
+      posArr[i * 3 + 1] = wy;
+      posArr[i * 3 + 2] = wz;
+    }
+    this.fireflyPosAttr.needsUpdate = true;
   }
 
   private disposeOpeningChestResources(chest: ChestInstance): void {
     const assets = getSharedChestAssets();
     const ringMat = chest.glowRing.material as THREE.Material;
-    if (ringMat !== assets.ringMatStandard && ringMat !== assets.ringMatRare) {
+    if (
+      ringMat !== assets.ringMatStandard &&
+      ringMat !== assets.ringMatRare &&
+      ringMat !== assets.ringMatMythic
+    ) {
       ringMat.dispose();
     }
   }
@@ -495,9 +864,8 @@ export class TreasureManager {
 
     const list: ChestInstance[] = [];
 
-    // Guaranteed welcoming chest in the starting chunk (0,0), otherwise ~55% chance per chunk
     const isStartChunk = cx === 0 && cz === 0;
-    const shouldSpawn = isStartChunk || rng() < 0.55;
+    const shouldSpawn = isStartChunk || rng() < 0.58;
     if (!shouldSpawn) {
       this.activeChests.set(chunkKey, list);
       return;
@@ -509,7 +877,6 @@ export class TreasureManager {
       const id = `${cx},${cz},${i}`;
       if (this.collectedIds.has(id)) continue;
 
-      // Try up to 8 candidate spots inside the chunk to find dry, gentle ground
       let placed = false;
       for (let attempt = 0; attempt < 8 && !placed; attempt++) {
         const lx = isStartChunk && attempt === 0 ? 7.5 : (rng() - 0.5) * (size * 0.78);
@@ -522,7 +889,6 @@ export class TreasureManager {
           continue;
         }
 
-        // Avoid blocking the center of a walking track; place chests beside the trail or in meadows
         if (
           !isStartChunk &&
           this.config.enableTracks &&
@@ -534,15 +900,37 @@ export class TreasureManager {
         this.noise.getNormal(wx, wz, tempChestNormal);
         if (tempChestNormal.y < 0.82) continue;
 
-        const isRare = !isStartChunk && rng() < 0.22;
-        const points = isRare ? 250 : 100;
-        const { root, lidPivot, goldMound, glowRing } = this.buildChestMesh(isRare);
+        const roll = rng();
+        const isMythic = !isStartChunk && i === 0 && roll < 0.2;
+        const isRare = !isStartChunk && !isMythic && roll < 0.42;
+        const points = isMythic ? 500 : isRare ? 250 : 100;
+
+        const { root, lidPivot, goldMound, glowRing, sealDome } = this.buildChestMesh(
+          isRare,
+          isMythic
+        );
 
         root.position.set(wx, wy, wz);
         root.rotation.y = rng() * Math.PI * 2;
         root.updateMatrix();
         this.group.add(root);
         root.updateMatrixWorld(true);
+
+        const runestones: RunestoneNode[] = [];
+        if (isMythic) {
+          const baseAngle = rng() * Math.PI * 2;
+          for (let rIdx = 0; rIdx < 3; rIdx++) {
+            const rAngle = baseAngle + (rIdx * Math.PI * 2) / 3 + (rng() - 0.5) * 0.35;
+            const rDist = 13.5 + rng() * 6.5;
+            const rx = wx + Math.cos(rAngle) * rDist;
+            const rz = wz + Math.sin(rAngle) * rDist;
+            const ry = Math.max(
+              this.noise.getHeight(rx, rz),
+              this.config.enableWater ? this.config.waterLevel + 0.3 : -999
+            );
+            runestones.push(this.buildRunestoneMesh(rx, ry, rz, rIdx));
+          }
+        }
 
         list.push({
           id,
@@ -551,10 +939,14 @@ export class TreasureManager {
           worldPos: new THREE.Vector3(wx, wy, wz),
           points,
           isRare,
+          isMythic,
+          sealed: isMythic,
+          runestones,
           root,
           lidPivot,
           goldMound,
           glowRing,
+          sealDome,
           state: 'idle',
           animTime: 0,
         });
@@ -570,14 +962,19 @@ export class TreasureManager {
     chest.goldMound.visible = true;
     this.collectedIds.add(chest.id);
     this.collectedIdsDirty = true;
-    const earnedPoints = hasLodestone ? Math.round(chest.points * 1.5) : chest.points;
+
+    // Advance Gold Streak Multiplier!
+    this.streakCount = Math.min(5, this.streakCount + 1);
+    this.streakTimer = this.streakDuration;
+    const streakMult = this.getStreakMultiplier();
+    const lodestoneMult = hasLodestone ? 1.5 : 1.0;
+    const earnedPoints = Math.round(chest.points * lodestoneMult * streakMult);
+
     this.score += earnedPoints;
     this.chestsCollected += 1;
 
-    // Clone glowRing material so fading opacity doesn't affect idle chests
     chest.glowRing.material = (chest.glowRing.material as THREE.MeshBasicMaterial).clone();
 
-    // Reuse shared golden coin/sparkle burst geometry & material
     const assets = getSharedChestAssets();
     const sparkles = new THREE.Points(assets.sparklesGeo, assets.sparklesMat);
     sparkles.position.y = 0.5;
@@ -585,8 +982,82 @@ export class TreasureManager {
     chest.sparkles = sparkles;
 
     this.openingChests.push(chest);
-    this.updateHUD(earnedPoints, chest.isRare);
-    this.playPickupChime(chest.isRare);
+    const labelPrefix = chest.isMythic
+      ? '💎 Mythic Runic Chest!'
+      : chest.isRare
+        ? '★ Rare Dwarven Chest!'
+        : '';
+    this.updateHUD(earnedPoints, chest.isRare || chest.isMythic, labelPrefix);
+    this.syncStreakHUD();
+    this.playPickupChime(chest.isRare || chest.isMythic);
+
+    // Chance to discover an Ancient Map Fragment leading to a Buried Relic Hoard!
+    if (!this.activeDigSite && (this.chestsCollected === 1 || Math.random() < 0.38)) {
+      this.spawnBuriedDigSite(chest.worldPos);
+    }
+
+    this.onChestCollected?.();
+  }
+
+  private spawnBuriedDigSite(originPos: THREE.Vector3): void {
+    const assets = getSharedChestAssets();
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 52 + Math.random() * 32;
+      const wx = originPos.x + Math.cos(angle) * dist;
+      const wz = originPos.z + Math.sin(angle) * dist;
+      const wy = this.noise.getHeight(wx, wz);
+
+      if (this.config.enableWater && wy < this.config.waterLevel + 1.0) continue;
+
+      const root = new THREE.Group();
+      root.position.set(wx, wy, wz);
+      root.updateMatrix();
+      root.matrixAutoUpdate = false;
+
+      const ringMesh = new THREE.Mesh(assets.runestoneRingGeo, assets.matDigRing);
+      ringMesh.position.y = 0.12;
+      ringMesh.scale.setScalar(1.8);
+      ringMesh.updateMatrix();
+      ringMesh.matrixAutoUpdate = false;
+      root.add(ringMesh);
+
+      const beamMesh = new THREE.Mesh(assets.digBeamGeo, assets.matDigBeam);
+      beamMesh.matrixAutoUpdate = false;
+      root.add(beamMesh);
+
+      this.group.add(root);
+      root.updateMatrixWorld(true);
+
+      this.activeDigSite = {
+        worldPos: new THREE.Vector3(wx, wy, wz),
+        points: 400,
+        root,
+        ringMesh,
+        beamMesh,
+      };
+
+      const dir = formatCompassDir(wx - originPos.x, wz - originPos.z);
+      this.showToast(`🗺️ Map Found! Buried Hoard ${dist.toFixed(0)}m ${dir}!`, true);
+      return;
+    }
+  }
+
+  private unearthBuriedCache(dig: BuriedDigSite, hasLodestone: boolean): void {
+    this.group.remove(dig.root);
+    this.activeDigSite = null;
+
+    this.streakCount = Math.min(5, this.streakCount + 1);
+    this.streakTimer = this.streakDuration;
+    const streakMult = this.getStreakMultiplier();
+    const lodestoneMult = hasLodestone ? 1.5 : 1.0;
+    const earned = Math.round(dig.points * lodestoneMult * streakMult);
+
+    this.score += earned;
+    this.chestsCollected += 1;
+    this.updateHUD(earned, true, '🗺️ Buried Hoard Unearthed!');
+    this.syncStreakHUD();
+    this.playPickupChime(true);
     this.onChestCollected?.();
   }
 
@@ -606,7 +1077,29 @@ export class TreasureManager {
     }
   }
 
-  private updateHUD(addedPoints: number, isRare: boolean): void {
+  private syncStreakHUD(): void {
+    if (!this.streakEl) return;
+    const mult = this.getStreakMultiplier();
+    if (mult > 1.0 && this.streakTimer > 0) {
+      this.streakEl.textContent = `🔥 ${mult}x Streak (${Math.ceil(this.streakTimer)}s)`;
+      this.streakEl.classList.remove('hidden');
+    } else {
+      this.streakEl.classList.add('hidden');
+    }
+  }
+
+  private showToast(text: string, isHighlight: boolean): void {
+    if (!this.toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = `pickup-toast ${isHighlight ? 'rare' : ''}`;
+    toast.textContent = text;
+    this.toastContainer.appendChild(toast);
+    window.setTimeout(() => {
+      toast.remove();
+    }, 2300);
+  }
+
+  private updateHUD(addedPoints: number, isRare: boolean, customPrefix = ''): void {
     this.syncHUDTotals();
 
     if (this.badgeEl) {
@@ -620,23 +1113,15 @@ export class TreasureManager {
       }, 200);
     }
 
-    if (this.toastContainer) {
-      const toast = document.createElement('div');
-      toast.className = `pickup-toast ${isRare ? 'rare' : ''}`;
-      toast.textContent = isRare
-        ? `★ Rare Dwarven Chest! +${addedPoints} Gold`
-        : `+${addedPoints} Gold`;
-      this.toastContainer.appendChild(toast);
-      setTimeout(() => {
-        toast.remove();
-      }, 2200);
-    }
+    const mult = this.getStreakMultiplier();
+    const multTag = mult > 1.0 ? ` (${mult}x Streak!)` : '';
+    const msg = customPrefix
+      ? `${customPrefix} +${addedPoints} Gold${multTag}`
+      : `+$${addedPoints} Gold${multTag}`.replace('+$', '+');
+    this.showToast(msg, isRare);
   }
 
-  /**
-   * Plays a cheerful synthesized treasure chime using Web Audio API.
-   */
-  private playPickupChime(isRare: boolean): void {
+  private ensureAudio(): AudioContext | null {
     try {
       if (!this.audioCtx) {
         this.audioCtx = new AudioContext();
@@ -644,35 +1129,88 @@ export class TreasureManager {
       if (this.audioCtx.state === 'suspended') {
         this.audioCtx.resume();
       }
-      const now = this.audioCtx.currentTime;
-      const notes = isRare ? [523.25, 659.25, 783.99, 1046.5] : [523.25, 659.25, 783.99];
-
-      notes.forEach((freq, idx) => {
-        const osc = this.audioCtx!.createOscillator();
-        const gain = this.audioCtx!.createGain();
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
-
-        gain.gain.setValueAtTime(0.001, now + idx * 0.08);
-        gain.gain.exponentialRampToValueAtTime(0.18, now + idx * 0.08 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.38);
-
-        osc.connect(gain);
-        gain.connect(this.audioCtx!.destination);
-        osc.start(now + idx * 0.08);
-        osc.stop(now + idx * 0.08 + 0.4);
-      });
+      return this.audioCtx;
     } catch {
-      // Ignore if AudioContext is blocked
+      return null;
     }
   }
 
+  private playPickupChime(isRare: boolean): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = isRare ? [523.25, 659.25, 783.99, 1046.5] : [523.25, 659.25, 783.99];
+
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+
+      gain.gain.setValueAtTime(0.001, now + idx * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + idx * 0.08 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.38);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + idx * 0.08);
+      osc.stop(now + idx * 0.08 + 0.4);
+    });
+  }
+
+  private playRunestoneChord(stepIndex: number): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const baseFreqs = [329.63, 440.0, 587.33];
+    const freq = baseFreqs[(stepIndex - 1) % baseFreqs.length];
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + 0.32);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.15, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.38);
+  }
+
+  private playProximityHum(dist: number): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const closeness = 1.0 - THREE.MathUtils.clamp(dist / 20.0, 0, 1);
+    const freq = 392.0 + closeness * 260.0;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.045, now + 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.3);
+  }
+
   /**
-   * Finds the world position of the nearest uncollected chest so we can show a subtle distance/hint.
+   * Finds the world position and diegetic status label of the nearest active treasure objective
+   * (either a nearby unactivated Runestone, an active Map Dig Site, or the nearest Chest).
    */
-  public getNearestChest(playerPos: THREE.Vector3): { dist: number; pos: THREE.Vector3 } | null {
+  public getNearestChest(
+    playerPos: THREE.Vector3
+  ): { dist: number; pos: THREE.Vector3; label: string } | null {
     let bestDistSq = Infinity;
     let bestPos: THREE.Vector3 | null = null;
+    let bestChest: ChestInstance | null = null;
 
     for (const list of this.activeChests.values()) {
       for (const c of list) {
@@ -683,13 +1221,66 @@ export class TreasureManager {
         if (dSq < bestDistSq) {
           bestDistSq = dSq;
           bestPos = c.worldPos;
+          bestChest = c;
         }
       }
     }
 
-    if (!bestPos) return null;
-    this.nearestResult.dist = Math.sqrt(bestDistSq);
+    // If an active Buried Map Dig Site is closer or within 75m, prioritize guiding to it
+    if (this.activeDigSite) {
+      const ddx = this.activeDigSite.worldPos.x - playerPos.x;
+      const ddz = this.activeDigSite.worldPos.z - playerPos.z;
+      const digDistSq = ddx * ddx + ddz * ddz;
+      if (digDistSq < bestDistSq || digDistSq < 85 * 85) {
+        const dist = Math.sqrt(digDistSq);
+        const dir = formatCompassDir(ddx, ddz);
+        this.nearestResult.dist = dist;
+        this.nearestResult.pos.copy(this.activeDigSite.worldPos);
+        this.nearestResult.label = `🗺️ Map Hoard: ${dist.toFixed(0)}m ${dir}`;
+        return this.nearestResult;
+      }
+    }
+
+    if (!bestPos || !bestChest) return null;
+
+    // If the nearest chest is a sealed Mythic Chest within 36m, guide to its nearest unlit Runestone
+    if (bestChest.sealed && bestDistSq < 36 * 36) {
+      let bestRune: RunestoneNode | null = null;
+      let bestRuneDistSq = Infinity;
+      let litCount = 0;
+      for (const rs of bestChest.runestones) {
+        if (rs.activated) {
+          litCount += 1;
+          continue;
+        }
+        const rdx = rs.worldPos.x - playerPos.x;
+        const rdz = rs.worldPos.z - playerPos.z;
+        const rSq = rdx * rdx + rdz * rdz;
+        if (rSq < bestRuneDistSq) {
+          bestRuneDistSq = rSq;
+          bestRune = rs;
+        }
+      }
+      if (bestRune) {
+        const rDist = Math.sqrt(bestRuneDistSq);
+        const dir = formatCompassDir(
+          bestRune.worldPos.x - playerPos.x,
+          bestRune.worldPos.z - playerPos.z
+        );
+        this.nearestResult.dist = rDist;
+        this.nearestResult.pos.copy(bestRune.worldPos);
+        this.nearestResult.label = `🪨 Runes (${litCount}/3) • ${rDist.toFixed(0)}m ${dir}`;
+        return this.nearestResult;
+      }
+    }
+
+    const dist = Math.sqrt(bestDistSq);
+    const dir = formatCompassDir(bestPos.x - playerPos.x, bestPos.z - playerPos.z);
+    this.nearestResult.dist = dist;
     this.nearestResult.pos.copy(bestPos);
+    this.nearestResult.label = bestChest.isMythic
+      ? `💎 Mythic: ${dist.toFixed(0)}m ${dir}`
+      : `✨ ${dist.toFixed(0)}m ${dir}`;
     return this.nearestResult;
   }
 
@@ -697,15 +1288,25 @@ export class TreasureManager {
     for (const chest of this.openingChests) {
       this.disposeOpeningChestResources(chest);
       this.group.remove(chest.root);
+      for (const rs of chest.runestones) {
+        this.group.remove(rs.mesh);
+      }
     }
     this.openingChests.length = 0;
 
     for (const list of this.activeChests.values()) {
       for (const c of list) {
         this.group.remove(c.root);
+        for (const rs of c.runestones) {
+          this.group.remove(rs.mesh);
+        }
       }
     }
     this.activeChests.clear();
+    if (this.activeDigSite) {
+      this.group.remove(this.activeDigSite.root);
+      this.activeDigSite = null;
+    }
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
   }
@@ -734,9 +1335,12 @@ export class TreasureManager {
   public resetProgress(): void {
     this.score = 0;
     this.chestsCollected = 0;
+    this.streakCount = 0;
+    this.streakTimer = 0;
     this.collectedIds.clear();
     this.collectedIdsDirty = true;
     this.syncHUDTotals();
+    this.syncStreakHUD();
     this.rebuildAll();
   }
 }
