@@ -14,9 +14,20 @@ export class DwarfCharacter {
   public readonly trailPoints: THREE.Points;
   private modelContainer = new THREE.Group();
   private gliderGroup = new THREE.Group();
+  private backpackGroup = new THREE.Group();
+  private stowedRodGroup = new THREE.Group();
+  private equippedRodGroup = new THREE.Group();
+  private rodBendPivot = new THREE.Group();
+  private rodTipNode = new THREE.Object3D();
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
+
+  private isFishingMode = false;
+  private fishingEquipBlend = 0;
+  private castAnimTimer = 0;
+  private rodBendTarget = 0;
+  private rodBendCurrent = 0;
 
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
@@ -103,6 +114,169 @@ export class DwarfCharacter {
     this.surfShieldMesh.visible = false;
     this.surfShieldMesh.castShadow = true;
     this.modelContainer.add(this.surfShieldMesh);
+
+    // 3. Dwarven Explorer Backpack on back with Stowed Fishing Rod + Equipped Fishing Rod in hand
+    this.buildBackpackAndFishingRod();
+  }
+
+  private buildBackpackAndFishingRod(): void {
+    const leatherMat = new THREE.MeshStandardMaterial({
+      color: 0x6b3e26,
+      roughness: 0.78,
+      metalness: 0.08,
+    });
+    const flapMat = new THREE.MeshStandardMaterial({
+      color: 0x522d1b,
+      roughness: 0.82,
+      metalness: 0.06,
+    });
+    const brassMat = new THREE.MeshStandardMaterial({
+      color: 0xe0a938,
+      roughness: 0.28,
+      metalness: 0.85,
+    });
+    const bedrollMat = new THREE.MeshStandardMaterial({
+      color: 0x3b6e52,
+      roughness: 0.85,
+      metalness: 0.04,
+    });
+    const rodWoodMat = new THREE.MeshStandardMaterial({
+      color: 0x9c6634,
+      roughness: 0.52,
+      metalness: 0.12,
+    });
+    const corkMat = new THREE.MeshStandardMaterial({
+      color: 0xd4a373,
+      roughness: 0.82,
+      metalness: 0.04,
+    });
+
+    // Position backpack on the dwarf's upper back (-Z is behind the dwarf since +Z is forward)
+    this.backpackGroup.position.set(0, 0.82, -0.24);
+    const packBodyGeo = new THREE.BoxGeometry(0.38, 0.42, 0.22);
+    const packBody = new THREE.Mesh(packBodyGeo, leatherMat);
+    packBody.castShadow = true;
+    this.backpackGroup.add(packBody);
+
+    const packFlapGeo = new THREE.BoxGeometry(0.4, 0.14, 0.24);
+    const packFlap = new THREE.Mesh(packFlapGeo, flapMat);
+    packFlap.position.set(0, 0.16, 0);
+    packFlap.castShadow = true;
+    this.backpackGroup.add(packFlap);
+
+    const buckleGeo = new THREE.BoxGeometry(0.07, 0.07, 0.03);
+    const buckle = new THREE.Mesh(buckleGeo, brassMat);
+    buckle.position.set(0, 0.11, -0.12);
+    this.backpackGroup.add(buckle);
+
+    const bedrollGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.42, 10);
+    bedrollGeo.rotateZ(Math.PI / 2);
+    const bedroll = new THREE.Mesh(bedrollGeo, bedrollMat);
+    bedroll.position.set(0, 0.26, 0.01);
+    bedroll.castShadow = true;
+    this.backpackGroup.add(bedroll);
+
+    // Side quiver/holster tube on the backpack for the fishing rod
+    const quiverGeo = new THREE.CylinderGeometry(0.045, 0.04, 0.34, 8);
+    const quiver = new THREE.Mesh(quiverGeo, flapMat);
+    quiver.position.set(0.19, -0.02, -0.02);
+    quiver.rotation.z = -0.18;
+    this.backpackGroup.add(quiver);
+
+    // Stowed Fishing Rod sticking out of the backpack holster over right shoulder
+    this.stowedRodGroup.position.set(0.19, 0.05, -0.02);
+    this.stowedRodGroup.rotation.set(-0.12, 0, -0.22);
+
+    const stowedShaftGeo = new THREE.CylinderGeometry(0.008, 0.02, 0.95, 7);
+    stowedShaftGeo.translate(0, 0.475, 0);
+    const stowedShaft = new THREE.Mesh(stowedShaftGeo, rodWoodMat);
+    stowedShaft.castShadow = true;
+    this.stowedRodGroup.add(stowedShaft);
+
+    const stowedReelGeo = new THREE.CylinderGeometry(0.042, 0.042, 0.035, 10);
+    stowedReelGeo.rotateZ(Math.PI / 2);
+    const stowedReel = new THREE.Mesh(stowedReelGeo, brassMat);
+    stowedReel.position.set(0.03, 0.16, 0);
+    this.stowedRodGroup.add(stowedReel);
+
+    const stowedTipRingGeo = new THREE.TorusGeometry(0.018, 0.004, 6, 12);
+    const stowedTipRing = new THREE.Mesh(stowedTipRingGeo, brassMat);
+    stowedTipRing.position.set(0, 0.95, 0);
+    this.stowedRodGroup.add(stowedTipRing);
+
+    this.backpackGroup.add(this.stowedRodGroup);
+    this.modelContainer.add(this.backpackGroup);
+
+    // Equipped 3D Fishing Rod held by the dwarf in Fishing Mode
+    this.equippedRodGroup.position.set(0.32, 0.86, 0.28);
+    this.equippedRodGroup.visible = false;
+
+    const handleGeo = new THREE.CylinderGeometry(0.024, 0.022, 0.36, 8);
+    handleGeo.rotateX(Math.PI * 0.34);
+    const handleMesh = new THREE.Mesh(handleGeo, corkMat);
+    handleMesh.castShadow = true;
+    this.equippedRodGroup.add(handleMesh);
+
+    const reelMountGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.048, 12);
+    reelMountGeo.rotateZ(Math.PI / 2);
+    const reelMount = new THREE.Mesh(reelMountGeo, brassMat);
+    reelMount.position.set(0.038, 0.04, 0.11);
+    reelMount.castShadow = true;
+    this.equippedRodGroup.add(reelMount);
+
+    const lowerShaftGeo = new THREE.CylinderGeometry(0.014, 0.022, 0.92, 8);
+    lowerShaftGeo.translate(0, 0.46, 0);
+    lowerShaftGeo.rotateX(Math.PI * 0.34);
+    const lowerShaft = new THREE.Mesh(lowerShaftGeo, rodWoodMat);
+    lowerShaft.castShadow = true;
+    this.equippedRodGroup.add(lowerShaft);
+
+    // Upper flexible rod half attached at the midpoint so it bends when casting/reeling a fish
+    const midY = Math.cos(Math.PI * 0.34) * 0.92;
+    const midZ = Math.sin(Math.PI * 0.34) * 0.92;
+    this.rodBendPivot.position.set(0, midY, midZ);
+
+    const upperShaftGeo = new THREE.CylinderGeometry(0.006, 0.014, 0.96, 8);
+    upperShaftGeo.translate(0, 0.48, 0);
+    upperShaftGeo.rotateX(Math.PI * 0.34);
+    const upperShaft = new THREE.Mesh(upperShaftGeo, rodWoodMat);
+    upperShaft.castShadow = true;
+    this.rodBendPivot.add(upperShaft);
+
+    const eyeletGeo = new THREE.TorusGeometry(0.018, 0.004, 6, 12);
+    const tipY = Math.cos(Math.PI * 0.34) * 0.96;
+    const tipZ = Math.sin(Math.PI * 0.34) * 0.96;
+    const tipEyelet = new THREE.Mesh(eyeletGeo, brassMat);
+    tipEyelet.position.set(0, tipY, tipZ);
+    this.rodBendPivot.add(tipEyelet);
+
+    this.rodTipNode.position.set(0, tipY, tipZ);
+    this.rodBendPivot.add(this.rodTipNode);
+
+    this.equippedRodGroup.add(this.rodBendPivot);
+    this.modelContainer.add(this.equippedRodGroup);
+  }
+
+  public setFishingMode(active: boolean): void {
+    if (this.isFishingMode === active) return;
+    this.isFishingMode = active;
+    if (!active) {
+      this.castAnimTimer = 0;
+      this.rodBendTarget = 0;
+    }
+  }
+
+  public triggerCastAnimation(): void {
+    this.castAnimTimer = 0.48;
+  }
+
+  public setRodBend(bend: number): void {
+    this.rodBendTarget = THREE.MathUtils.clamp(bend, 0, 1.2);
+  }
+
+  public getRodTipWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
+    this.root.updateMatrixWorld(true);
+    return this.rodTipNode.getWorldPosition(out);
   }
 
   private buildTrailParticles(): THREE.Points {
@@ -458,6 +632,60 @@ export class DwarfCharacter {
 
     // Show Ironbelly Surf-Shield underneath boots when slope-sliding or dashing
     this.surfShieldMesh.visible = isSliding && !isSwimming;
+
+    // Animate drawing the Fishing Rod out of the backpack (or stowing it back into the backpack)
+    const wantFishing = this.isFishingMode && !isSwimming && !isGliding;
+    const targetFishBlend = wantFishing ? 1.0 : 0.0;
+    if (Math.abs(this.fishingEquipBlend - targetFishBlend) > 0.002) {
+      this.fishingEquipBlend = THREE.MathUtils.lerp(
+        this.fishingEquipBlend,
+        targetFishBlend,
+        Math.min(1, dt * 9.5)
+      );
+    } else {
+      this.fishingEquipBlend = targetFishBlend;
+    }
+
+    const rodOut = this.fishingEquipBlend > 0.25;
+    this.stowedRodGroup.visible = !rodOut;
+    this.equippedRodGroup.visible = rodOut;
+
+    if (rodOut) {
+      // Smoothly swing rod from backpack over the right shoulder into fishing stance
+      const equipT = THREE.MathUtils.smoothstep(this.fishingEquipBlend, 0.25, 1.0);
+      let castSwingPitch = 0;
+      if (this.castAnimTimer > 0) {
+        this.castAnimTimer = Math.max(0, this.castAnimTimer - dt);
+        const p = 1.0 - this.castAnimTimer / 0.48;
+        // Wind back (0..0.35), snap forward (0.35..0.75), settle (0.75..1.0)
+        if (p < 0.35) {
+          castSwingPitch = -Math.sin((p / 0.35) * (Math.PI * 0.5)) * 0.68;
+        } else {
+          castSwingPitch = Math.sin(((p - 0.35) / 0.65) * Math.PI) * 0.54;
+        }
+      }
+
+      const startX = 0.22;
+      const startY = 1.15;
+      const startZ = -0.18;
+      this.equippedRodGroup.position.set(
+        THREE.MathUtils.lerp(startX, 0.32, equipT),
+        THREE.MathUtils.lerp(startY, 0.86, equipT),
+        THREE.MathUtils.lerp(startZ, 0.26, equipT)
+      );
+      this.equippedRodGroup.rotation.set(
+        THREE.MathUtils.lerp(-0.95, -0.14 + castSwingPitch, equipT),
+        THREE.MathUtils.lerp(0.45, -0.06, equipT),
+        THREE.MathUtils.lerp(-0.35, 0.0, equipT)
+      );
+
+      this.rodBendCurrent = THREE.MathUtils.lerp(
+        this.rodBendCurrent,
+        this.rodBendTarget,
+        Math.min(1, dt * 10.0)
+      );
+      this.rodBendPivot.rotation.x = this.rodBendCurrent * 0.42 + Math.max(0, castSwingPitch) * 0.25;
+    }
 
     // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)
     const shouldEmitTrail = (isSliding || (isTrailblazing && moveSpeed > 9.0)) && !isSwimming;

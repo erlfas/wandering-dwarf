@@ -258,11 +258,33 @@ body {
   transform: translateY(-1px);
 }
 
+#fishing-mode-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-left: 4px;
+  background: rgba(72, 202, 228, 0.18);
+  border: 1px solid rgba(72, 202, 228, 0.5);
+  color: #caf0f8;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+#fishing-mode-toggle:hover,
+#fishing-mode-toggle.active {
+  background: rgba(72, 202, 228, 0.36);
+  border-color: #90e0ef;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
 /* Active Traversal Status Pill */
 #movement-status-pill {
   position: absolute;
   top: 20px;
-  left: 310px;
+  left: 382px;
   background: rgba(22, 34, 24, 0.82);
   backdrop-filter: blur(6px);
   border: 1px solid rgba(134, 239, 172, 0.5);
@@ -540,4 +562,66 @@ kbd {
 
 #challenge-banner.hidden {
   display: none;
+}
+
+#fishing-banner {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: linear-gradient(135deg, rgba(14, 34, 46, 0.92), rgba(18, 28, 38, 0.9));
+  border: 1px solid rgba(100, 223, 223, 0.72);
+  color: #e0fbfc;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.38), 0 0 14px rgba(72, 202, 228, 0.25);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+#fishing-banner.hidden {
+  display: none;
+}
+
+.fish-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  margin: 0 3px;
+}
+
+.fish-tag.water {
+  background: rgba(72, 202, 228, 0.24);
+  border: 1px solid rgba(144, 224, 239, 0.6);
+  color: #90e0ef;
+}
+
+.fish-tag.dry {
+  background: rgba(255, 183, 3, 0.22);
+  border: 1px solid rgba(255, 183, 3, 0.6);
+  color: #ffd166;
+}
+
+.fishing-exit-pill {
+  cursor: pointer;
+  background: rgba(239, 35, 60, 0.24);
+  border: 1px solid rgba(239, 35, 60, 0.65);
+  color: #ffccd5;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  transition: all 0.14s ease;
+}
+
+.fishing-exit-pill:hover {
+  background: rgba(239, 35, 60, 0.45);
+  color: #ffffff;
 }

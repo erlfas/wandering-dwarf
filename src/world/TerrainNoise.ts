@@ -374,7 +374,30 @@ export class TerrainNoise {
         }
       }
 
-      // B) Natural Pond Basins in low-to-mid valleys (early-out on high terrain before evaluating pondNoise)
+      // B) Scenic starter fishing pond near spawn around (18, -14)
+      if (cfg.pondFrequency > 0) {
+        const spDx = x - 18.0;
+        const spDz = z + 14.0;
+        const spDistSq = spDx * spDx + spDz * spDz;
+        if (spDistSq < 324.0) {
+          const spDist = Math.sqrt(spDistSq);
+          const rimNoise = micro * 0.75;
+          const innerBasinR = 8.8 + rimNoise;
+          const outerBankR = 17.2 + rimNoise;
+          if (spDist < outerBankR) {
+            const bankT = 1.0 - THREE.MathUtils.smoothstep(spDist, innerBasinR, outerBankR);
+            const shoreTarget = waterY + 0.65 + micro * 0.25;
+            height = THREE.MathUtils.lerp(height, shoreTarget, bankT);
+            if (spDist < innerBasinR + 1.5) {
+              const deepT = 1.0 - THREE.MathUtils.smoothstep(spDist, 2.5, innerBasinR + 1.2);
+              const bedTarget = waterY - 1.75;
+              height = THREE.MathUtils.lerp(height, bedTarget, deepT);
+            }
+          }
+        }
+      }
+
+      // C) Natural Pond Basins in low-to-mid valleys (early-out on high terrain before evaluating pondNoise)
       if (cfg.pondFrequency > 0 && height < waterY + 11.0) {
         const pondN = this.pondNoise(wx * 0.0065 + 110, wz * 0.0065 - 75);
         const threshold = 0.68 - cfg.pondFrequency * 0.32; // Higher pondFrequency -> lower threshold

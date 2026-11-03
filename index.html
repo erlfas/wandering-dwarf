@@ -34,6 +34,9 @@
             <button id="relic-shop-toggle" type="button" title="Toggle Dwarven Relics (B)">
               ⚒️ Relics (B)
             </button>
+            <button id="fishing-mode-toggle" type="button" title="Equip Fishing Rod from Backpack (F)">
+              🎣 Fish (F)
+            </button>
           </div>
           <div class="sub-row">
             <span id="chests-value">0 Chests</span>
@@ -48,6 +51,9 @@
 
       <!-- Active Timed Waypoint Ring Challenge Banner (hidden unless a challenge is running) -->
       <div id="challenge-banner" class="hidden"></div>
+
+      <!-- Active Fishing Mode HUD Banner (hidden unless fishing mode is active) -->
+      <div id="fishing-banner" class="hidden"></div>
 
       <!-- Dwarven Relic Upgrades Shop (collapsed by default so it never clutters the screen) -->
       <div id="relic-shop" class="collapsed">
@@ -80,6 +86,7 @@
           <span><kbd>Shift</kbd> Sprint</span>
           <span><kbd>Space</kbd> Jump / Glide</span>
           <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
+          <span><kbd>F</kbd> Fish Rod</span>
           <span><kbd>1</kbd>-<kbd>4</kbd> Buy Relic</span>
           <span><kbd>B</kbd> Forge</span>
           <span><kbd>T</kbd> Waypoint</span>

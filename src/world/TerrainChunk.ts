@@ -20,13 +20,13 @@ let sharedWaterGeoFar: THREE.BufferGeometry | null = null;
 function getSharedWaterGeometry(segments: number): THREE.BufferGeometry {
   if (segments === 64) {
     if (!sharedWaterGeoNear) {
-      sharedWaterGeoNear = new THREE.PlaneGeometry(1, 1, 8, 8);
+      sharedWaterGeoNear = new THREE.PlaneGeometry(1, 1, 24, 24);
       sharedWaterGeoNear.rotateX(-Math.PI / 2);
     }
     return sharedWaterGeoNear;
   }
   if (!sharedWaterGeoFar) {
-    sharedWaterGeoFar = new THREE.PlaneGeometry(1, 1, 1, 1);
+    sharedWaterGeoFar = new THREE.PlaneGeometry(1, 1, 4, 4);
     sharedWaterGeoFar.rotateX(-Math.PI / 2);
   }
   return sharedWaterGeoFar;

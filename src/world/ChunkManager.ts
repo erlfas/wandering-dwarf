@@ -9,7 +9,7 @@ import {
 import { createGrassMaterial, GrassUniforms, loadGrassClumpModel } from './GrassField';
 import { TerrainChunk } from './TerrainChunk';
 import { TerrainNoise } from './TerrainNoise';
-import { createWaterMaterial } from './WaterMesh';
+import { createWaterMaterial, WaterUniforms } from './WaterMesh';
 
 interface PendingChunkRequest {
   cx: number;
@@ -24,10 +24,11 @@ export class ChunkManager {
   public readonly group = new THREE.Group();
   public readonly material: THREE.MeshStandardMaterial;
   public readonly grassUniforms: GrassUniforms;
+  public readonly waterUniforms: WaterUniforms;
+  public readonly waterMaterial: THREE.MeshStandardMaterial;
   private readonly grassMaterial: THREE.MeshStandardMaterial;
   private readonly flowerMaterial: THREE.MeshStandardMaterial;
   private readonly treeMaterial: THREE.MeshStandardMaterial;
-  private readonly waterMaterial: THREE.MeshStandardMaterial;
 
   private chunks = new Map<number, TerrainChunk>();
   private desiredKeys = new Set<number>();
@@ -62,7 +63,9 @@ export class ChunkManager {
     this.grassMaterial = createGrassMaterial(this.grassUniforms, false);
     this.flowerMaterial = createGrassMaterial(this.grassUniforms, true);
     this.treeMaterial = createTreeMaterial(this.grassUniforms);
-    this.waterMaterial = createWaterMaterial(this.grassUniforms);
+    const waterSetup = createWaterMaterial(this.grassUniforms, config.waterLevel);
+    this.waterMaterial = waterSetup.material;
+    this.waterUniforms = waterSetup.waterUniforms;
     loadPineTreeModel(this.grassUniforms);
     loadOakTreeModel(this.grassUniforms);
     loadDwarvenHutModel();

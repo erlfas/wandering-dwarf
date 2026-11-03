@@ -5,6 +5,7 @@ import { TerrainNoise } from '../world/TerrainNoise';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { RelicStore } from '../player/RelicStore';
 import { LandmarkManager } from '../world/LandmarkManager';
+import { FishingAndFishManager } from '../world/FishingAndFishManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -55,6 +56,9 @@ export class ExplorerCamera {
   private currentSpeed = 0;
   private relicStore?: RelicStore;
   private landmarkManager?: LandmarkManager;
+  private fishingManager?: FishingAndFishManager;
+  public lastAimForward = 0;
+  public lastAimRight = 0;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -79,6 +83,10 @@ export class ExplorerCamera {
     this.landmarkManager = lm;
   }
 
+  public setFishingManager(fm: FishingAndFishManager): void {
+    this.fishingManager = fm;
+  }
+
   public isAttackingOrAirborne(): boolean {
     return this.isSliding || this.heightAboveGround > 0.25;
   }
@@ -90,6 +98,9 @@ export class ExplorerCamera {
   }
 
   public getMovementStatus(): string {
+    if (this.fishingManager?.isFishingActive()) {
+      return `🎣 Fishing (${this.fishingManager.fishCaughtCount} Caught)`;
+    }
     if (this.isGliding) return '🪂 Wind Gliding';
     if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
     if (this.heightAboveGround > 0.35) return '⏫ Airborne';
@@ -171,9 +182,13 @@ export class ExplorerCamera {
           this.config.wireframe = !this.config.wireframe;
           this.onToggleWireframe?.();
         } else if (code === 'Space') {
-          this.tryJump();
+          if (!this.fishingManager?.isFishingActive()) {
+            this.tryJump();
+          }
         } else if (code === 'KeyC' || code === 'ControlLeft' || code === 'ControlRight') {
-          this.tryStartSlideOrDash();
+          if (!this.fishingManager?.isFishingActive()) {
+            this.tryStartSlideOrDash();
+          }
         }
       },
       { passive: true }
@@ -300,6 +315,15 @@ export class ExplorerCamera {
     if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) forward -= 1;
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) right += 1;
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) right -= 1;
+
+    this.lastAimForward = forward;
+    this.lastAimRight = right;
+    const isFishing = this.fishingManager?.isFishingActive() ?? false;
+    if (isFishing) {
+      // While in Fishing Mode, W/S/A/D aims the fishing cast rather than walking away from the shore
+      forward = 0;
+      right = 0;
+    }
 
     const isSprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     const holdingSlideKey =
@@ -516,7 +540,7 @@ export class ExplorerCamera {
         : groundY;
 
     // Vertical Jump & Wind-Glider Physics
-    const holdingJump = this.keys.has('Space');
+    const holdingJump = this.keys.has('Space') && !isFishing;
     this.isGliding =
       !isSwimming &&
       holdingJump &&
@@ -585,7 +609,7 @@ export class ExplorerCamera {
     if (this.config.cameraMode === 'dwarf') {
       if (this.isDragging) {
         this.followActive = false;
-      } else if (targetHeading !== null && this.mouseOverrideTimer <= 0) {
+      } else if ((targetHeading !== null || (isFishing && this.lastAimRight !== 0)) && this.mouseOverrideTimer <= 0) {
         this.followActive = true;
       }
 

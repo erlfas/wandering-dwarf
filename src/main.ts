@@ -11,6 +11,8 @@ import { TreasureManager } from './world/TreasureManager';
 import { LandmarkManager } from './world/LandmarkManager';
 import { LivingWorldManager } from './world/LivingWorldManager';
 import { ChallengeManager } from './world/ChallengeManager';
+import { FishingAndFishManager } from './world/FishingAndFishManager';
+import { WaterReflectionController } from './world/WaterMesh';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
@@ -164,12 +166,31 @@ scene.add(livingWorldManager.group);
 const challengeManager = new ChallengeManager(config, noise, treasureManager);
 scene.add(challengeManager.group);
 
+const fishingManager = new FishingAndFishManager(
+  config,
+  noise,
+  camera,
+  renderer.domElement,
+  dwarf,
+  (gold, msg) => {
+    treasureManager.grantBonusGold(gold, msg);
+    if (gold > 0) {
+      persistCurrentProgress(false);
+    }
+  }
+);
+scene.add(fishingManager.group);
+explorer.setFishingManager(fishingManager);
+
+const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
+
 // Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
 const sampleSurfaceHeight = (wx: number, wz: number): number =>
   chunkManager.getSurfaceHeight(wx, wz);
 treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 livingWorldManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+fishingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
@@ -300,6 +321,8 @@ const debugOverlay = new DebugOverlay(
     landmarkManager.reset();
     livingWorldManager.rebuildAll();
     challengeManager.reset();
+    fishingManager.exitFishingMode();
+    fishingManager.rebuildAll();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -382,6 +405,13 @@ function animate(): void {
     explorer.playerPos,
     explorer.isAttackingOrAirborne(),
     sunOffset
+  );
+  fishingManager.update(
+    dt,
+    elapsedTime,
+    explorer.playerPos,
+    explorer.lastAimForward,
+    explorer.lastAimRight
   );
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
@@ -510,6 +540,18 @@ function animate(): void {
       compassChestPointer.style.transform = `rotate(${pointerDeg.toFixed(1)}deg)`;
     }
   }
+
+  // Render planar water reflection pass (reflecting the dwarf, backpack/fishing rod, trees, and sky)
+  waterReflection.update(
+    renderer,
+    scene,
+    camera,
+    config,
+    chunkManager.waterMaterial,
+    dwarf.root,
+    explorer.getHeading(),
+    sampleSurfaceHeight
+  );
 
   renderer.render(scene, camera);
 }
