@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import grassClumpUrl from '../../3dmodels/grass clump 3d model.glb?url';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
@@ -118,19 +120,15 @@ function createWildflowerClusterGeometry(): THREE.BufferGeometry {
 }
 
 /**
- * Creates a MeshStandardMaterial enhanced with vertex wind waves, dwarf push interaction,
- * root-to-tip ambient occlusion/sunlit gradient, and smooth distance scale fade.
+ * Enhances a MeshStandardMaterial with vertex wind waves, dwarf push-away interaction,
+ * smooth distance scale fade, and optional root-to-tip AO/sunlit gradient.
  */
-export function createGrassMaterial(
+export function applyGrassWindShader(
+  mat: THREE.MeshStandardMaterial,
   uniforms: GrassUniforms,
-  isFlower = false
-): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: isFlower ? 0.55 : 0.78,
-    metalness: 0.02,
-    side: THREE.DoubleSide,
-  });
+  options: { isFlower?: boolean; isModelClump?: boolean } = {}
+): void {
+  const { isFlower = false, isModelClump = false } = options;
 
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
@@ -149,11 +147,15 @@ export function createGrassMaterial(
       varying float vBladeFrac;
       ` + shader.vertexShader;
 
+    const fracExpr = isModelClump
+      ? 'clamp(transformed.y / 0.85, 0.0, 1.0)'
+      : 'uv.y';
+
     shader.vertexShader = shader.vertexShader.replace(
       '#include <begin_vertex>',
       `
       #include <begin_vertex>
-      vBladeFrac = uv.y;
+      vBladeFrac = ${fracExpr};
 
       // World position of this grass instance's root
       vec4 instWorldPos = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -164,7 +166,7 @@ export function createGrassMaterial(
       transformed *= distFade;
 
       // Rolling wind wave displacement (quadratic bend from root to tip)
-      float bendFactor = uv.y * uv.y;
+      float bendFactor = vBladeFrac * vBladeFrac;
       float wavePhase = instWorldPos.x * 0.14 + instWorldPos.z * 0.11 + uTime * uWindSpeed;
       float gust = sin(wavePhase) + 0.45 * cos(instWorldPos.x * 0.06 - instWorldPos.z * 0.08 + uTime * uWindSpeed * 0.7);
       transformed.x += gust * uWindStrength * bendFactor;
@@ -173,8 +175,8 @@ export function createGrassMaterial(
       // Subtle dwarf push-away when walking through the grass
       vec2 toBlade = instWorldPos.xz - uPlayerPos.xz;
       float playerDist = length(toBlade);
-      if (playerDist < 1.35 && playerDist > 0.001) {
-        float push = (1.0 - playerDist / 1.35) * 0.55 * bendFactor;
+      if (playerDist < 1.45 && playerDist > 0.001) {
+        float push = (1.0 - playerDist / 1.45) * 0.58 * bendFactor;
         vec2 pushDir = toBlade / playerDist;
         transformed.x += pushDir.x * push;
         transformed.z += pushDir.y * push;
@@ -183,7 +185,7 @@ export function createGrassMaterial(
       `
     );
 
-    if (!isFlower) {
+    if (!isFlower && !isModelClump) {
       shader.fragmentShader =
         `
         varying float vBladeFrac;
@@ -199,15 +201,115 @@ export function createGrassMaterial(
         diffuseColor.rgb = mix(rootTint, tipTint, smoothstep(0.0, 1.0, vBladeFrac));
         `
       );
+    } else if (isModelClump) {
+      shader.fragmentShader =
+        `
+        varying float vBladeFrac;
+        ` + shader.fragmentShader;
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        // Subtle root grounding & sunlit tip highlight on the textured 3D grass clump
+        diffuseColor.rgb *= mix(vec3(0.76, 0.78, 0.72), vec3(1.14, 1.16, 1.02), smoothstep(0.0, 1.0, vBladeFrac));
+        `
+      );
     }
   };
+  mat.needsUpdate = true;
+}
 
+/**
+ * Creates a MeshStandardMaterial enhanced with vertex wind waves, dwarf push interaction,
+ * root-to-tip ambient occlusion/sunlit gradient, and smooth distance scale fade.
+ */
+export function createGrassMaterial(
+  uniforms: GrassUniforms,
+  isFlower = false
+): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: isFlower ? 0.55 : 0.78,
+    metalness: 0.02,
+    side: THREE.DoubleSide,
+  });
+
+  applyGrassWindShader(mat, uniforms, { isFlower, isModelClump: false });
   return mat;
 }
 
 // Shared geometries so all chunks reuse the same GPU vertex buffers
 let sharedTuftGeo: THREE.BufferGeometry | null = null;
 let sharedFlowerGeo: THREE.BufferGeometry | null = null;
+let sharedClumpGeo: THREE.BufferGeometry | null = null;
+let sharedClumpMat: THREE.MeshStandardMaterial | null = null;
+let clumpLoadStarted = false;
+const activeClumpMeshes = new Set<THREE.InstancedMesh>();
+
+/**
+ * Asynchronously loads `3dmodels/grass clump 3d model.glb`, normalizes its root base at Y=0,
+ * preserves its PBR textures, injects the rolling wind & dwarf push shader, and hot-swaps
+ * all active 3D grass clump InstancedMeshes across the world.
+ */
+export function loadGrassClumpModel(uniforms: GrassUniforms): void {
+  if (clumpLoadStarted) return;
+  clumpLoadStarted = true;
+
+  const loader = new GLTFLoader();
+  loader.load(
+    grassClumpUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      const geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const height = Math.max(0.01, box.max.y - box.min.y);
+      const targetHeight = 0.85; // ~0.85m tall natural grass & seed-head clump
+      const scaleFactor = targetHeight / height;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+      geo.computeVertexNormals();
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const clumpMat = (origMat as THREE.MeshStandardMaterial).clone();
+      clumpMat.color.setHex(0xffffff);
+      clumpMat.roughness = 0.82;
+      clumpMat.metalness = 0.02;
+      clumpMat.side = THREE.DoubleSide;
+      applyGrassWindShader(clumpMat, uniforms, { isFlower: false, isModelClump: true });
+
+      sharedClumpGeo = geo;
+      sharedClumpMat = clumpMat;
+
+      for (const inst of activeClumpMeshes) {
+        inst.geometry = sharedClumpGeo;
+        inst.material = sharedClumpMat;
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load grass clump 3D model:', err);
+    }
+  );
+}
 
 const FLOWER_PALETTE = [
   new THREE.Color(0xfff9e6), // Crisp meadow daisy white
@@ -219,6 +321,7 @@ const FLOWER_PALETTE = [
 export class ChunkGrass {
   public readonly group = new THREE.Group();
   private grassInstanced?: THREE.InstancedMesh;
+  private clumpInstanced?: THREE.InstancedMesh;
   private flowerInstanced?: THREE.InstancedMesh;
 
   constructor(
@@ -245,6 +348,16 @@ export class ChunkGrass {
     grassMesh.castShadow = false;
     grassMesh.receiveShadow = true;
 
+    // 3D modelled tall grass & seed-head clumps (`3dmodels/grass clump 3d model.glb`)
+    const maxClumps = Math.max(8, Math.floor(maxCount * 0.04));
+    const clumpMesh = new THREE.InstancedMesh(
+      sharedClumpGeo ?? sharedTuftGeo,
+      sharedClumpMat ?? grassMaterial,
+      maxClumps
+    );
+    clumpMesh.castShadow = true;
+    clumpMesh.receiveShadow = true;
+
     const maxFlowers = config.enableFlowers ? Math.floor(maxCount * 0.075) : 0;
     const flowerMesh =
       maxFlowers > 0
@@ -254,12 +367,14 @@ export class ChunkGrass {
     const dummy = new THREE.Object3D();
     const normal = new THREE.Vector3();
     const baseColor = new THREE.Color();
+    const clumpColor = new THREE.Color();
     const flowerColor = new THREE.Color();
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
 
     let grassIdx = 0;
+    let clumpIdx = 0;
     let flowerIdx = 0;
 
     for (let i = 0; i < maxCount; i++) {
@@ -309,6 +424,32 @@ export class ChunkGrass {
       grassMesh.setColorAt(grassIdx, baseColor);
       grassIdx++;
 
+      // Spawn the 3D modelled tall grass clump in lush meadow patches & near groves
+      if (
+        clumpIdx < maxClumps &&
+        patch > 0.35 &&
+        rng() < 0.055 * (0.6 + patch * 0.8)
+      ) {
+        const clumpScaleXZ = (0.78 + rng() * 0.52) * (0.85 + patch * 0.3);
+        const clumpScaleY =
+          (0.75 + rng() * 0.55) *
+          (0.85 + patch * 0.35) *
+          config.grassHeight;
+        dummy.position.set(lx, wy - 0.04, lz);
+        dummy.scale.set(clumpScaleXZ, clumpScaleY, clumpScaleXZ);
+        dummy.updateMatrix();
+        clumpMesh.setMatrixAt(clumpIdx, dummy.matrix);
+
+        // Keep bright natural texture colors with subtle organic warm/cool variation per clump
+        clumpColor.setHex(0xffffff).offsetHSL(
+          (rng() - 0.5) * 0.035,
+          (rng() - 0.5) * 0.08,
+          (rng() - 0.5) * 0.07
+        );
+        clumpMesh.setColorAt(clumpIdx, clumpColor);
+        clumpIdx++;
+      }
+
       // Occasionally place a wildflower blossom in lush patches (matching concept art)
       if (
         flowerMesh &&
@@ -316,6 +457,7 @@ export class ChunkGrass {
         patch > 0.42 &&
         rng() < 0.095
       ) {
+        dummy.position.set(lx, wy - 0.03, lz);
         dummy.scale.setScalar(0.85 + rng() * 0.55);
         dummy.updateMatrix();
         flowerMesh.setMatrixAt(flowerIdx, dummy.matrix);
@@ -340,6 +482,17 @@ export class ChunkGrass {
     this.grassInstanced = grassMesh;
     this.group.add(grassMesh);
 
+    if (clumpIdx > 0) {
+      clumpMesh.count = clumpIdx;
+      clumpMesh.instanceMatrix.needsUpdate = true;
+      if (clumpMesh.instanceColor) clumpMesh.instanceColor.needsUpdate = true;
+      this.clumpInstanced = clumpMesh;
+      activeClumpMeshes.add(clumpMesh);
+      this.group.add(clumpMesh);
+    } else {
+      clumpMesh.dispose();
+    }
+
     if (flowerMesh && flowerIdx > 0) {
       flowerMesh.count = flowerIdx;
       flowerMesh.instanceMatrix.needsUpdate = true;
@@ -351,6 +504,10 @@ export class ChunkGrass {
 
   public dispose(): void {
     this.grassInstanced?.dispose();
+    if (this.clumpInstanced) {
+      activeClumpMeshes.delete(this.clumpInstanced);
+      this.clumpInstanced.dispose();
+    }
     this.flowerInstanced?.dispose();
   }
 }
