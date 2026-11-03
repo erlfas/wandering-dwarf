@@ -17,6 +17,7 @@ interface PendingChunkRequest {
   segments: number;
   grassDensityMult: number;
   distSq: number;
+  dist: number;
 }
 
 export class ChunkManager {
@@ -128,7 +129,7 @@ export class ChunkManager {
       const req = this.buildQueue.pop()!;
       const key = this.getKey(req.cx, req.cz);
       const existing = this.chunks.get(key);
-      const dist = Math.sqrt(req.distSq);
+      const dist = req.dist;
 
       const effectiveGrassMult =
         this.config.enableGrassBlades && !this.config.blankClayMode
@@ -147,7 +148,7 @@ export class ChunkManager {
           if (
             !immediate &&
             Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01 &&
-            !existing.hasGrass &&
+            !existing.hasGrassInstance() &&
             effectiveGrassMult > 0 &&
             performance.now() - frameStart > 3.0
           ) {
@@ -158,7 +159,7 @@ export class ChunkManager {
         }
         existing.updateForestLOD(dist);
         if (Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01) {
-          const hadGrassObj = existing.hasGrass;
+          const hadGrassObj = existing.hasGrassInstance();
           existing.updateGrass(
             effectiveGrassMult,
             this.config,
@@ -166,7 +167,7 @@ export class ChunkManager {
             this.grassMaterial,
             this.flowerMaterial
           );
-          if (!hadGrassObj && existing.hasGrass) {
+          if (!hadGrassObj && existing.hasGrassInstance()) {
             built++;
           }
         }
@@ -221,7 +222,7 @@ export class ChunkManager {
           if (
             existing.segments === segments &&
             Math.abs(existing.grassDensityMult - grassDensityMult) > 0.01 &&
-            existing.hasGrass
+            existing.hasGrassInstance()
           ) {
             // Instant O(1) grass count scaling without queueing
             existing.updateGrass(
@@ -231,8 +232,10 @@ export class ChunkManager {
               this.grassMaterial,
               this.flowerMaterial
             );
+            existing.releaseGrassIfFar(dist, this.config.grassRadiusChunks);
             continue;
           }
+          existing.releaseGrassIfFar(dist, this.config.grassRadiusChunks);
         }
 
         if (
@@ -240,7 +243,7 @@ export class ChunkManager {
           existing.segments !== segments ||
           Math.abs(existing.grassDensityMult - grassDensityMult) > 0.01
         ) {
-          requests.push({ cx, cz, segments, grassDensityMult, distSq });
+          requests.push({ cx, cz, segments, grassDensityMult, distSq, dist });
         }
       }
     }
@@ -352,6 +355,29 @@ export class ChunkManager {
     } else {
       return h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
     }
+  }
+
+  /**
+   * Samples the continuous surface normal from the loaded chunk mesh (or falls back to analytical noise).
+   */
+  public getSurfaceNormal(
+    worldX: number,
+    worldZ: number,
+    target = new THREE.Vector3()
+  ): THREE.Vector3 {
+    const size = this.config.chunkSize;
+    const cx = Math.round(worldX / size);
+    const cz = Math.round(worldZ / size);
+    const chunk = this.chunks.get(this.getKey(cx, cz));
+
+    if (!chunk) {
+      return this.noise.getNormal(worldX, worldZ, target);
+    }
+
+    const localX = worldX - cx * size;
+    const localZ = worldZ - cz * size;
+    chunk.sampleHeightAndNormal(localX, localZ, target);
+    return target;
   }
 
   /**

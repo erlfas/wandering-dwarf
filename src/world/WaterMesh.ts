@@ -41,7 +41,7 @@ export function createWaterMaterial(uniforms: GrassUniforms): THREE.MeshStandard
       transformed.y += wave1 + wave2;
       float dWaveDx = cos(phase1) * (0.035 * 0.65) - sin(phase2) * (0.025 * 0.4);
       float dWaveDz = cos(phase1) * (0.035 * 0.45) + sin(phase2) * (0.025 * 0.75);
-      vNormal = normalize(normalMatrix * vec3(-dWaveDx, 1.0, -dWaveDz));
+      vNormal = normalize(mat3(viewMatrix) * vec3(-dWaveDx, 1.0, -dWaveDz));
       `
     );
 

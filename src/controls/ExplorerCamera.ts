@@ -29,6 +29,11 @@ export class ExplorerCamera {
   private smoothedTarget = new THREE.Vector3();
   private desiredTarget = new THREE.Vector3();
   private lastGroundY = 0;
+  private lastGroundSampleX = NaN;
+  private lastGroundSampleZ = NaN;
+  private lastTrackSampleX = NaN;
+  private lastTrackSampleZ = NaN;
+  private cachedTrackW = 0;
 
   // Vertical jump & glide physics
   private velY = 0;
@@ -111,6 +116,10 @@ export class ExplorerCamera {
   ): void {
     const groundY = this.noise.getHeight(x, z);
     this.lastGroundY = groundY;
+    this.lastGroundSampleX = x;
+    this.lastGroundSampleZ = z;
+    this.lastTrackSampleX = NaN;
+    this.lastTrackSampleZ = NaN;
     const swimSurfaceY = this.config.waterLevel - 0.54;
     const y =
       this.config.enableWater && !this.config.blankClayMode
@@ -292,12 +301,24 @@ export class ExplorerCamera {
       !this.config.blankClayMode &&
       this.lastGroundY < this.config.waterLevel - 0.38;
 
-    // Evaluate Trailblazer footpath boost when on worn dirt trails
-    const trackW =
-      !isSwimming && this.config.enableTracks
-        ? this.noise.getTrackWeight(this.playerPos.x, this.playerPos.z, this.lastGroundY)
-        : 0;
-    this.isTrailblazing = trackW > 0.35;
+    // Evaluate Trailblazer footpath boost when moving on worn dirt trails
+    const wantsMove = forward !== 0 || right !== 0 || holdingSlideKey || this.dashTimer > 0;
+    if (wantsMove && !isSwimming && this.config.enableTracks) {
+      const tdx = this.playerPos.x - this.lastTrackSampleX;
+      const tdz = this.playerPos.z - this.lastTrackSampleZ;
+      if (tdx * tdx + tdz * tdz > 0.04) {
+        this.lastTrackSampleX = this.playerPos.x;
+        this.lastTrackSampleZ = this.playerPos.z;
+        this.cachedTrackW = this.noise.getTrackWeight(
+          this.playerPos.x,
+          this.playerPos.z,
+          this.lastGroundY
+        );
+      }
+      this.isTrailblazing = this.cachedTrackW > 0.35;
+    } else if (!wantsMove || isSwimming || !this.config.enableTracks) {
+      this.isTrailblazing = false;
+    }
     if (this.isTrailblazing) {
       baseSpeed *= hasStriderBoots ? 1.45 : 1.25;
     }
@@ -317,9 +338,6 @@ export class ExplorerCamera {
     let moveZ = camForwardZ * forward + camRightZ * right;
     const moveLen = Math.hypot(moveX, moveZ);
 
-    // Sample terrain normal for downhill slope surfing
-    this.noise.getNormal(this.playerPos.x, this.playerPos.z, tempSlopeNormal);
-    const slopeHorizLen = Math.hypot(tempSlopeNormal.x, tempSlopeNormal.z);
     let slopePitch = 0;
 
     let actualSpeed = 0;
@@ -334,6 +352,9 @@ export class ExplorerCamera {
       (holdingSlideKey || this.dashTimer > 0)
     ) {
       this.isSliding = true;
+      // Lazily sample O(1) chunk surface normal only when sliding/dashing
+      this.chunkManager.getSurfaceNormal(this.playerPos.x, this.playerPos.z, tempSlopeNormal);
+      const slopeHorizLen = Math.hypot(tempSlopeNormal.x, tempSlopeNormal.z);
       const downhillX = slopeHorizLen > 0.001 ? tempSlopeNormal.x / slopeHorizLen : 0;
       const downhillZ = slopeHorizLen > 0.001 ? tempSlopeNormal.z / slopeHorizLen : 0;
 
@@ -407,12 +428,20 @@ export class ExplorerCamera {
 
     this.currentSpeed = actualSpeed;
 
-    // Evaluate surface floor height (including Wooden River Bridge decks or buoyant swimming elevation)
-    const rawGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
-    const groundY = this.landmarkManager
-      ? this.landmarkManager.getBridgeDeckHeight(this.playerPos.x, this.playerPos.z, rawGroundY)
-      : rawGroundY;
-    this.lastGroundY = groundY;
+    // Evaluate surface floor height (reusing cached groundY when stationary)
+    let groundY = this.lastGroundY;
+    if (
+      this.playerPos.x !== this.lastGroundSampleX ||
+      this.playerPos.z !== this.lastGroundSampleZ
+    ) {
+      this.lastGroundSampleX = this.playerPos.x;
+      this.lastGroundSampleZ = this.playerPos.z;
+      const rawGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+      groundY = this.landmarkManager
+        ? this.landmarkManager.getBridgeDeckHeight(this.playerPos.x, this.playerPos.z, rawGroundY)
+        : rawGroundY;
+      this.lastGroundY = groundY;
+    }
     isSwimming =
       this.config.enableWater &&
       !this.config.blankClayMode &&

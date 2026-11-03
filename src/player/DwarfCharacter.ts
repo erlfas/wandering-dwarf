@@ -25,6 +25,7 @@ export class DwarfCharacter {
   private swimTime = 0;
   private swimBlend = 0; // Smooth 0..1 transition between land stance and swimming posture
   private gliderBlend = 0;
+  private glideTime = 0;
   private slideTiltX = 0;
   private slideTiltZ = 0;
   private idleStateTime = 0;
@@ -38,6 +39,7 @@ export class DwarfCharacter {
   private particleAge = new Float32Array(48);
   private particleMaxLife = new Float32Array(48);
   private particleHead = 0;
+  private activeParticleCount = 0;
   private emitAccum = 0;
 
   // Scale factor so the ~0.85m native GLB mesh stands ~1.40m tall in the world
@@ -123,6 +125,8 @@ export class DwarfCharacter {
     });
     const points = new THREE.Points(geo, mat);
     points.frustumCulled = false;
+    points.matrixAutoUpdate = false;
+    points.visible = false;
     return points;
   }
 
@@ -131,6 +135,9 @@ export class DwarfCharacter {
     for (let i = 0; i < count; i++) {
       const idx = this.particleHead;
       this.particleHead = (this.particleHead + 1) % this.maxParticles;
+      if (this.particleAge[idx] >= this.particleMaxLife[idx]) {
+        this.activeParticleCount++;
+      }
       const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
       const speed = 1.4 + Math.random() * 2.2;
       arr[idx * 3] = worldX + Math.cos(angle) * 0.25;
@@ -142,6 +149,7 @@ export class DwarfCharacter {
       this.particleAge[idx] = 0;
       this.particleMaxLife[idx] = 0.38 + Math.random() * 0.22;
     }
+    this.trailPoints.visible = true;
     this.particlePosAttr.needsUpdate = true;
   }
 
@@ -179,6 +187,24 @@ export class DwarfCharacter {
 
   private loadModel(): void {
     const loader = new GLTFLoader();
+    loader.register((parser) => ({
+      name: 'strip-unused-pbr-maps',
+      beforeRoot: async () => {
+        const json = parser.json;
+        if (Array.isArray(json.materials)) {
+          for (const matDef of json.materials) {
+            if (matDef.extensions) {
+              delete matDef.extensions.KHR_materials_specular;
+            }
+            if (matDef.pbrMetallicRoughness) {
+              delete matDef.pbrMetallicRoughness.metallicRoughnessTexture;
+            }
+            delete matDef.normalTexture;
+            delete matDef.occlusionTexture;
+          }
+        }
+      },
+    }));
     loader.load(
       dwarfModelUrl,
       (gltf) => {
@@ -416,11 +442,25 @@ export class DwarfCharacter {
     this.root.rotation.y = this.heading;
 
     // Smoothly tilt dwarf model forward/downhill when sliding or gliding
+    if (isGliding) {
+      this.glideTime += dt;
+    } else {
+      this.glideTime = 0;
+    }
     const desiredTiltX = isSliding ? slopePitch + 0.18 : isGliding ? 0.24 : 0;
-    const desiredTiltZ = isGliding ? Math.sin(performance.now() * 0.004) * 0.08 : 0;
-    this.slideTiltX = THREE.MathUtils.lerp(this.slideTiltX, desiredTiltX, Math.min(1, dt * 10));
-    this.slideTiltZ = THREE.MathUtils.lerp(this.slideTiltZ, desiredTiltZ, Math.min(1, dt * 8));
-    this.modelContainer.rotation.set(this.slideTiltX, 0, this.slideTiltZ);
+    const desiredTiltZ = isGliding ? Math.sin(this.glideTime * 4.0) * 0.08 : 0;
+    if (
+      Math.abs(this.slideTiltX - desiredTiltX) > 0.0005 ||
+      Math.abs(this.slideTiltZ - desiredTiltZ) > 0.0005
+    ) {
+      this.slideTiltX = THREE.MathUtils.lerp(this.slideTiltX, desiredTiltX, Math.min(1, dt * 10));
+      this.slideTiltZ = THREE.MathUtils.lerp(this.slideTiltZ, desiredTiltZ, Math.min(1, dt * 8));
+      this.modelContainer.rotation.set(this.slideTiltX, 0, this.slideTiltZ);
+    } else if (this.slideTiltX !== desiredTiltX || this.slideTiltZ !== desiredTiltZ) {
+      this.slideTiltX = desiredTiltX;
+      this.slideTiltZ = desiredTiltZ;
+      this.modelContainer.rotation.set(this.slideTiltX, 0, this.slideTiltZ);
+    }
 
     // Unfold or stow the Dwarven Wind-Glider
     const targetGlider = isGliding ? 1 : 0;
@@ -447,6 +487,9 @@ export class DwarfCharacter {
         this.emitAccum -= 1;
         const idx = this.particleHead;
         this.particleHead = (this.particleHead + 1) % this.maxParticles;
+        if (this.particleAge[idx] >= this.particleMaxLife[idx]) {
+          this.activeParticleCount++;
+        }
         const backX = -Math.sin(this.heading) * 0.35 + (Math.random() - 0.5) * 0.35;
         const backZ = -Math.cos(this.heading) * 0.35 + (Math.random() - 0.5) * 0.35;
         arr[idx * 3] = worldX + backX;
@@ -457,27 +500,30 @@ export class DwarfCharacter {
         this.particleVel[idx * 3 + 2] = (Math.random() - 0.5) * 1.6;
         this.particleAge[idx] = 0;
         this.particleMaxLife[idx] = isSliding ? 0.42 : 0.34;
+        this.trailPoints.visible = true;
       }
     }
 
-    // Advance active particles
-    let anyActiveParticles = false;
-    const posArr = this.particlePosAttr.array as Float32Array;
-    for (let i = 0; i < this.maxParticles; i++) {
-      if (this.particleAge[i] < this.particleMaxLife[i]) {
-        this.particleAge[i] += dt;
-        if (this.particleAge[i] >= this.particleMaxLife[i]) {
-          posArr[i * 3 + 1] = -9999;
-        } else {
-          posArr[i * 3] += this.particleVel[i * 3] * dt;
-          posArr[i * 3 + 1] += this.particleVel[i * 3 + 1] * dt;
-          posArr[i * 3 + 2] += this.particleVel[i * 3 + 2] * dt;
-          this.particleVel[i * 3 + 1] -= 3.8 * dt;
+    // Advance active particles only when at least one slot is live
+    if (this.activeParticleCount > 0) {
+      let stillActive = 0;
+      const posArr = this.particlePosAttr.array as Float32Array;
+      for (let i = 0; i < this.maxParticles; i++) {
+        if (this.particleAge[i] < this.particleMaxLife[i]) {
+          this.particleAge[i] += dt;
+          if (this.particleAge[i] >= this.particleMaxLife[i]) {
+            posArr[i * 3 + 1] = -9999;
+          } else {
+            posArr[i * 3] += this.particleVel[i * 3] * dt;
+            posArr[i * 3 + 1] += this.particleVel[i * 3 + 1] * dt;
+            posArr[i * 3 + 2] += this.particleVel[i * 3 + 2] * dt;
+            this.particleVel[i * 3 + 1] -= 3.8 * dt;
+            stillActive++;
+          }
         }
-        anyActiveParticles = true;
       }
-    }
-    if (anyActiveParticles) {
+      this.activeParticleCount = stillActive;
+      this.trailPoints.visible = stillActive > 0;
       this.particlePosAttr.needsUpdate = true;
     }
 

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { WorldConfig } from './Config';
 import { TerrainNoise, createSeededRandom } from './TerrainNoise';
 import { TreasureManager } from './TreasureManager';
@@ -48,8 +49,7 @@ interface SharedChallengeAssets {
   coinRingGeo: THREE.RingGeometry;
   matCoinGold: THREE.MeshStandardMaterial;
   matCoinRing: THREE.MeshBasicMaterial;
-  archPillarGeo: THREE.BoxGeometry;
-  archLintelGeo: THREE.BoxGeometry;
+  archStoneMergedGeo: THREE.BufferGeometry;
   archCapGeo: THREE.BoxGeometry;
   archCrestGeo: THREE.OctahedronGeometry;
   archPortalGeo: THREE.TorusGeometry;
@@ -93,11 +93,21 @@ function getSharedChallengeAssets(): SharedChallengeAssets {
   });
 
   // 2. Glowing Runic Stone Trial Archway geometries & materials
-  const archPillarGeo = new THREE.BoxGeometry(0.58, 3.4, 0.58);
-  archPillarGeo.translate(0, 1.7, 0);
+  const leftPillarGeo = new THREE.BoxGeometry(0.58, 3.4, 0.58);
+  leftPillarGeo.translate(-1.45, 1.7, 0);
+
+  const rightPillarGeo = new THREE.BoxGeometry(0.58, 3.4, 0.58);
+  rightPillarGeo.translate(1.45, 1.7, 0);
 
   const archLintelGeo = new THREE.BoxGeometry(3.8, 0.52, 0.72);
   archLintelGeo.translate(0, 3.55, 0);
+
+  const archStoneMergedGeo = mergeGeometries([leftPillarGeo, rightPillarGeo, archLintelGeo], false);
+  leftPillarGeo.dispose();
+  rightPillarGeo.dispose();
+  archLintelGeo.dispose();
+  archStoneMergedGeo.computeBoundingBox();
+  archStoneMergedGeo.computeBoundingSphere();
 
   const archCapGeo = new THREE.BoxGeometry(3.2, 0.3, 0.55);
   archCapGeo.translate(0, 3.92, 0);
@@ -168,8 +178,7 @@ function getSharedChallengeAssets(): SharedChallengeAssets {
     coinRingGeo,
     matCoinGold,
     matCoinRing,
-    archPillarGeo,
-    archLintelGeo,
+    archStoneMergedGeo,
     archCapGeo,
     archCrestGeo,
     archPortalGeo,
@@ -217,15 +226,20 @@ export class ChallengeManager {
   private guidePoints!: THREE.Points;
   private guidePosAttr!: THREE.BufferAttribute;
   private guidePhase = new Float32Array(20);
+  private guideParticlesVisible = false;
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
   private coinPitchStep = 0;
   private coinPitchResetTimer = 0;
   private audioCtx: AudioContext | null = null;
+  private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
   private challengeBannerEl: HTMLElement | null;
   private toastContainer: HTMLElement | null;
+  private lastBannerDone = -1;
+  private lastBannerTenths = -1;
+  private bannerVisible = false;
 
   constructor(
     private config: WorldConfig,
@@ -259,6 +273,14 @@ export class ChallengeManager {
     this.guidePoints = new THREE.Points(geo, mat);
     this.guidePoints.frustumCulled = false;
     this.group.add(this.guidePoints);
+  }
+
+  public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
+    this.getSurfaceHeightFn = fn;
+  }
+
+  private sampleGroundHeight(wx: number, wz: number): number {
+    return this.getSurfaceHeightFn ? this.getSurfaceHeightFn(wx, wz) : this.noise.getHeight(wx, wz);
   }
 
   private getKey(cx: number, cz: number): number {
@@ -351,17 +373,21 @@ export class ChallengeManager {
           const step = Math.min(dist, dt * 13.5);
           coin.worldPos.x += (dx / dist) * step;
           coin.worldPos.z += (dz / dist) * step;
-          coin.baseY = this.noise.getHeight(coin.worldPos.x, coin.worldPos.z);
+          coin.baseY = this.sampleGroundHeight(coin.worldPos.x, coin.worldPos.z);
           coin.worldPos.y = coin.baseY;
           coin.root.position.set(coin.worldPos.x, coin.baseY, coin.worldPos.z);
           coin.root.updateMatrix();
+          coin.root.matrixWorld.multiplyMatrices(this.group.matrixWorld, coin.root.matrix);
+          coin.ringMesh.matrixWorld.multiplyMatrices(coin.root.matrixWorld, coin.ringMesh.matrix);
         }
 
-        // Spin & bob animation
-        coin.coinMesh.rotation.y = elapsedTime * 3.2 + coin.phase;
-        coin.coinMesh.position.y = 0.68 + Math.sin(elapsedTime * 4.0 + coin.phase) * 0.1;
-        coin.coinMesh.updateMatrix();
-        coin.root.updateMatrixWorld(true);
+        // Spin & bob animation (distance-gated to 45m)
+        if (dSq < 45 * 45) {
+          coin.coinMesh.rotation.y = elapsedTime * 3.2 + coin.phase;
+          coin.coinMesh.position.y = 0.68 + Math.sin(elapsedTime * 4.0 + coin.phase) * 0.1;
+          coin.coinMesh.updateMatrix();
+          coin.coinMesh.matrixWorld.multiplyMatrices(coin.root.matrixWorld, coin.coinMesh.matrix);
+        }
 
         if (dSq <= pickupSq) {
           this.collectCoin(coin, hasLodestone);
@@ -379,7 +405,7 @@ export class ChallengeManager {
       const scale = Math.max(0.001, 1.0 - t * 3.2);
       c.coinMesh.scale.setScalar(scale);
       c.coinMesh.updateMatrix();
-      c.root.updateMatrixWorld(true);
+      c.coinMesh.matrixWorld.multiplyMatrices(c.root.matrixWorld, c.coinMesh.matrix);
 
       if (t >= 0.32) {
         this.group.remove(c.root);
@@ -404,15 +430,24 @@ export class ChallengeManager {
         }
         if (!isVisible) continue;
 
-        // Rotate floating crest & pulse portal ring
-        arch.crestMesh.rotation.y = elapsedTime * 2.0;
-        arch.crestMesh.position.y = 4.55 + Math.sin(elapsedTime * 3.0 + arch.cx) * 0.12;
-        arch.crestMesh.updateMatrix();
+        // Rotate floating crest & pulse portal ring (distance-gated to 60m)
+        if (dSq < 60 * 60) {
+          arch.crestMesh.rotation.y = elapsedTime * 2.0;
+          arch.crestMesh.position.y = 4.55 + Math.sin(elapsedTime * 3.0 + arch.cx) * 0.12;
+          arch.crestMesh.updateMatrix();
+          arch.crestMesh.matrixWorld.multiplyMatrices(
+            arch.root.matrixWorld,
+            arch.crestMesh.matrix
+          );
 
-        const portalScale = 1.0 + Math.sin(elapsedTime * 3.8) * 0.04;
-        arch.portalRingMesh.scale.setScalar(portalScale);
-        arch.portalRingMesh.updateMatrix();
-        arch.root.updateMatrixWorld(true);
+          const portalScale = 1.0 + Math.sin(elapsedTime * 3.8) * 0.04;
+          arch.portalRingMesh.scale.setScalar(portalScale);
+          arch.portalRingMesh.updateMatrix();
+          arch.portalRingMesh.matrixWorld.multiplyMatrices(
+            arch.root.matrixWorld,
+            arch.portalRingMesh.matrix
+          );
+        }
 
         // Trigger Timed Waypoint Ring Challenge when stepping through the Stone Archway!
         if (!this.currentTrialArch && arch.cooldown <= 0 && dSq <= 2.35 * 2.35) {
@@ -613,7 +648,7 @@ export class ChallengeManager {
       const wx = playerPos.x + dirX * along + perpX * wave;
       const wz = playerPos.z + dirZ * along + perpZ * wave;
       const wy =
-        Math.max(this.noise.getHeight(wx, wz), this.config.waterLevel) +
+        Math.max(this.sampleGroundHeight(wx, wz), this.config.waterLevel) +
         1.15 +
         Math.sin(elapsedTime * 4.0 + i) * 0.22;
 
@@ -621,12 +656,14 @@ export class ChallengeManager {
       posArr[i * 3 + 1] = wy;
       posArr[i * 3 + 2] = wz;
     }
+    this.guideParticlesVisible = true;
     this.guidePosAttr.needsUpdate = true;
   }
 
   private hideGuideParticles(): void {
+    if (!this.guideParticlesVisible) return;
+    this.guideParticlesVisible = false;
     const posArr = this.guidePosAttr.array as Float32Array;
-    if (posArr[1] === -9999) return;
     for (let i = 0; i < this.guideCount; i++) {
       posArr[i * 3 + 1] = -9999;
     }
@@ -651,13 +688,26 @@ export class ChallengeManager {
   private syncChallengeBanner(): void {
     if (!this.challengeBannerEl) return;
     if (!this.currentTrialArch || this.activeRings.length === 0) {
-      this.challengeBannerEl.classList.add('hidden');
+      if (this.bannerVisible) {
+        this.bannerVisible = false;
+        this.lastBannerDone = -1;
+        this.lastBannerTenths = -1;
+        this.challengeBannerEl.classList.add('hidden');
+      }
       return;
     }
     const total = this.activeRings.length;
     const done = this.currentRingIndex;
-    this.challengeBannerEl.textContent = `⏱️ Ring Sprint: ${done} / ${total} Rings • ${this.trialTimer.toFixed(1)}s`;
-    this.challengeBannerEl.classList.remove('hidden');
+    const tenths = Math.round(this.trialTimer * 10);
+    if (done !== this.lastBannerDone || tenths !== this.lastBannerTenths) {
+      this.lastBannerDone = done;
+      this.lastBannerTenths = tenths;
+      this.challengeBannerEl.textContent = `⏱️ Ring Sprint: ${done} / ${total} Rings • ${(tenths * 0.1).toFixed(1)}s`;
+    }
+    if (!this.bannerVisible) {
+      this.bannerVisible = true;
+      this.challengeBannerEl.classList.remove('hidden');
+    }
   }
 
   private spawnChunkChallenges(cx: number, cz: number, chunkKey: number): void {
@@ -712,7 +762,7 @@ export class ChallengeManager {
 
               const coinMesh = new THREE.Mesh(assets.coinGeo, assets.matCoinGold);
               coinMesh.position.y = 0.68;
-              coinMesh.castShadow = true;
+              coinMesh.castShadow = false;
               coinMesh.updateMatrix();
               coinMesh.matrixAutoUpdate = false;
               root.add(coinMesh);
@@ -815,28 +865,11 @@ export class ChallengeManager {
         root.updateMatrix();
         root.matrixAutoUpdate = false;
 
-        const leftPillar = new THREE.Mesh(assets.archPillarGeo, assets.matArchStone);
-        leftPillar.position.x = -1.45;
-        leftPillar.castShadow = true;
-        leftPillar.receiveShadow = true;
-        leftPillar.updateMatrix();
-        leftPillar.matrixAutoUpdate = false;
-        root.add(leftPillar);
-
-        const rightPillar = new THREE.Mesh(assets.archPillarGeo, assets.matArchStone);
-        rightPillar.position.x = 1.45;
-        rightPillar.castShadow = true;
-        rightPillar.receiveShadow = true;
-        rightPillar.updateMatrix();
-        rightPillar.matrixAutoUpdate = false;
-        root.add(rightPillar);
-
-        const lintel = new THREE.Mesh(assets.archLintelGeo, assets.matArchStone);
-        lintel.castShadow = true;
-        lintel.receiveShadow = true;
-        lintel.updateMatrix();
-        lintel.matrixAutoUpdate = false;
-        root.add(lintel);
+        const stoneMesh = new THREE.Mesh(assets.archStoneMergedGeo, assets.matArchStone);
+        stoneMesh.castShadow = true;
+        stoneMesh.receiveShadow = true;
+        stoneMesh.matrixAutoUpdate = false;
+        root.add(stoneMesh);
 
         const cap = new THREE.Mesh(assets.archCapGeo, assets.matArchRuneTrim);
         cap.updateMatrix();
@@ -960,6 +993,10 @@ export class ChallengeManager {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.2);
   }
@@ -979,6 +1016,10 @@ export class ChallengeManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.07 + 0.3);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.07);
       osc.stop(now + idx * 0.07 + 0.32);
     });
@@ -1001,6 +1042,10 @@ export class ChallengeManager {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.28);
   }
@@ -1020,6 +1065,10 @@ export class ChallengeManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.42);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.45);
     });

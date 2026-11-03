@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
@@ -24,7 +25,7 @@ interface SpiritRabbitInstance {
   targetPos: THREE.Vector3;
   rewarded: boolean;
   hopPhase: number;
-  mesh: THREE.Group;
+  mesh: THREE.Mesh;
 }
 
 interface GoblinHazardInstance {
@@ -35,6 +36,8 @@ interface GoblinHazardInstance {
   defeated: boolean;
   flyTime: number;
   mesh: THREE.Group;
+  bodyMesh: THREE.Mesh;
+  headMesh: THREE.Mesh;
 }
 
 interface ChunkLivingEntities {
@@ -56,7 +59,7 @@ interface SharedLivingAssets {
   starRingGeo: THREE.BufferGeometry;
   birdGeo: THREE.BufferGeometry;
   spiritBodyGeo: THREE.BufferGeometry;
-  spiritEarGeo: THREE.BufferGeometry;
+  spiritRabbitGeo: THREE.BufferGeometry;
   goblinBodyGeo: THREE.BufferGeometry;
   goblinHeadGeo: THREE.BufferGeometry;
 }
@@ -148,6 +151,13 @@ function getSharedLivingAssets(): SharedLivingAssets {
   const spiritEarGeo = new THREE.BoxGeometry(0.08, 0.32, 0.08);
   spiritEarGeo.translate(0, 0.52, 0.08);
 
+  const spiritBodyClone = spiritBodyGeo.clone();
+  const spiritRabbitGeo = mergeGeometries([spiritBodyClone, spiritEarGeo], false);
+  spiritBodyClone.dispose();
+  spiritEarGeo.dispose();
+  spiritRabbitGeo.computeBoundingBox();
+  spiritRabbitGeo.computeBoundingSphere();
+
   const goblinBodyGeo = new THREE.ConeGeometry(0.36, 0.72, 7);
   goblinBodyGeo.translate(0, 0.36, 0);
 
@@ -166,7 +176,7 @@ function getSharedLivingAssets(): SharedLivingAssets {
     starRingGeo,
     birdGeo,
     spiritBodyGeo,
-    spiritEarGeo,
+    spiritRabbitGeo,
     goblinBodyGeo,
     goblinHeadGeo,
   };
@@ -193,6 +203,7 @@ export class LivingWorldManager {
   private isNight = false;
   private hazardHitCooldown = 0;
   private audioCtx: AudioContext | null = null;
+  private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
   constructor(
     private config: WorldConfig,
@@ -216,6 +227,14 @@ export class LivingWorldManager {
         this.cycleTimeOfDayPreset();
       }
     });
+  }
+
+  public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
+    this.getSurfaceHeightFn = fn;
+  }
+
+  private sampleGroundHeight(wx: number, wz: number): number {
+    return this.getSurfaceHeightFn ? this.getSurfaceHeightFn(wx, wz) : this.noise.getHeight(wx, wz);
   }
 
   private getKey(cx: number, cz: number): number {
@@ -372,17 +391,18 @@ export class LivingWorldManager {
         if (!flock.scared) {
           const dx = playerPos.x - flock.origin.x;
           const dz = playerPos.z - flock.origin.z;
-          if (dx * dx + dz * dz < 8.5 * 8.5) {
+          const dSq = dx * dx + dz * dz;
+          if (dSq < 8.5 * 8.5) {
             flock.scared = true;
             this.playBirdChirp();
-          } else {
-            // Subtle pecking hop on the ground
+          } else if (dSq < 45 * 45) {
+            // Subtle pecking hop on the ground (distance-gated to 45m)
             for (let i = 0; i < flock.birds.length; i++) {
               const b = flock.birds[i];
               b.position.y = Math.abs(Math.sin(elapsedTime * 4.5 + i * 1.7)) * 0.12;
               b.updateMatrix();
+              b.matrixWorld.multiplyMatrices(flock.group.matrixWorld, b.matrix);
             }
-            flock.group.updateMatrixWorld(true);
           }
         } else {
           flock.flightTime += dt;
@@ -399,8 +419,8 @@ export class LivingWorldManager {
             b.rotation.y = -angle;
             b.rotation.z = Math.sin(elapsedTime * 18.0 + i) * 0.35;
             b.updateMatrix();
+            b.matrixWorld.multiplyMatrices(flock.group.matrixWorld, b.matrix);
           }
-          flock.group.updateMatrixWorld(true);
           if (t > 5.0) {
             flock.group.visible = false;
           }
@@ -414,6 +434,11 @@ export class LivingWorldManager {
         const dz = playerPos.z - sr.pos.z;
         const dSq = dx * dx + dz * dz;
 
+        const castShadow = dSq < 48 * 48;
+        if (sr.mesh.castShadow !== castShadow) {
+          sr.mesh.castShadow = castShadow;
+        }
+
         if (dSq < 15.0 * 15.0) {
           // Hop toward targetPos
           const tx = sr.targetPos.x - sr.pos.x;
@@ -423,7 +448,7 @@ export class LivingWorldManager {
             const step = Math.min(tDist, dt * 6.8);
             sr.pos.x += (tx / tDist) * step;
             sr.pos.z += (tz / tDist) * step;
-            sr.pos.y = this.noise.getHeight(sr.pos.x, sr.pos.z);
+            sr.pos.y = this.sampleGroundHeight(sr.pos.x, sr.pos.z);
             sr.hopPhase += dt * 11.0;
             sr.mesh.position.set(
               sr.pos.x,
@@ -432,19 +457,19 @@ export class LivingWorldManager {
             );
             sr.mesh.rotation.y = Math.atan2(tx, tz);
             sr.mesh.updateMatrix();
-            sr.mesh.updateMatrixWorld(true);
+            sr.mesh.matrixWorld.multiplyMatrices(this.group.matrixWorld, sr.mesh.matrix);
           } else if (dSq < 3.2 * 3.2) {
             sr.rewarded = true;
             sr.mesh.visible = false;
             this.playStarChime();
             this.onGrantOrDeductGold(125, '🐇 Forest Spirit Gift! +125 Gold', true);
           }
-        } else {
-          // Gentle idle hop
+        } else if (dSq < 45 * 45) {
+          // Gentle idle hop (distance-gated to 45m)
           sr.hopPhase += dt * 3.5;
           sr.mesh.position.y = sr.pos.y + Math.abs(Math.sin(sr.hopPhase)) * 0.14;
           sr.mesh.updateMatrix();
-          sr.mesh.updateMatrixWorld(true);
+          sr.mesh.matrixWorld.multiplyMatrices(this.group.matrixWorld, sr.mesh.matrix);
         }
       }
 
@@ -452,37 +477,52 @@ export class LivingWorldManager {
       if (ent.goblin && ent.goblin.mesh.visible) {
         const g = ent.goblin;
         if (!g.defeated) {
-          g.orbitAngle += dt * 1.65;
-          g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
-          g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
-          g.pos.y = this.noise.getHeight(g.pos.x, g.pos.z);
+          const cdx = playerPos.x - g.centerPos.x;
+          const cdz = playerPos.z - g.centerPos.z;
+          const centerDistSq = cdx * cdx + cdz * cdz;
+          const maxSimRadius = 60 + g.orbitRadius;
+          if (centerDistSq <= maxSimRadius * maxSimRadius) {
+            g.orbitAngle += dt * 1.65;
+            g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
+            g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
+            g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
 
-          const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
-          g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
-          g.mesh.rotation.y = -g.orbitAngle;
-          g.mesh.updateMatrix();
-          g.mesh.updateMatrixWorld(true);
+            const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
+            g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
+            g.mesh.rotation.y = -g.orbitAngle;
+            g.mesh.updateMatrix();
+            g.mesh.updateMatrixWorld(true);
 
-          const dx = playerPos.x - g.pos.x;
-          const dz = playerPos.z - g.pos.z;
-          if (dx * dx + dz * dz < 1.65 * 1.65) {
-            if (isPlayerAttackingOrAirborne) {
-              g.defeated = true;
-              this.playStarChime();
-              this.onGrantOrDeductGold(
-                125,
-                '🛡️ Smashed Goblin Cutpurse! +125 Gold!',
-                true
-              );
-            } else if (this.hazardHitCooldown <= 0) {
-              this.hazardHitCooldown = 2.4;
-              this.playHazardBumpSound();
-              this.onGrantOrDeductGold(
-                -25,
-                '👺 Goblin Cutpurse! -25 Gold (Press C/Ctrl or Space to Smash!)',
-                false
-              );
+            const dx = playerPos.x - g.pos.x;
+            const dz = playerPos.z - g.pos.z;
+            const dSq = dx * dx + dz * dz;
+            const castShadow = dSq < 48 * 48;
+            if (g.bodyMesh.castShadow !== castShadow) {
+              g.bodyMesh.castShadow = castShadow;
+              g.headMesh.castShadow = castShadow;
             }
+            if (dSq < 1.65 * 1.65) {
+              if (isPlayerAttackingOrAirborne) {
+                g.defeated = true;
+                this.playStarChime();
+                this.onGrantOrDeductGold(
+                  125,
+                  '🛡️ Smashed Goblin Cutpurse! +125 Gold!',
+                  true
+                );
+              } else if (this.hazardHitCooldown <= 0) {
+                this.hazardHitCooldown = 2.4;
+                this.playHazardBumpSound();
+                this.onGrantOrDeductGold(
+                  -25,
+                  '👺 Goblin Cutpurse! -25 Gold (Press C/Ctrl or Space to Smash!)',
+                  false
+                );
+              }
+            }
+          } else if (g.bodyMesh.castShadow) {
+            g.bodyMesh.castShadow = false;
+            g.headMesh.castShadow = false;
           }
         } else {
           g.flyTime += dt;
@@ -650,19 +690,11 @@ export class LivingWorldManager {
       const wz = isStartChunk ? 9.5 : cz * size + (rng() - 0.5) * (size * 0.6);
       const wy = this.noise.getHeight(wx, wz);
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.0) {
-        const mesh = new THREE.Group();
+        const mesh = new THREE.Mesh(assets.spiritRabbitGeo, assets.matSpirit);
         mesh.position.set(wx, wy, wz);
+        mesh.castShadow = false;
         mesh.updateMatrix();
         mesh.matrixAutoUpdate = false;
-
-        const body = new THREE.Mesh(assets.spiritBodyGeo, assets.matSpirit);
-        body.castShadow = true;
-        body.matrixAutoUpdate = false;
-        mesh.add(body);
-
-        const ears = new THREE.Mesh(assets.spiritEarGeo, assets.matSpirit);
-        ears.matrixAutoUpdate = false;
-        mesh.add(ears);
 
         this.group.add(mesh);
         mesh.updateMatrixWorld(true);
@@ -693,12 +725,12 @@ export class LivingWorldManager {
         mesh.matrixAutoUpdate = false;
 
         const body = new THREE.Mesh(assets.goblinBodyGeo, assets.matGoblinTunic);
-        body.castShadow = true;
+        body.castShadow = false;
         body.matrixAutoUpdate = false;
         mesh.add(body);
 
         const head = new THREE.Mesh(assets.goblinHeadGeo, assets.matGoblinSkin);
-        head.castShadow = true;
+        head.castShadow = false;
         head.matrixAutoUpdate = false;
         mesh.add(head);
 
@@ -719,6 +751,8 @@ export class LivingWorldManager {
           defeated: false,
           flyTime: 0,
           mesh,
+          bodyMesh: body,
+          headMesh: head,
         };
       }
     }
@@ -774,6 +808,10 @@ export class LivingWorldManager {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.06);
       osc.stop(now + idx * 0.06 + 0.07);
     });
@@ -796,6 +834,10 @@ export class LivingWorldManager {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.07);
       osc.stop(now + idx * 0.07 + 0.38);
     });
@@ -817,6 +859,10 @@ export class LivingWorldManager {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.28);
   }

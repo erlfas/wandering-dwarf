@@ -4,8 +4,44 @@ import { ChunkForest } from './ForestField';
 import { ChunkGrass, ChunkSurfaceSampler } from './GrassField';
 import { TerrainNoise } from './TerrainNoise';
 
-let sharedWaterGeo: THREE.BufferGeometry | null = null;
-let sharedWaterGeoSize = 0;
+declare module './GrassField' {
+  interface ChunkSurfaceSampler {
+    sampleBiome?(
+      localX: number,
+      localZ: number,
+      out: { forest: number; meadow: number; tallGrass: number }
+    ): void;
+  }
+}
+
+let sharedWaterGeoNear: THREE.BufferGeometry | null = null;
+let sharedWaterGeoFar: THREE.BufferGeometry | null = null;
+
+function getSharedWaterGeometry(segments: number): THREE.BufferGeometry {
+  if (segments === 64) {
+    if (!sharedWaterGeoNear) {
+      sharedWaterGeoNear = new THREE.PlaneGeometry(1, 1, 8, 8);
+      sharedWaterGeoNear.rotateX(-Math.PI / 2);
+    }
+    return sharedWaterGeoNear;
+  }
+  if (!sharedWaterGeoFar) {
+    sharedWaterGeoFar = new THREE.PlaneGeometry(1, 1, 1, 1);
+    sharedWaterGeoFar.rotateX(-Math.PI / 2);
+  }
+  return sharedWaterGeoFar;
+}
+
+function getForestTier(dist: number): number {
+  if (dist <= 1.5) return 0;
+  if (dist <= 2.2) return 1;
+  if (dist <= 2.6) return 2;
+  if (dist <= 4.2) return 3;
+  return 4;
+}
+
+const BIOME_SEGMENTS = 16;
+const BIOME_STRIDE = BIOME_SEGMENTS + 1; // 17x17 coarse biome grid per chunk
 
 const sharedBorderMaterial = new THREE.LineBasicMaterial({
   color: 0x3b82f6,
@@ -21,6 +57,7 @@ let paddedTrackWeights = new Float32Array(67 * 67);
 const tempNormal = new THREE.Vector3();
 const tempColor = new THREE.Color();
 const clayColor = new THREE.Color(0xdcd6cc);
+const tempBiome = { forest: 0, meadow: 0, tallGrass: 0 };
 
 export class TerrainChunk implements ChunkSurfaceSampler {
   public readonly cx: number;
@@ -33,6 +70,12 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   private minElevation = Infinity;
   private maxElevation = -Infinity;
   private maxTrackWeight = 0;
+  private waterMinX = Infinity;
+  private waterMaxX = -Infinity;
+  private waterMinZ = Infinity;
+  private waterMaxZ = -Infinity;
+  private lastForestTier = -1;
+  private readonly biomeGrid = new Float32Array(BIOME_STRIDE * BIOME_STRIDE * 3);
   private borderLine?: THREE.LineSegments;
   private chunkGrass?: ChunkGrass;
   private chunkForest?: ChunkForest;
@@ -61,7 +104,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       config.enableGrassBlades && !config.blankClayMode ? grassDensityMult : 0;
     this.hasGrass = this.grassDensityMult > 0;
 
-    const geometry = this.buildGeometry(noise, config.blankClayMode);
+    this.populateBiomeGrid(noise);
+    const geometry = this.buildGeometry(noise, config.blankClayMode, config.waterLevel);
     this.mesh = new THREE.Mesh(geometry, terrainMaterial);
     this.mesh.position.set(cx * size, 0, cz * size);
     this.mesh.updateMatrix();
@@ -69,25 +113,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = false;
 
-    // 1. Add Water Surface Plane if this chunk contains a river channel or pond basin
-    if (
-      config.enableWater &&
-      !config.blankClayMode &&
-      this.minElevation < config.waterLevel - 0.10
-    ) {
-      if (!sharedWaterGeo || sharedWaterGeoSize !== size) {
-        sharedWaterGeo?.dispose();
-        sharedWaterGeo = new THREE.PlaneGeometry(size, size, 8, 8);
-        sharedWaterGeo.rotateX(-Math.PI / 2);
-        sharedWaterGeoSize = size;
-      }
-      this.waterMesh = new THREE.Mesh(sharedWaterGeo, waterMaterial);
-      this.waterMesh.position.y = config.waterLevel;
-      this.waterMesh.updateMatrix();
-      this.waterMesh.matrixAutoUpdate = false;
-      this.waterMesh.receiveShadow = true;
-      this.mesh.add(this.waterMesh);
-    }
+    // 1. Add Water Surface Plane fitted to tight sub-chunk wet bounding box
+    this.updateWaterMesh(config, waterMaterial);
 
     // 2. Add 3D Grass & Wildflowers on near/mid chunks
     if (this.hasGrass) {
@@ -109,6 +136,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     if ((config.enableTrees || config.enableTracks) && !config.blankClayMode) {
       const isNearLOD = dist <= 1.5;
       const castShadow = dist <= 2.2;
+      this.lastForestTier = getForestTier(dist);
       this.chunkForest = new ChunkForest(
         cx,
         cz,
@@ -130,12 +158,108 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     this.mesh.updateMatrixWorld(true);
   }
 
+  private populateBiomeGrid(noise: TerrainNoise): void {
+    const half = this.size * 0.5;
+    const step = this.size / BIOME_SEGMENTS;
+    const worldOffsetX = this.cx * this.size;
+    const worldOffsetZ = this.cz * this.size;
+    const grid = this.biomeGrid;
+
+    for (let bz = 0; bz < BIOME_STRIDE; bz++) {
+      const wz = worldOffsetZ - half + bz * step;
+      const rowOffset = bz * BIOME_STRIDE;
+      for (let bx = 0; bx < BIOME_STRIDE; bx++) {
+        const wx = worldOffsetX - half + bx * step;
+        const idx = (rowOffset + bx) * 3;
+        grid[idx] = noise.getForestDensity(wx, wz);
+        grid[idx + 1] = noise.getMeadowPatch(wx, wz);
+        grid[idx + 2] = noise.getTallGrassFactor(wx, wz);
+      }
+    }
+  }
+
+  public sampleBiome(
+    localX: number,
+    localZ: number,
+    out: { forest: number; meadow: number; tallGrass: number }
+  ): void {
+    const half = this.size * 0.5;
+    const invStep = BIOME_SEGMENTS / this.size;
+
+    const u = THREE.MathUtils.clamp((localX + half) * invStep, 0, BIOME_SEGMENTS - 0.0001);
+    const v = THREE.MathUtils.clamp((localZ + half) * invStep, 0, BIOME_SEGMENTS - 0.0001);
+    const ix = Math.floor(u);
+    const iz = Math.floor(v);
+    const fx = u - ix;
+    const fz = v - iz;
+
+    const i00 = (iz * BIOME_STRIDE + ix) * 3;
+    const i10 = i00 + 3;
+    const i01 = i00 + BIOME_STRIDE * 3;
+    const i11 = i01 + 3;
+
+    const w00 = (1 - fx) * (1 - fz);
+    const w10 = fx * (1 - fz);
+    const w01 = (1 - fx) * fz;
+    const w11 = fx * fz;
+
+    const g = this.biomeGrid;
+    out.forest = g[i00] * w00 + g[i10] * w10 + g[i01] * w01 + g[i11] * w11;
+    out.meadow = g[i00 + 1] * w00 + g[i10 + 1] * w10 + g[i01 + 1] * w01 + g[i11 + 1] * w11;
+    out.tallGrass =
+      g[i00 + 2] * w00 + g[i10 + 2] * w10 + g[i01 + 2] * w01 + g[i11 + 2] * w11;
+  }
+
+  private updateWaterMesh(config: WorldConfig, waterMaterial?: THREE.Material): void {
+    const shouldHaveWater =
+      config.enableWater &&
+      !config.blankClayMode &&
+      this.minElevation < config.waterLevel - 0.10 &&
+      this.waterMinX <= this.waterMaxX;
+
+    if (shouldHaveWater) {
+      const waterGeo = getSharedWaterGeometry(this.segments);
+      if (!this.waterMesh && waterMaterial) {
+        this.waterMesh = new THREE.Mesh(waterGeo, waterMaterial);
+        this.waterMesh.matrixAutoUpdate = false;
+        this.mesh.add(this.waterMesh);
+      }
+      if (this.waterMesh) {
+        this.waterMesh.geometry = waterGeo;
+        this.waterMesh.visible = true;
+        this.waterMesh.receiveShadow = this.segments === 64;
+        const centerX = (this.waterMinX + this.waterMaxX) * 0.5;
+        const centerZ = (this.waterMinZ + this.waterMaxZ) * 0.5;
+        const spanX = Math.max(0.5, this.waterMaxX - this.waterMinX);
+        const spanZ = Math.max(0.5, this.waterMaxZ - this.waterMinZ);
+        this.waterMesh.position.set(centerX, config.waterLevel, centerZ);
+        this.waterMesh.scale.set(spanX, 1, spanZ);
+        this.waterMesh.updateMatrix();
+        this.waterMesh.updateMatrixWorld(true);
+      }
+    } else if (this.waterMesh) {
+      this.waterMesh.visible = false;
+    }
+  }
+
   public getElevationBounds(): { minH: number; maxH: number } {
     return { minH: this.minElevation, maxH: this.maxElevation };
   }
 
   public hasTrack(): boolean {
     return this.maxTrackWeight > 0.001;
+  }
+
+  public hasGrassInstance(): boolean {
+    return this.chunkGrass !== undefined;
+  }
+
+  public releaseGrassIfFar(dist: number, maxGrassRadius: number): void {
+    if (this.chunkGrass && this.grassDensityMult === 0 && dist > maxGrassRadius + 1.0) {
+      this.mesh.remove(this.chunkGrass.group);
+      this.chunkGrass.dispose();
+      this.chunkGrass = undefined;
+    }
   }
 
   public updateSegments(
@@ -153,30 +277,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     pool.push(this.mesh.geometry);
 
     this.segments = newSegments;
-    this.mesh.geometry = this.buildGeometry(noise, config.blankClayMode);
-    const shouldHaveWater =
-      config.enableWater &&
-      !config.blankClayMode &&
-      this.minElevation < config.waterLevel - 0.10;
-    if (this.waterMesh) {
-      this.waterMesh.visible = shouldHaveWater;
-      this.waterMesh.position.y = config.waterLevel;
-      this.waterMesh.updateMatrix();
-    } else if (shouldHaveWater && waterMaterial) {
-      if (!sharedWaterGeo || sharedWaterGeoSize !== this.size) {
-        sharedWaterGeo?.dispose();
-        sharedWaterGeo = new THREE.PlaneGeometry(this.size, this.size, 8, 8);
-        sharedWaterGeo.rotateX(-Math.PI / 2);
-        sharedWaterGeoSize = this.size;
-      }
-      this.waterMesh = new THREE.Mesh(sharedWaterGeo, waterMaterial);
-      this.waterMesh.position.y = config.waterLevel;
-      this.waterMesh.updateMatrix();
-      this.waterMesh.matrixAutoUpdate = false;
-      this.waterMesh.receiveShadow = true;
-      this.mesh.add(this.waterMesh);
-      this.waterMesh.updateMatrixWorld(true);
-    }
+    this.mesh.geometry = this.buildGeometry(noise, config.blankClayMode, config.waterLevel);
+    this.updateWaterMesh(config, waterMaterial);
     if (this.borderLine) {
       this.setBorderVisible(false);
       this.setBorderVisible(true);
@@ -190,6 +292,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     grassMaterial: THREE.Material,
     flowerMaterial: THREE.Material
   ): void {
+    this.populateBiomeGrid(noise);
     if (this.chunkGrass) {
       this.mesh.remove(this.chunkGrass.group);
       this.chunkGrass.dispose();
@@ -204,12 +307,15 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     treeMaterial: THREE.Material,
     dist: number
   ): void {
+    this.populateBiomeGrid(noise);
     if (this.chunkForest) {
       this.mesh.remove(this.chunkForest.group);
       this.chunkForest.dispose();
       this.chunkForest = undefined;
     }
+    this.lastForestTier = -1;
     if ((config.enableTrees || config.enableTracks) && !config.blankClayMode) {
+      this.lastForestTier = getForestTier(dist);
       this.chunkForest = new ChunkForest(
         this.cx,
         this.cz,
@@ -262,6 +368,9 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   }
 
   public updateForestLOD(dist: number): void {
+    const tier = getForestTier(dist);
+    if (tier === this.lastForestTier) return;
+    this.lastForestTier = tier;
     this.chunkForest?.setLOD(dist <= 1.5, dist <= 2.2, dist);
   }
 
@@ -301,11 +410,16 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     const posArr = (geo.attributes.position as THREE.BufferAttribute).array as Float32Array;
     const normArr = (geo.attributes.normal as THREE.BufferAttribute).array as Float32Array;
 
+    const h00 = posArr[i00 + 1];
+    const h10 = posArr[i10 + 1];
+    const h01 = posArr[i01 + 1];
+    const h11 = posArr[i11 + 1];
+
+    // Exact triangle barycentric interpolation matching THREE.PlaneGeometry and ChunkManager.getSurfaceHeight()
     const wy =
-      posArr[i00 + 1] * w00 +
-      posArr[i10 + 1] * w10 +
-      posArr[i01 + 1] * w01 +
-      posArr[i11 + 1] * w11;
+      fx + fz <= 1.0
+        ? h00 + fx * (h10 - h00) + fz * (h01 - h00)
+        : h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
 
     const nx =
       normArr[i00] * w00 + normArr[i10] * w10 + normArr[i01] * w01 + normArr[i11] * w11;
@@ -416,7 +530,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
   private buildGeometry(
     noise: TerrainNoise,
-    blankClayMode: boolean
+    blankClayMode: boolean,
+    waterLevel = 0
   ): THREE.BufferGeometry {
     const segments = this.segments;
     const size = this.size;
@@ -465,6 +580,12 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       paddedTrackWeights = new Float32Array(requiredLen);
     }
 
+    const skipTracks = !noise.isChunkNearTrack(
+      worldOffsetX,
+      worldOffsetZ,
+      (half + step) * 1.4143
+    );
+
     let maxTrackW = 0;
     for (let pz = 0; pz < padStride; pz++) {
       const wz = worldOffsetZ - half + (pz - 1) * step;
@@ -472,10 +593,12 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       for (let px = 0; px < padStride; px++) {
         const wx = worldOffsetX - half + (px - 1) * step;
         const idx = rowOffset + px;
-        paddedHeights[idx] = noise.getHeight(wx, wz);
-        const tw = noise.lastTrackWeight;
-        paddedTrackWeights[idx] = tw;
-        if (tw > maxTrackW) maxTrackW = tw;
+        paddedHeights[idx] = noise.getHeight(wx, wz, skipTracks);
+        if (!skipTracks) {
+          const tw = noise.lastTrackWeight;
+          paddedTrackWeights[idx] = tw;
+          if (tw > maxTrackW) maxTrackW = tw;
+        }
       }
     }
     this.maxTrackWeight = maxTrackW;
@@ -483,6 +606,11 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     // 2. Populate vertex positions, central-difference normals from padded grid, and surface colors
     let minH = Infinity;
     let maxH = -Infinity;
+    let waterMinX = Infinity;
+    let waterMaxX = -Infinity;
+    let waterMinZ = Infinity;
+    let waterMaxZ = -Infinity;
+    const waterThreshold = waterLevel + 0.25;
     const vertStride = segments + 1;
     const twoStep = 2.0 * step;
 
@@ -500,10 +628,18 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
         const pIdx = padRow + (ix + 1);
         const wy = paddedHeights[pIdx];
-        const tw = paddedTrackWeights[pIdx];
-        trackWeights[i] = tw;
+        const tw = skipTracks ? 0 : paddedTrackWeights[pIdx];
+        if (!skipTracks) {
+          trackWeights[i] = tw;
+        }
         if (wy < minH) minH = wy;
         if (wy > maxH) maxH = wy;
+        if (wy < waterThreshold) {
+          if (localX < waterMinX) waterMinX = localX;
+          if (localX > waterMaxX) waterMaxX = localX;
+          if (localZ < waterMinZ) waterMinZ = localZ;
+          if (localZ > waterMaxZ) waterMaxZ = localZ;
+        }
 
         if (!isReusedSameSize) {
           posArr[cIdx] = localX;
@@ -530,13 +666,16 @@ export class TerrainChunk implements ChunkSurfaceSampler {
           colors[cIdx + 1] = clayColor.g;
           colors[cIdx + 2] = clayColor.b;
         } else {
+          this.sampleBiome(localX, localZ, tempBiome);
           noise.getSurfaceColor(
             wx,
             wy,
             wz,
             tempNormal,
             tempColor,
-            tw
+            tw,
+            tempBiome.meadow,
+            tempBiome.forest
           );
           colors[cIdx] = tempColor.r;
           colors[cIdx + 1] = tempColor.g;
@@ -547,6 +686,17 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
     this.minElevation = minH;
     this.maxElevation = maxH;
+    if (waterMinX <= waterMaxX) {
+      this.waterMinX = Math.max(-half, waterMinX - step);
+      this.waterMaxX = Math.min(half, waterMaxX + step);
+      this.waterMinZ = Math.max(-half, waterMinZ - step);
+      this.waterMaxZ = Math.min(half, waterMaxZ + step);
+    } else {
+      this.waterMinX = Infinity;
+      this.waterMaxX = -Infinity;
+      this.waterMinZ = Infinity;
+      this.waterMaxZ = -Infinity;
+    }
     posAttr.needsUpdate = true;
     normAttr.needsUpdate = true;
     colAttr.needsUpdate = true;

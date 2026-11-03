@@ -15,10 +15,12 @@ function colorizeGeometry(
   geo: THREE.BufferGeometry,
   bottomColor: THREE.Color,
   topColor: THREE.Color,
-  swayWeight: number
+  swayWeight: number,
+  forceUV = false
 ): THREE.BufferGeometry {
   const wasIndexed = Boolean(geo.index);
   const indexed = wasIndexed ? geo.clone() : mergeVertices(geo);
+  geo.dispose();
   if (!wasIndexed) {
     indexed.computeVertexNormals();
   }
@@ -29,7 +31,8 @@ function colorizeGeometry(
 
   const posAttr = indexed.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(posAttr.count * 3);
-  const uvs = new Float32Array(posAttr.count * 2);
+  const needUV = swayWeight !== 0 || forceUV;
+  const uvs = needUV ? new Float32Array(posAttr.count * 2) : null;
   const c = new THREE.Color();
 
   for (let i = 0; i < posAttr.count; i++) {
@@ -40,13 +43,19 @@ function colorizeGeometry(
     colors[i * 3 + 1] = c.g;
     colors[i * 3 + 2] = c.b;
 
-    // uv.y encodes how much this vertex sways in the wind (0 for lower trunk, higher for upper canopy)
-    uvs[i * 2] = 0;
-    uvs[i * 2 + 1] = swayWeight * (0.25 + 0.75 * t);
+    if (uvs) {
+      // uv.y encodes how much this vertex sways in the wind (0 for lower trunk, higher for upper canopy)
+      uvs[i * 2] = 0;
+      uvs[i * 2 + 1] = swayWeight * (0.25 + 0.75 * t);
+    }
   }
 
   indexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  indexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (uvs) {
+    indexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  } else {
+    indexed.deleteAttribute('uv');
+  }
   return indexed;
 }
 
@@ -57,8 +66,8 @@ function colorizeGeometry(
 function createPineTreeGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
 
-  // Sturdy tapered trunk
-  const trunk = new THREE.CylinderGeometry(0.16, 0.34, 2.6, 8);
+  // Sturdy tapered trunk (openEnded since caps are hidden inside ground and foliage)
+  const trunk = new THREE.CylinderGeometry(0.16, 0.34, 2.6, 8, 1, true);
   trunk.translate(0, 1.2, 0);
   parts.push(
     colorizeGeometry(
@@ -94,13 +103,14 @@ function createPineTreeGeometry(): THREE.BufferGeometry {
   }
 
   const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
 
 /**
  * Builds a stylized Broadleaf / Oak tree geometry (trunk + main branches + puffy multi-lobe canopy)
- * matching the rounded deciduous trees in the reference images.
+ * matching the rounded deciduous trees in the reference images (~216 tris).
  */
 function createBroadleafTreeGeometry(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
@@ -109,34 +119,34 @@ function createBroadleafTreeGeometry(): THREE.BufferGeometry {
   const trunkColorTop = new THREE.Color(0x684b34);
 
   // Main trunk
-  const trunk = new THREE.CylinderGeometry(0.24, 0.42, 2.9, 8);
+  const trunk = new THREE.CylinderGeometry(0.24, 0.42, 2.9, 8, 1, true);
   trunk.translate(0, 1.35, 0);
   parts.push(colorizeGeometry(trunk, trunkColorBot, trunkColorTop, 0.02));
 
   // Two angled boughs supporting the side canopy lobes
-  const boughL = new THREE.CylinderGeometry(0.12, 0.2, 1.6, 6);
+  const boughL = new THREE.CylinderGeometry(0.12, 0.2, 1.6, 6, 1, true);
   boughL.rotateZ(0.55);
   boughL.translate(-0.55, 2.6, 0.1);
   parts.push(colorizeGeometry(boughL, trunkColorBot, trunkColorTop, 0.1));
 
-  const boughR = new THREE.CylinderGeometry(0.12, 0.2, 1.5, 6);
+  const boughR = new THREE.CylinderGeometry(0.12, 0.2, 1.5, 6, 1, true);
   boughR.rotateZ(-0.5);
   boughR.rotateY(0.6);
   boughR.translate(0.5, 2.7, -0.2);
   parts.push(colorizeGeometry(boughR, trunkColorBot, trunkColorTop, 0.1));
 
-  // Clustered puffy foliage lobes (icosahedrons with soft normals & sunlit top gradient)
+  // Clustered puffy foliage lobes (detail=1 on main center lobe, detail=0 on 5 secondary lobes)
   const lobes = [
-    { x: 0.0, y: 4.5, z: 0.0, rx: 1.95, ry: 1.65, rz: 1.9, bot: 0x345925, top: 0x6d993b },
-    { x: -1.15, y: 3.7, z: 0.4, rx: 1.45, ry: 1.25, rz: 1.4, bot: 0x2d4f21, top: 0x608b35 },
-    { x: 1.1, y: 3.8, z: -0.35, rx: 1.4, ry: 1.25, rz: 1.45, bot: 0x2f5222, top: 0x648f37 },
-    { x: 0.2, y: 3.6, z: 1.05, rx: 1.35, ry: 1.15, rz: 1.3, bot: 0x2d4e20, top: 0x5e8834 },
-    { x: -0.3, y: 3.65, z: -1.0, rx: 1.35, ry: 1.2, rz: 1.35, bot: 0x2b4b1e, top: 0x5b8432 },
-    { x: 0.0, y: 5.45, z: 0.05, rx: 1.35, ry: 1.15, rz: 1.35, bot: 0x416b2c, top: 0x7da942 },
+    { x: 0.0, y: 4.5, z: 0.0, rx: 1.95, ry: 1.65, rz: 1.9, detail: 1, bot: 0x345925, top: 0x6d993b },
+    { x: -1.15, y: 3.7, z: 0.4, rx: 1.45, ry: 1.25, rz: 1.4, detail: 0, bot: 0x2d4f21, top: 0x608b35 },
+    { x: 1.1, y: 3.8, z: -0.35, rx: 1.4, ry: 1.25, rz: 1.45, detail: 0, bot: 0x2f5222, top: 0x648f37 },
+    { x: 0.2, y: 3.6, z: 1.05, rx: 1.35, ry: 1.15, rz: 1.3, detail: 0, bot: 0x2d4e20, top: 0x5e8834 },
+    { x: -0.3, y: 3.65, z: -1.0, rx: 1.35, ry: 1.2, rz: 1.35, detail: 0, bot: 0x2b4b1e, top: 0x5b8432 },
+    { x: 0.0, y: 5.45, z: 0.05, rx: 1.35, ry: 1.15, rz: 1.35, detail: 0, bot: 0x416b2c, top: 0x7da942 },
   ];
 
   for (const l of lobes) {
-    const sphere = new THREE.IcosahedronGeometry(1.0, 1);
+    const sphere = new THREE.IcosahedronGeometry(1.0, l.detail);
     sphere.scale(l.rx, l.ry, l.rz);
     sphere.translate(l.x, l.y, l.z);
     parts.push(
@@ -150,6 +160,7 @@ function createBroadleafTreeGeometry(): THREE.BufferGeometry {
   }
 
   const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
@@ -166,38 +177,39 @@ function createDwarvenHutGeometry(): THREE.BufferGeometry {
   const base = new THREE.CylinderGeometry(2.15, 2.28, 0.48, 8);
   base.translate(0, 0.24, 0);
   parts.push(
-    colorizeGeometry(base, new THREE.Color(0x524d46), new THREE.Color(0x736c62), 0.0)
+    colorizeGeometry(base, new THREE.Color(0x524d46), new THREE.Color(0x736c62), 0.0, true)
   );
 
-  // 2. Sturdy octagonal timber walls
-  const walls = new THREE.CylinderGeometry(1.92, 1.98, 1.82, 8);
+  // 2. Sturdy octagonal timber walls (openEnded since bottom/top caps are hidden)
+  const walls = new THREE.CylinderGeometry(1.92, 1.98, 1.82, 8, 1, true);
   walls.translate(0, 1.35, 0);
   parts.push(
-    colorizeGeometry(walls, new THREE.Color(0x593a22), new THREE.Color(0x7d5332), 0.0)
+    colorizeGeometry(walls, new THREE.Color(0x593a22), new THREE.Color(0x7d5332), 0.0, true)
   );
 
   // 3. Pitched wooden shingle / mossy roof cone
   const roof = new THREE.ConeGeometry(2.48, 1.75, 8);
   roof.translate(0, 3.02, 0);
   parts.push(
-    colorizeGeometry(roof, new THREE.Color(0x3d2818), new THREE.Color(0x63452b), 0.0)
+    colorizeGeometry(roof, new THREE.Color(0x3d2818), new THREE.Color(0x63452b), 0.0, true)
   );
 
   // 4. Front timber doorway porch projection
   const porch = new THREE.BoxGeometry(0.96, 1.38, 0.68);
   porch.translate(0, 0.95, 1.82);
   parts.push(
-    colorizeGeometry(porch, new THREE.Color(0x452c19), new THREE.Color(0x694528), 0.0)
+    colorizeGeometry(porch, new THREE.Color(0x452c19), new THREE.Color(0x694528), 0.0, true)
   );
 
   // 5. Small stone chimney stack on the side of the roof
   const chimney = new THREE.BoxGeometry(0.44, 1.05, 0.44);
   chimney.translate(1.05, 3.15, -0.45);
   parts.push(
-    colorizeGeometry(chimney, new THREE.Color(0x59534b), new THREE.Color(0x7a7368), 0.0)
+    colorizeGeometry(chimney, new THREE.Color(0x59534b), new THREE.Color(0x7a7368), 0.0, true)
   );
 
   const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
@@ -208,12 +220,14 @@ function createDwarvenHutGeometry(): THREE.BufferGeometry {
 function createShorelineRockGeometry(): THREE.BufferGeometry {
   const rock = new THREE.DodecahedronGeometry(0.65, 1);
   rock.scale(1.25, 0.72, 1.05);
-  return colorizeGeometry(
+  const geo = colorizeGeometry(
     rock,
     new THREE.Color(0x59564f),
     new THREE.Color(0x7c7d6e), // Slightly mossy top
     0.0
   );
+  geo.computeBoundingSphere();
+  return geo;
 }
 
 /**
@@ -246,6 +260,7 @@ function createTrackCobbleClusterGeometry(): THREE.BufferGeometry {
   }
 
   const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
@@ -260,28 +275,28 @@ function createTrackRootsGeometry(): THREE.BufferGeometry {
   const barkLight = new THREE.Color(0x7c593a);
 
   // Main gnarled root emerging from the grassy shoulder bank
-  const mainRoot = new THREE.CylinderGeometry(0.048, 0.085, 0.62, 6);
+  const mainRoot = new THREE.CylinderGeometry(0.048, 0.085, 0.62, 6, 1, true);
   mainRoot.rotateX(Math.PI * 0.47);
   mainRoot.rotateY(0.12);
   mainRoot.translate(0, 0.05, -0.22);
   parts.push(colorizeGeometry(mainRoot, barkDark, barkLight, 0.0));
 
   // Center crooked tendril reaching onto the track edge
-  const midTendril = new THREE.CylinderGeometry(0.018, 0.048, 0.58, 5);
+  const midTendril = new THREE.CylinderGeometry(0.018, 0.048, 0.58, 5, 1, true);
   midTendril.rotateX(Math.PI * 0.52);
   midTendril.rotateY(-0.18);
   midTendril.translate(0.03, 0.025, 0.28);
   parts.push(colorizeGeometry(midTendril, barkDark, barkLight, 0.0));
 
   // Left forked root tendril
-  const leftTendril = new THREE.CylinderGeometry(0.015, 0.042, 0.52, 5);
+  const leftTendril = new THREE.CylinderGeometry(0.015, 0.042, 0.52, 5, 1, true);
   leftTendril.rotateX(Math.PI * 0.51);
   leftTendril.rotateY(0.48);
   leftTendril.translate(-0.16, 0.028, 0.16);
   parts.push(colorizeGeometry(leftTendril, barkDark, barkLight, 0.0));
 
   // Right forked root tendril
-  const rightTendril = new THREE.CylinderGeometry(0.014, 0.038, 0.46, 5);
+  const rightTendril = new THREE.CylinderGeometry(0.014, 0.038, 0.46, 5, 1, true);
   rightTendril.rotateX(Math.PI * 0.52);
   rightTendril.rotateY(-0.55);
   rightTendril.translate(0.18, 0.024, 0.12);
@@ -303,6 +318,7 @@ function createTrackRootsGeometry(): THREE.BufferGeometry {
   parts.push(colorizeGeometry(leaf2, leafColorBot, leafColorTop, 0.0));
 
   const merged = mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
   merged.computeBoundingSphere();
   return merged;
 }
@@ -424,30 +440,30 @@ export function applyWindShaderToMaterial(
       ` + shader.vertexShader;
 
     if (useHeightAndRadiusWeights) {
-      // 3D Modelled Pine Tree: organic trunk bending + sweeping wind gusts + branch-tip needle flutter
+      // 3D Modelled Pine/Oak Tree: organic trunk bending + sweeping wind gusts + branch-tip needle flutter
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `
         #include <begin_vertex>
-        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 instWorldXZ = modelMatrix[3].xz + instanceMatrix[3].xz;
 
-        // Normalized height (0 at roots -> 1 at 8m treetop) and radial distance from trunk center
+        // Normalized height (0 at roots -> 1 at 8m treetop) and squared radial distance from trunk center
         float hNorm = clamp(transformed.y / 8.0, 0.0, 1.0);
-        float radialDist = length(transformed.xz);
-        float branchFactor = smoothstep(0.18, 1.6, radialDist) * smoothstep(0.08, 0.35, hNorm);
+        float radialDistSq = dot(transformed.xz, transformed.xz);
+        float branchFactor = smoothstep(0.0324, 2.56, radialDistSq) * smoothstep(0.08, 0.35, hNorm);
 
         // Primary rolling wind wave across the forest + secondary gust harmonic
         float windTime = uTime * uWindSpeed;
-        float treePhase = instWorld.x * 0.07 + instWorld.z * 0.06 + windTime * 0.75;
+        float treePhase = instWorldXZ.x * 0.07 + instWorldXZ.y * 0.06 + windTime * 0.75;
         float primaryGust = sin(treePhase) + 0.45 * cos(treePhase * 0.65 - 0.8);
 
-        // Smooth non-linear trunk & canopy bend (anchored solidly at the base)
-        float trunkBend = pow(hNorm, 1.65);
+        // Smooth non-linear trunk & canopy bend (cubic polynomial approximation to pow(hNorm, 1.65))
+        float trunkBend = hNorm * hNorm * (1.35 - 0.35 * hNorm);
         float swayX = primaryGust * uWindStrength * 0.85 * trunkBend;
         float swayZ = cos(treePhase * 0.82) * uWindStrength * 0.6 * trunkBend;
 
         // High-frequency branch bough & pine needle flutter on outer foliage
-        float branchPhase = windTime * 2.3 + transformed.y * 2.1 + (transformed.x + transformed.z) * 2.4 + instWorld.x * 0.25;
+        float branchPhase = windTime * 2.3 + transformed.y * 2.1 + (transformed.x + transformed.z) * 2.4 + instWorldXZ.x * 0.25;
         float flutterX = sin(branchPhase) * uWindStrength * 0.26 * branchFactor;
         float flutterY = cos(branchPhase * 1.15) * uWindStrength * 0.16 * branchFactor;
         float flutterZ = sin(branchPhase * 0.9 + 1.2) * uWindStrength * 0.26 * branchFactor;
@@ -458,16 +474,29 @@ export function applyWindShaderToMaterial(
         `
       );
     } else {
-      // Procedural broadleaf / rock geometry using uv.y sway weight
+      // Procedural broadleaf / fern geometry using uv.y sway weight
       shader.vertexShader = shader.vertexShader.replace(
         '#include <begin_vertex>',
         `
         #include <begin_vertex>
-        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 instWorldXZ = modelMatrix[3].xz + instanceMatrix[3].xz;
         float swayWeight = uv.y;
-        float treePhase = instWorld.x * 0.08 + instWorld.z * 0.07 + uTime * uWindSpeed * 0.65;
+        float treePhase = instWorldXZ.x * 0.08 + instWorldXZ.y * 0.07 + uTime * uWindSpeed * 0.65;
         transformed.x += sin(treePhase) * uWindStrength * 0.45 * swayWeight;
         transformed.z += cos(treePhase * 0.85) * uWindStrength * 0.35 * swayWeight;
+        `
+      );
+
+      // Keep upward-biased foliage normals skyward on DoubleSide backfaces (used by woodland ferns)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_begin>',
+        `
+        float faceDirection = gl_FrontFacing ? 1.0 : -1.0;
+        vec3 normal = normalize(vNormal);
+        #ifdef DOUBLE_SIDED
+          normal.xz *= gl_FrontFacing ? 1.0 : -1.0;
+        #endif
+        vec3 nonPerturbedNormal = normal;
         `
       );
     }
@@ -491,10 +520,10 @@ export function applyWindShaderToMaterial(
         '#include <begin_vertex>',
         `
         #include <begin_vertex>
-        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 instWorldXZ = modelMatrix[3].xz + instanceMatrix[3].xz;
         float hNorm = clamp(transformed.y / 8.0, 0.0, 1.0);
         float trunkBend = hNorm * hNorm;
-        float treePhase = instWorld.x * 0.07 + instWorld.z * 0.06 + uTime * uWindSpeed * 0.75;
+        float treePhase = instWorldXZ.x * 0.07 + instWorldXZ.y * 0.06 + uTime * uWindSpeed * 0.75;
         transformed.x += sin(treePhase) * uWindStrength * 0.85 * trunkBend;
         transformed.z += cos(treePhase * 0.82) * uWindStrength * 0.6 * trunkBend;
         `
@@ -504,9 +533,9 @@ export function applyWindShaderToMaterial(
         '#include <begin_vertex>',
         `
         #include <begin_vertex>
-        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vec2 instWorldXZ = modelMatrix[3].xz + instanceMatrix[3].xz;
         float swayWeight = uv.y;
-        float treePhase = instWorld.x * 0.08 + instWorld.z * 0.07 + uTime * uWindSpeed * 0.65;
+        float treePhase = instWorldXZ.x * 0.08 + instWorldXZ.y * 0.07 + uTime * uWindSpeed * 0.65;
         transformed.x += sin(treePhase) * uWindStrength * 0.45 * swayWeight;
         transformed.z += cos(treePhase * 0.85) * uWindStrength * 0.35 * swayWeight;
         `
@@ -544,6 +573,100 @@ export function createTreeMaterial(uniforms: GrassUniforms): THREE.MeshStandardM
   return mat;
 }
 
+/**
+ * Creates a GLTFLoader configured with a plugin that strips unused PBR textures
+ * (`metallicRoughnessTexture`, `normalTexture`, `occlusionTexture`) and
+ * `KHR_materials_specular` before `GLTFParser` decodes 2K textures or instantiates `MeshPhysicalMaterial`.
+ */
+export function createOptimizedGlbLoader(): GLTFLoader {
+  const loader = new GLTFLoader();
+  loader.register((parser) => ({
+    name: 'strip_unused_pbr_maps',
+    beforeRoot: async () => {
+      const materials = parser.json?.materials;
+      if (!Array.isArray(materials)) return;
+      for (const matDef of materials) {
+        if (matDef.pbrMetallicRoughness) {
+          delete matDef.pbrMetallicRoughness.metallicRoughnessTexture;
+        }
+        delete matDef.normalTexture;
+        delete matDef.occlusionTexture;
+        if (matDef.extensions) {
+          delete matDef.extensions.KHR_materials_specular;
+        }
+      }
+    },
+  }));
+  return loader;
+}
+
+/**
+ * Appends a low-poly procedural shadow proxy slice onto a high-poly GLB BufferGeometry
+ * so normal passes draw `[0, mainIndexCount)` and shadow passes draw `[shadowStart, shadowCount)`.
+ */
+function attachShadowProxySlice(
+  highGeo: THREE.BufferGeometry,
+  proxySourceGeo: THREE.BufferGeometry
+): THREE.BufferGeometry {
+  for (const attrName of Object.keys(highGeo.attributes)) {
+    if (attrName !== 'position' && attrName !== 'normal' && attrName !== 'uv') {
+      highGeo.deleteAttribute(attrName);
+    }
+  }
+  const proxyClone = proxySourceGeo.clone();
+  for (const attrName of Object.keys(proxyClone.attributes)) {
+    if (attrName !== 'position' && attrName !== 'normal' && attrName !== 'uv') {
+      proxyClone.deleteAttribute(attrName);
+    }
+  }
+
+  const mainIndexCount = highGeo.index
+    ? highGeo.index.count
+    : highGeo.attributes.position.count;
+  const shadowCount = proxyClone.index
+    ? proxyClone.index.count
+    : proxyClone.attributes.position.count;
+
+  const combined = mergeGeometries([highGeo, proxyClone], false);
+  highGeo.dispose();
+  proxyClone.dispose();
+
+  combined.setDrawRange(0, mainIndexCount);
+  combined.userData.mainIndexCount = mainIndexCount;
+  combined.userData.shadowStart = mainIndexCount;
+  combined.userData.shadowCount = shadowCount;
+  combined.computeBoundingBox();
+  combined.computeBoundingSphere();
+  return combined;
+}
+
+/**
+ * Wires `onBeforeShadow` / `onAfterShadow` on an InstancedMesh so shadow map passes
+ * strip any alpha-test texture map and draw only the low-poly shadow proxy slice when using GLB geometry.
+ */
+function applyShadowProxyHooks(mesh: THREE.InstancedMesh): void {
+  mesh.onBeforeShadow = (
+    _renderer,
+    _object,
+    _camera,
+    _shadowCamera,
+    geometry,
+    depthMaterial
+  ) => {
+    (depthMaterial as THREE.MeshDepthMaterial).map = null;
+    const ud = geometry.userData;
+    if (ud.shadowCount !== undefined) {
+      geometry.setDrawRange(ud.shadowStart, ud.shadowCount);
+    }
+  };
+  mesh.onAfterShadow = (_renderer, _object, _camera, _shadowCamera, geometry) => {
+    const ud = geometry.userData;
+    if (ud.mainIndexCount !== undefined) {
+      geometry.setDrawRange(0, ud.mainIndexCount);
+    }
+  };
+}
+
 let fallbackPineGeo: THREE.BufferGeometry | null = null;
 let sharedPineGeo: THREE.BufferGeometry | null = null;
 let sharedPineMat: THREE.MeshStandardMaterial | null = null;
@@ -551,34 +674,28 @@ let pineLoadStarted = false;
 const activePineMeshes = new Set<THREE.InstancedMesh>();
 
 /**
- * Clones a GLB MeshStandardMaterial, sets scalar roughness/metalness, and disposes
- * unused 2K normal/ORM textures so instanced foliage only samples baseColorTexture.
+ * Constructs a clean MeshStandardMaterial retaining only baseColorTexture (`map`),
+ * sets scalar roughness/metalness, and disposes `origMat` instead of cloning `MeshPhysicalMaterial`.
  */
 function optimizeGlbMaterial(
   origMat: THREE.Material,
   roughness: number,
   metalness: number
 ): THREE.MeshStandardMaterial {
-  const mat = (origMat as THREE.MeshStandardMaterial).clone();
-  mat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
-  mat.roughness = roughness;
-  mat.metalness = metalness;
-  if (mat.normalMap) {
-    mat.normalMap.dispose();
-    mat.normalMap = null;
-  }
-  if (mat.roughnessMap) {
-    mat.roughnessMap.dispose();
-    mat.roughnessMap = null;
-  }
-  if (mat.metalnessMap) {
-    mat.metalnessMap.dispose();
-    mat.metalnessMap = null;
-  }
-  if (mat.aoMap) {
-    mat.aoMap.dispose();
-    mat.aoMap = null;
-  }
+  const src = origMat as THREE.MeshStandardMaterial;
+  const mat = new THREE.MeshStandardMaterial({
+    map: src.map ?? null,
+    color: 0xffffff, // Full brightness so baseColorTexture & instanceColor shine
+    roughness,
+    metalness,
+    alphaTest: src.alphaTest,
+    transparent: src.transparent,
+    side: src.side,
+  });
+  if (src.normalMap && src.normalMap !== src.map) src.normalMap.dispose();
+  if (src.roughnessMap && src.roughnessMap !== src.map) src.roughnessMap.dispose();
+  if (src.metalnessMap && src.metalnessMap !== src.map) src.metalnessMap.dispose();
+  if (src.aoMap && src.aoMap !== src.map) src.aoMap.dispose();
   origMat.dispose();
   return mat;
 }
@@ -592,7 +709,7 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
   if (pineLoadStarted) return;
   pineLoadStarted = true;
 
-  const loader = new GLTFLoader();
+  const loader = createOptimizedGlbLoader();
   loader.load(
     pineModelUrl,
     (gltf) => {
@@ -607,15 +724,18 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      // Clone geometry and bake the GLTF node hierarchy transform so it stands upright (Y-up)
-      const geo = mesh.geometry.clone();
+      // Mutate geometry in-place and bake the GLTF node hierarchy transform so it stands upright (Y-up)
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
-      // Strip skinning attributes from the static instanced mesh so Three.js renders it directly
+      // Strip skinning attributes from the static instanced mesh and weld duplicate vertices (39,784 -> 24,268)
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
+      const weldedGeo = mergeVertices(geo, 1e-4);
+      geo.dispose();
+      geo = weldedGeo;
 
-      // Normalize bounding box: center X/Z at 0, place root base at Y=0, and scale to 8.0m height
+      // Normalize bounding box: center X/Z at 0, place root base at Y=0, and scale to 8.2m height
       geo.computeBoundingBox();
       const box = geo.boundingBox!;
       const centerX = (box.min.x + box.max.x) * 0.5;
@@ -629,10 +749,10 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
+      if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
+      geo = attachShadowProxySlice(geo, fallbackPineGeo);
 
-      // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
+      // Extract the GLB's textured material and enhance it with wind sway & shadow sway
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const pineMat = optimizeGlbMaterial(origMat, 0.85, 0.02);
       applyWindShaderToMaterial(pineMat, uniforms, true);
@@ -676,7 +796,7 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
   if (oakLoadStarted) return;
   oakLoadStarted = true;
 
-  const loader = new GLTFLoader();
+  const loader = createOptimizedGlbLoader();
   loader.load(
     oakModelUrl,
     (gltf) => {
@@ -691,8 +811,8 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      // Clone geometry and bake the GLTF node hierarchy transform so it stands upright (Y-up)
-      const geo = mesh.geometry.clone();
+      // Mutate geometry in-place and bake the GLTF node hierarchy transform so it stands upright (Y-up)
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // Strip skinning attributes from the static instanced mesh if present
@@ -713,10 +833,10 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
+      if (!fallbackBroadleafGeo) fallbackBroadleafGeo = createBroadleafTreeGeometry();
+      geo = attachShadowProxySlice(geo, fallbackBroadleafGeo);
 
-      // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
+      // Extract the GLB's textured material and enhance it with wind sway & shadow sway
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const oakMat = optimizeGlbMaterial(origMat, 0.85, 0.02);
       applyWindShaderToMaterial(oakMat, uniforms, true);
@@ -759,7 +879,7 @@ export function loadDwarvenHutModel(): void {
   if (hutLoadStarted) return;
   hutLoadStarted = true;
 
-  const loader = new GLTFLoader();
+  const loader = createOptimizedGlbLoader();
   loader.load(
     hutModelUrl,
     (gltf) => {
@@ -774,7 +894,7 @@ export function loadDwarvenHutModel(): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      const geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // Strip unused skinning attributes if present
@@ -795,8 +915,8 @@ export function loadDwarvenHutModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo.computeBoundingBox();
-      geo.computeBoundingSphere();
+      if (!fallbackHutGeo) fallbackHutGeo = createDwarvenHutGeometry();
+      geo = attachShadowProxySlice(geo, fallbackHutGeo);
 
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
       const hutMat = optimizeGlbMaterial(origMat, 0.85, 0.04);
@@ -808,6 +928,7 @@ export function loadDwarvenHutModel(): void {
       for (const inst of activeHutMeshes) {
         inst.geometry = sharedHutGeo;
         inst.material = sharedHutMat;
+        inst.receiveShadow = false;
       }
     },
     undefined,
@@ -830,6 +951,7 @@ const upVec = new THREE.Vector3(0, 1, 0);
 const alignQuat = new THREE.Quaternion();
 const yawQuat = new THREE.Quaternion();
 const sharedTint = new THREE.Color();
+const forestBiome = { forest: 0, meadow: 0, tallGrass: 0 };
 
 // Pre-allocated scratch buffers for zero-allocation ChunkForest builds
 const MAX_GRID_INST = 25;
@@ -898,6 +1020,16 @@ export class ChunkForest {
   private fernInstanced?: THREE.InstancedMesh;
   private treeMaterial: THREE.Material;
   private isNearLOD = false;
+  private trackPropsBuilt = false;
+  private readonly chunkHasTrack: boolean;
+  private readonly trackSeed: number;
+  private readonly cx: number;
+  private readonly cz: number;
+  private readonly size: number;
+  private readonly config: WorldConfig;
+  private readonly noise: TerrainNoise;
+  private readonly sampler?: ChunkSurfaceSampler;
+  private readonly chunkBoundSphere: THREE.Sphere;
 
   constructor(
     cx: number,
@@ -912,22 +1044,18 @@ export class ChunkForest {
     dist = 0
   ) {
     this.group.matrixAutoUpdate = false;
+    this.cx = cx;
+    this.cz = cz;
+    this.size = size;
+    this.config = config;
+    this.noise = noise;
+    this.sampler = sampler;
     this.treeMaterial = treeMaterial;
     this.isNearLOD = isNearLOD;
     if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
     if (!fallbackBroadleafGeo) fallbackBroadleafGeo = createBroadleafTreeGeometry();
     if (!fallbackHutGeo) fallbackHutGeo = createDwarvenHutGeometry();
     if (!sharedRockGeo) sharedRockGeo = createShorelineRockGeometry();
-    if (!sharedTrackCobbleGeo) sharedTrackCobbleGeo = createTrackCobbleClusterGeometry();
-    if (!sharedTrackRootsGeo) sharedTrackRootsGeo = createTrackRootsGeometry();
-    if (!sharedFernGeo) sharedFernGeo = createWoodlandFernGeometry();
-    if (!sharedFernMat) {
-      sharedFernMat = (treeMaterial as THREE.MeshStandardMaterial).clone();
-      sharedFernMat.side = THREE.DoubleSide;
-      sharedFernMat.roughness = 0.78;
-      sharedFernMat.onBeforeCompile = (treeMaterial as THREE.MeshStandardMaterial).onBeforeCompile;
-      sharedFernMat.customProgramCacheKey = () => 'tree_wind_proc_fern';
-    }
     if (!sharedStaticPropMat) {
       sharedStaticPropMat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
@@ -951,17 +1079,16 @@ export class ChunkForest {
     let hutCount = 0;
     let rockCount = 0;
     let colliderCount = 0;
-    let cobbleCount = 0;
-    let rootsCount = 0;
-    let fernCount = 0;
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
-    const chunkHasTrack =
+    const chunkHasTrack = Boolean(
       config.enableTracks &&
-      (sampler?.hasTrack
-        ? sampler.hasTrack()
-        : noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85);
+        (sampler?.hasTrack
+          ? sampler.hasTrack()
+          : noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85)
+    );
+    this.chunkHasTrack = chunkHasTrack;
 
     if (config.enableTrees) {
       for (let gz = 0; gz < gridSteps; gz++) {
@@ -1016,7 +1143,13 @@ export class ChunkForest {
           if (treeTrackW > 0.16) continue;
 
           // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
-          const groveDensity = noise.getForestDensity(wx, wz);
+          let groveDensity: number;
+          if (sampler?.sampleBiome) {
+            sampler.sampleBiome(lx, lz, forestBiome);
+            groveDensity = forestBiome.forest;
+          } else {
+            groveDensity = noise.getForestDensity(wx, wz);
+          }
           if (groveDensity <= 0.02) continue;
 
           // Keep groves airy and non-crowded using config.treeDensity
@@ -1085,110 +1218,9 @@ export class ChunkForest {
       }
     }
 
+    this.trackSeed = ((rng() * 0xffffffff) >>> 0) ^ chunkSeed;
     this.colliders =
       colliderCount > 0 ? colliderScratchBuf.slice(0, colliderCount * 3) : EMPTY_COLLIDERS;
-
-    // Populate 3D Forest Track details (embedded cobble clusters, gnarled bank roots & woodland ferns)
-    // Only evaluate on chunks that actually contain a track corridor
-    if (chunkHasTrack) {
-      const trackCandidates = 96;
-      for (let i = 0; i < trackCandidates; i++) {
-        const lx = (rng() - 0.5) * size;
-        const lz = (rng() - 0.5) * size;
-        const wx = worldOffsetX + lx;
-        const wz = worldOffsetZ + lz;
-
-        // Check track weight BEFORE computing surface normal & quaternion (~86% reject rate)
-        const trackW = sampler?.sampleTrackWeight
-          ? sampler.sampleTrackWeight(lx, lz)
-          : noise.getTrackWeight(wx, wz);
-        if (trackW <= 0.03) continue;
-
-        let wy: number;
-        if (sampler) {
-          wy = sampler.sampleHeightAndNormal(lx, lz, forestNormal);
-        } else {
-          wy = noise.getHeight(wx, wz);
-          noise.getNormal(wx, wz, forestNormal);
-        }
-
-        if (config.enableWater && wy < config.waterLevel + 0.45) continue;
-        if (forestNormal.y < 0.72) continue;
-
-        alignQuat.setFromUnitVectors(upVec, forestNormal);
-
-        // 1. Center & Rut Bed (trackW >= 0.48): Embedded flat cobbles & pebbles (matching art/forest_track.jpg)
-        if (trackW >= 0.48) {
-          const patch = noise.getMeadowPatch(wx * 2.1, wz * 2.1);
-          // Cluster cobbles into natural stony sections along the path
-          if (rng() < 0.25 + patch * 0.55) {
-            forestDummy.position.set(lx, wy - 0.012, lz);
-            yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
-            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
-            const cScale = 0.72 + rng() * 0.65;
-            forestDummy.scale.set(cScale, cScale * (0.75 + rng() * 0.35), cScale);
-            forestDummy.updateMatrix();
-            sharedTint.setHex(0xffffff).offsetHSL(
-              (rng() - 0.5) * 0.03,
-              (rng() - 0.5) * 0.06,
-              (rng() - 0.5) * 0.14
-            );
-            recordInstance(cobbleMatBuf, cobbleColBuf, cobbleCount++, forestDummy.matrix, sharedTint);
-          }
-        }
-        // 2. Earthen Embankment / Verge Edge (0.20 <= trackW < 0.48): Gnarled exposed roots & woodland ferns
-        else if (trackW >= 0.2) {
-          const roll = rng();
-          if (roll < 0.38) {
-            // Orient gnarled root tendrils down the embankment slope toward the track bed (0 extra noise calls)
-            const inwardAngle =
-              Math.atan2(forestNormal.x, forestNormal.z) + (rng() - 0.5) * 0.55;
-
-            forestDummy.position.set(lx, wy - 0.015, lz);
-            yawQuat.setFromAxisAngle(upVec, inwardAngle);
-            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
-            const rScale = 0.82 + rng() * 0.62;
-            forestDummy.scale.setScalar(rScale);
-            forestDummy.updateMatrix();
-            sharedTint.setHex(0xffffff).offsetHSL(
-              (rng() - 0.5) * 0.03,
-              (rng() - 0.5) * 0.08,
-              (rng() - 0.5) * 0.12
-            );
-            recordInstance(rootsMatBuf, rootsColBuf, rootsCount++, forestDummy.matrix, sharedTint);
-          } else if (roll < 0.78) {
-            // Lush woodland fern rosette framing the track shoulder
-            forestDummy.position.set(lx, wy - 0.02, lz);
-            yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
-            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
-            const fScale = 0.78 + rng() * 0.58;
-            forestDummy.scale.setScalar(fScale);
-            forestDummy.updateMatrix();
-            sharedTint.setHex(0xffffff).offsetHSL(
-              (rng() - 0.5) * 0.04,
-              (rng() - 0.5) * 0.1,
-              (rng() - 0.5) * 0.1
-            );
-            recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
-          }
-        }
-        // 3. Outer Grassy Shoulder (0.03 < trackW < 0.20): Additional border ferns
-        else if (rng() < 0.42) {
-          forestDummy.position.set(lx, wy - 0.02, lz);
-          yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
-          forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
-          const fScale = 0.72 + rng() * 0.62;
-          forestDummy.scale.setScalar(fScale);
-          forestDummy.updateMatrix();
-          sharedTint.setHex(0xffffff).offsetHSL(
-            (rng() - 0.5) * 0.04,
-            (rng() - 0.5) * 0.1,
-            (rng() - 0.5) * 0.1
-          );
-          recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
-        }
-      }
-    }
 
     const bounds = sampler?.getElevationBounds?.();
     const minH = bounds ? bounds.minH : -15;
@@ -1198,6 +1230,7 @@ export class ChunkForest {
     const halfSize = size * 0.5;
     const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 3.5;
     const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
+    this.chunkBoundSphere = chunkBoundSphere;
 
     if (pineCount > 0 && pineCount <= maxCandidates) {
       const useHighPoly = Boolean(isNearLOD && sharedPineGeo && sharedPineMat);
@@ -1208,6 +1241,7 @@ export class ChunkForest {
       this.pineInstanced.receiveShadow = !useHighPoly;
       this.pineInstanced.boundingSphere = chunkBoundSphere;
       this.pineInstanced.matrixAutoUpdate = false;
+      applyShadowProxyHooks(this.pineInstanced);
       const customDepth = (
         activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
@@ -1230,6 +1264,7 @@ export class ChunkForest {
       this.broadleafInstanced.receiveShadow = !useHighPoly;
       this.broadleafInstanced.boundingSphere = chunkBoundSphere;
       this.broadleafInstanced.matrixAutoUpdate = false;
+      applyShadowProxyHooks(this.broadleafInstanced);
       const customDepth = (
         activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
@@ -1244,14 +1279,15 @@ export class ChunkForest {
     }
 
     if (hutCount > 0 && hutCount <= MAX_HUT_INST) {
-      const useHighPoly = isNearLOD && sharedHutGeo && sharedHutMat;
+      const useHighPoly = Boolean(isNearLOD && sharedHutGeo && sharedHutMat);
       const activeGeo = useHighPoly ? sharedHutGeo! : fallbackHutGeo;
       const activeMat = useHighPoly ? sharedHutMat! : sharedStaticPropMat;
       this.hutInstanced = new THREE.InstancedMesh(activeGeo, activeMat, hutCount);
       this.hutInstanced.castShadow = castShadow;
-      this.hutInstanced.receiveShadow = true;
+      this.hutInstanced.receiveShadow = !useHighPoly;
       this.hutInstanced.boundingSphere = chunkBoundSphere;
       this.hutInstanced.matrixAutoUpdate = false;
+      applyShadowProxyHooks(this.hutInstanced);
       populateInstancedMesh(this.hutInstanced, hutMatBuf, hutColBuf, hutCount);
       if (isNearLOD) {
         activeHutMeshes.add(this.hutInstanced);
@@ -1277,6 +1313,147 @@ export class ChunkForest {
       this.group.add(this.rockInstanced);
     }
 
+    // Lazily build track props only when within visible track-prop range (dist <= 2.6)
+    if (chunkHasTrack && showTrackProps) {
+      this.buildTrackProps();
+    }
+  }
+
+  private buildTrackProps(): void {
+    if (this.trackPropsBuilt || !this.chunkHasTrack) return;
+    this.trackPropsBuilt = true;
+
+    if (!sharedTrackCobbleGeo) sharedTrackCobbleGeo = createTrackCobbleClusterGeometry();
+    if (!sharedTrackRootsGeo) sharedTrackRootsGeo = createTrackRootsGeometry();
+    if (!sharedFernGeo) sharedFernGeo = createWoodlandFernGeometry();
+    if (!sharedFernMat) {
+      sharedFernMat = (this.treeMaterial as THREE.MeshStandardMaterial).clone();
+      sharedFernMat.side = THREE.DoubleSide;
+      sharedFernMat.roughness = 0.78;
+      sharedFernMat.onBeforeCompile = (
+        this.treeMaterial as THREE.MeshStandardMaterial
+      ).onBeforeCompile;
+      sharedFernMat.customProgramCacheKey = () => 'tree_wind_proc';
+    }
+    if (!sharedStaticPropMat) {
+      sharedStaticPropMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.86,
+        metalness: 0.02,
+      });
+    }
+
+    const rng = createSeededRandom(this.trackSeed);
+    const size = this.size;
+    const worldOffsetX = this.cx * size;
+    const worldOffsetZ = this.cz * size;
+    const sampler = this.sampler;
+    const noise = this.noise;
+    const config = this.config;
+
+    let cobbleCount = 0;
+    let rootsCount = 0;
+    let fernCount = 0;
+
+    const trackCandidates = 96;
+    for (let i = 0; i < trackCandidates; i++) {
+      const lx = (rng() - 0.5) * size;
+      const lz = (rng() - 0.5) * size;
+      const wx = worldOffsetX + lx;
+      const wz = worldOffsetZ + lz;
+
+      // Check track weight BEFORE computing surface normal & quaternion (~86% reject rate)
+      const trackW = sampler?.sampleTrackWeight
+        ? sampler.sampleTrackWeight(lx, lz)
+        : noise.getTrackWeight(wx, wz);
+      if (trackW <= 0.03) continue;
+
+      let wy: number;
+      if (sampler) {
+        wy = sampler.sampleHeightAndNormal(lx, lz, forestNormal);
+      } else {
+        wy = noise.getHeight(wx, wz);
+        noise.getNormal(wx, wz, forestNormal);
+      }
+
+      if (config.enableWater && wy < config.waterLevel + 0.45) continue;
+      if (forestNormal.y < 0.72) continue;
+
+      alignQuat.setFromUnitVectors(upVec, forestNormal);
+
+      // 1. Center & Rut Bed (trackW >= 0.48): Embedded flat cobbles & pebbles (matching art/forest_track.jpg)
+      if (trackW >= 0.48) {
+        const patch = noise.getMeadowPatch(wx * 2.1, wz * 2.1);
+        // Cluster cobbles into natural stony sections along the path
+        if (rng() < 0.25 + patch * 0.55) {
+          forestDummy.position.set(lx, wy - 0.012, lz);
+          yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+          forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+          const cScale = 0.72 + rng() * 0.65;
+          forestDummy.scale.set(cScale, cScale * (0.75 + rng() * 0.35), cScale);
+          forestDummy.updateMatrix();
+          sharedTint.setHex(0xffffff).offsetHSL(
+            (rng() - 0.5) * 0.03,
+            (rng() - 0.5) * 0.06,
+            (rng() - 0.5) * 0.14
+          );
+          recordInstance(cobbleMatBuf, cobbleColBuf, cobbleCount++, forestDummy.matrix, sharedTint);
+        }
+      }
+      // 2. Earthen Embankment / Verge Edge (0.20 <= trackW < 0.48): Gnarled exposed roots & woodland ferns
+      else if (trackW >= 0.2) {
+        const roll = rng();
+        if (roll < 0.38) {
+          // Orient gnarled root tendrils down the embankment slope toward the track bed (0 extra noise calls)
+          const inwardAngle =
+            Math.atan2(forestNormal.x, forestNormal.z) + (rng() - 0.5) * 0.55;
+
+          forestDummy.position.set(lx, wy - 0.015, lz);
+          yawQuat.setFromAxisAngle(upVec, inwardAngle);
+          forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+          const rScale = 0.82 + rng() * 0.62;
+          forestDummy.scale.setScalar(rScale);
+          forestDummy.updateMatrix();
+          sharedTint.setHex(0xffffff).offsetHSL(
+            (rng() - 0.5) * 0.03,
+            (rng() - 0.5) * 0.08,
+            (rng() - 0.5) * 0.12
+          );
+          recordInstance(rootsMatBuf, rootsColBuf, rootsCount++, forestDummy.matrix, sharedTint);
+        } else if (roll < 0.78) {
+          // Lush woodland fern rosette framing the track shoulder
+          forestDummy.position.set(lx, wy - 0.02, lz);
+          yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+          forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+          const fScale = 0.78 + rng() * 0.58;
+          forestDummy.scale.setScalar(fScale);
+          forestDummy.updateMatrix();
+          sharedTint.setHex(0xffffff).offsetHSL(
+            (rng() - 0.5) * 0.04,
+            (rng() - 0.5) * 0.1,
+            (rng() - 0.5) * 0.1
+          );
+          recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
+        }
+      }
+      // 3. Outer Grassy Shoulder (0.03 < trackW < 0.20): Additional border ferns
+      else if (rng() < 0.42) {
+        forestDummy.position.set(lx, wy - 0.02, lz);
+        yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+        forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+        const fScale = 0.72 + rng() * 0.62;
+        forestDummy.scale.setScalar(fScale);
+        forestDummy.updateMatrix();
+        sharedTint.setHex(0xffffff).offsetHSL(
+          (rng() - 0.5) * 0.04,
+          (rng() - 0.5) * 0.1,
+          (rng() - 0.5) * 0.1
+        );
+        recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
+      }
+    }
+
     if (cobbleCount > 0) {
       this.cobbleInstanced = new THREE.InstancedMesh(
         sharedTrackCobbleGeo,
@@ -1285,8 +1462,8 @@ export class ChunkForest {
       );
       this.cobbleInstanced.castShadow = false;
       this.cobbleInstanced.receiveShadow = true;
-      this.cobbleInstanced.visible = showTrackProps;
-      this.cobbleInstanced.boundingSphere = chunkBoundSphere;
+      this.cobbleInstanced.visible = true;
+      this.cobbleInstanced.boundingSphere = this.chunkBoundSphere;
       this.cobbleInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.cobbleInstanced, cobbleMatBuf, cobbleColBuf, cobbleCount);
       this.group.add(this.cobbleInstanced);
@@ -1300,8 +1477,8 @@ export class ChunkForest {
       );
       this.rootsInstanced.castShadow = false;
       this.rootsInstanced.receiveShadow = true;
-      this.rootsInstanced.visible = showTrackProps;
-      this.rootsInstanced.boundingSphere = chunkBoundSphere;
+      this.rootsInstanced.visible = true;
+      this.rootsInstanced.boundingSphere = this.chunkBoundSphere;
       this.rootsInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.rootsInstanced, rootsMatBuf, rootsColBuf, rootsCount);
       this.group.add(this.rootsInstanced);
@@ -1310,13 +1487,13 @@ export class ChunkForest {
     if (fernCount > 0) {
       this.fernInstanced = new THREE.InstancedMesh(
         sharedFernGeo,
-        sharedFernMat ?? treeMaterial,
+        sharedFernMat ?? this.treeMaterial,
         fernCount
       );
       this.fernInstanced.castShadow = false;
       this.fernInstanced.receiveShadow = true;
-      this.fernInstanced.visible = showTrackProps;
-      this.fernInstanced.boundingSphere = chunkBoundSphere;
+      this.fernInstanced.visible = true;
+      this.fernInstanced.boundingSphere = this.chunkBoundSphere;
       this.fernInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.fernInstanced, fernMatBuf, fernColBuf, fernCount);
       this.group.add(this.fernInstanced);
@@ -1399,9 +1576,11 @@ export class ChunkForest {
           if (sharedHutGeo && sharedHutMat) {
             this.hutInstanced.geometry = sharedHutGeo;
             this.hutInstanced.material = sharedHutMat;
+            this.hutInstanced.receiveShadow = false;
           }
         } else {
           activeHutMeshes.delete(this.hutInstanced);
+          this.hutInstanced.receiveShadow = true;
           if (fallbackHutGeo && sharedStaticPropMat) {
             this.hutInstanced.geometry = fallbackHutGeo;
             this.hutInstanced.material = sharedStaticPropMat;
@@ -1410,6 +1589,9 @@ export class ChunkForest {
       }
     }
     const showTrackProps = dist <= 2.6;
+    if (showTrackProps && !this.trackPropsBuilt && this.chunkHasTrack) {
+      this.buildTrackProps();
+    }
     if (this.rockInstanced) {
       this.rockInstanced.visible = dist <= 4.2;
     }

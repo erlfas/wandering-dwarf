@@ -41,6 +41,7 @@ interface BridgeInstance {
   halfLen: number;
   halfWidth: number;
   root: THREE.Group;
+  mesh: THREE.Mesh;
 }
 
 interface ChunkLandmarks {
@@ -66,8 +67,7 @@ interface SharedLandmarkAssets {
   ringGeo: THREE.BufferGeometry;
   stoneCircleSimpleGeo: THREE.BufferGeometry;
   logBenchesGeo: THREE.BufferGeometry;
-  bridgeDeckGeo: THREE.BufferGeometry;
-  bridgeRailGeo: THREE.BufferGeometry;
+  bridgeMergedGeo: THREE.BufferGeometry;
 }
 
 let sharedLandmarkAssets: SharedLandmarkAssets | null = null;
@@ -88,6 +88,24 @@ export function loadStoneCircleModel(): void {
   stoneCircleLoadStarted = true;
 
   const loader = new GLTFLoader();
+  loader.register((parser) => ({
+    name: 'stripUnusedStoneCircleTextures',
+    beforeRoot: async () => {
+      const mats = parser.json.materials;
+      if (Array.isArray(mats)) {
+        for (const m of mats) {
+          if (m.pbrMetallicRoughness) {
+            delete m.pbrMetallicRoughness.metallicRoughnessTexture;
+          }
+          delete m.normalTexture;
+          delete m.occlusionTexture;
+          if (m.extensions) {
+            delete m.extensions.KHR_materials_specular;
+          }
+        }
+      }
+    },
+  }));
   loader.load(
     stoneCircleModelUrl,
     (gltf) => {
@@ -102,7 +120,7 @@ export function loadStoneCircleModel(): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      const geo = mesh.geometry.clone();
+      const geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes if present
@@ -133,27 +151,15 @@ export function loadStoneCircleModel(): void {
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
-      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-      const mat = (origMat as THREE.MeshStandardMaterial).clone();
-      mat.color.setHex(0xffffff);
-      mat.roughness = 0.88;
-      mat.metalness = 0.05;
-      if (mat.normalMap) {
-        mat.normalMap.dispose();
-        mat.normalMap = null;
-      }
-      if (mat.roughnessMap) {
-        mat.roughnessMap.dispose();
-        mat.roughnessMap = null;
-      }
-      if (mat.metalnessMap) {
-        mat.metalnessMap.dispose();
-        mat.metalnessMap = null;
-      }
-      if (mat.aoMap) {
-        mat.aoMap.dispose();
-        mat.aoMap = null;
-      }
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.88,
+        metalness: 0.05,
+      });
       origMat.dispose();
 
       sharedStoneCircleGeo = geo;
@@ -163,6 +169,7 @@ export function loadStoneCircleModel(): void {
       for (const wt of activeNearWatchtowers) {
         wt.structureMesh.geometry = sharedStoneCircleGeo;
         wt.structureMesh.material = sharedStoneCircleMat;
+        wt.structureMesh.receiveShadow = false;
         wt.ringMesh.position.y = 0.14;
         wt.ringMesh.updateMatrix();
         wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
@@ -170,6 +177,7 @@ export function loadStoneCircleModel(): void {
       for (const cf of activeNearStoneCircles) {
         cf.stoneCircleMesh.geometry = sharedStoneCircleGeo;
         cf.stoneCircleMesh.material = sharedStoneCircleMat;
+        cf.stoneCircleMesh.receiveShadow = false;
         cf.benchesMesh.visible = false;
       }
     },
@@ -333,8 +341,16 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
   logBenchesGeo.computeBoundingSphere();
 
   const bridgeDeckGeo = new THREE.BoxGeometry(3.6, 0.28, 14.0);
-  const bridgeRailGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
-  bridgeRailGeo.translate(0, 0.52, 0);
+  const bridgeRailLGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
+  bridgeRailLGeo.translate(-1.68, 0.42, 0);
+  const bridgeRailRGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
+  bridgeRailRGeo.translate(1.68, 0.42, 0);
+  const bridgeMergedGeo = mergeGeometries([bridgeDeckGeo, bridgeRailLGeo, bridgeRailRGeo], false);
+  bridgeDeckGeo.dispose();
+  bridgeRailLGeo.dispose();
+  bridgeRailRGeo.dispose();
+  bridgeMergedGeo.computeBoundingBox();
+  bridgeMergedGeo.computeBoundingSphere();
 
   sharedLandmarkAssets = {
     matStone,
@@ -353,8 +369,7 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
     ringGeo,
     stoneCircleSimpleGeo,
     logBenchesGeo,
-    bridgeDeckGeo,
-    bridgeRailGeo,
+    bridgeMergedGeo,
   };
   return sharedLandmarkAssets;
 }
@@ -373,6 +388,8 @@ export class LandmarkManager {
   private activeLandmarks = new Map<number, ChunkLandmarks>();
   private desiredKeys = new Set<number>();
   private litBeaconMap = new Map<string, SavedBeaconWaypoint>();
+  private cachedLitBeacons: SavedBeaconWaypoint[] = [];
+  private litBeaconsDirty = true;
   private audioCtx: AudioContext | null = null;
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -417,7 +434,11 @@ export class LandmarkManager {
   }
 
   public getLitBeacons(): SavedBeaconWaypoint[] {
-    return Array.from(this.litBeaconMap.values());
+    if (this.litBeaconsDirty) {
+      this.cachedLitBeacons = Array.from(this.litBeaconMap.values());
+      this.litBeaconsDirty = false;
+    }
+    return this.cachedLitBeacons;
   }
 
   public restoreLitBeacons(beacons: SavedBeaconWaypoint[] | undefined): void {
@@ -427,12 +448,14 @@ export class LandmarkManager {
         this.litBeaconMap.set(b.id, b);
       }
     }
+    this.litBeaconsDirty = true;
     this.renderWaypointBar();
     this.rebuildAll();
   }
 
   public reset(): void {
     this.litBeaconMap.clear();
+    this.litBeaconsDirty = true;
     this.campfireBuffTimer = 0;
     this.renderWaypointBar();
     this.rebuildAll();
@@ -441,7 +464,7 @@ export class LandmarkManager {
   public cycleFastTravel(): void {
     const waypoints: SavedBeaconWaypoint[] = [
       { id: 'spawn', name: '🏕️ Spawn Valley', x: 0, y: 0, z: 0 },
-      ...Array.from(this.litBeaconMap.values()),
+      ...this.getLitBeacons(),
     ];
     if (waypoints.length <= 1) {
       this.showToast('🔥 Light a Hilltop Watchtower Beacon to unlock Fast-Travel!', false);
@@ -455,7 +478,7 @@ export class LandmarkManager {
 
   private renderWaypointBar(): void {
     if (!this.waypointBarEl || !this.waypointListEl) return;
-    const beacons = Array.from(this.litBeaconMap.values());
+    const beacons = this.getLitBeacons();
     if (beacons.length === 0) {
       this.waypointBarEl.classList.add('hidden');
       return;
@@ -598,8 +621,17 @@ export class LandmarkManager {
     const shadowDist = 2.2 * size;
     const shadowDistSq = shadowDist * shadowDist;
 
-    // Animate & check proximity to Watchtowers and Wayside Campfires
+    // Animate & check proximity to Watchtowers, Wayside Campfires, and Bridges
     for (const lm of this.activeLandmarks.values()) {
+      for (const b of lm.bridges) {
+        const bdx = playerPos.x - b.worldX;
+        const bdz = playerPos.z - b.worldZ;
+        const castShadow = bdx * bdx + bdz * bdz <= shadowDistSq;
+        if (b.mesh.castShadow !== castShadow) {
+          b.mesh.castShadow = castShadow;
+        }
+      }
+
       if (lm.watchtower) {
         const wt = lm.watchtower;
         const dx = playerPos.x - wt.worldPos.x;
@@ -618,9 +650,11 @@ export class LandmarkManager {
           wt.isNearLOD = wantNearLOD;
           if (wantNearLOD) {
             activeNearWatchtowers.add(wt);
-            if (sharedStoneCircleGeo && sharedStoneCircleMat) {
-              wt.structureMesh.geometry = sharedStoneCircleGeo;
-              wt.structureMesh.material = sharedStoneCircleMat;
+            const useHighPoly = Boolean(sharedStoneCircleGeo && sharedStoneCircleMat);
+            if (useHighPoly) {
+              wt.structureMesh.geometry = sharedStoneCircleGeo!;
+              wt.structureMesh.material = sharedStoneCircleMat!;
+              wt.structureMesh.receiveShadow = false;
               wt.ringMesh.position.y = 0.14;
               wt.ringMesh.updateMatrix();
               wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
@@ -630,6 +664,7 @@ export class LandmarkManager {
             const assets = getSharedLandmarkAssets();
             wt.structureMesh.geometry = assets.watchtowerSimpleGeo;
             wt.structureMesh.material = assets.matStone;
+            wt.structureMesh.receiveShadow = true;
             wt.ringMesh.position.y = 0.78;
             wt.ringMesh.updateMatrix();
             wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
@@ -672,9 +707,11 @@ export class LandmarkManager {
           cf.isNearLOD = wantNearLOD;
           if (wantNearLOD) {
             activeNearStoneCircles.add(cf);
-            if (sharedStoneCircleGeo && sharedStoneCircleMat) {
-              cf.stoneCircleMesh.geometry = sharedStoneCircleGeo;
-              cf.stoneCircleMesh.material = sharedStoneCircleMat;
+            const useHighPoly = Boolean(sharedStoneCircleGeo && sharedStoneCircleMat);
+            if (useHighPoly) {
+              cf.stoneCircleMesh.geometry = sharedStoneCircleGeo!;
+              cf.stoneCircleMesh.material = sharedStoneCircleMat!;
+              cf.stoneCircleMesh.receiveShadow = !useHighPoly;
               cf.benchesMesh.visible = false;
             }
           } else {
@@ -682,6 +719,7 @@ export class LandmarkManager {
             const assets = getSharedLandmarkAssets();
             cf.stoneCircleMesh.geometry = assets.stoneCircleSimpleGeo;
             cf.stoneCircleMesh.material = assets.matMossStone;
+            cf.stoneCircleMesh.receiveShadow = true;
             cf.benchesMesh.visible = true;
           }
         }
@@ -724,6 +762,7 @@ export class LandmarkManager {
       z: Math.round(wt.worldPos.z),
     };
     this.litBeaconMap.set(wt.id, waypoint);
+    this.litBeaconsDirty = true;
     this.renderWaypointBar();
     this.playBeaconFanfare();
     this.onGrantGoldAndRefreshStreak(
@@ -929,25 +968,11 @@ export class LandmarkManager {
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
-    const deck = new THREE.Mesh(assets.bridgeDeckGeo, assets.matTimber);
-    deck.castShadow = true;
-    deck.receiveShadow = true;
-    deck.matrixAutoUpdate = false;
-    root.add(deck);
-
-    const railL = new THREE.Mesh(assets.bridgeRailGeo, assets.matTimber);
-    railL.position.set(-1.68, 0, 0);
-    railL.castShadow = true;
-    railL.updateMatrix();
-    railL.matrixAutoUpdate = false;
-    root.add(railL);
-
-    const railR = new THREE.Mesh(assets.bridgeRailGeo, assets.matTimber);
-    railR.position.set(1.68, 0, 0);
-    railR.castShadow = true;
-    railR.updateMatrix();
-    railR.matrixAutoUpdate = false;
-    root.add(railR);
+    const mesh = new THREE.Mesh(assets.bridgeMergedGeo, assets.matTimber);
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    root.add(mesh);
 
     this.group.add(root);
     root.updateMatrixWorld(true);
@@ -961,6 +986,7 @@ export class LandmarkManager {
       halfLen: 7.2,
       halfWidth: 1.95,
       root,
+      mesh,
     };
   }
 
@@ -1019,6 +1045,10 @@ export class LandmarkManager {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.09);
       osc.stop(now + idx * 0.09 + 0.5);
     });
@@ -1041,6 +1071,10 @@ export class LandmarkManager {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.38);
     });

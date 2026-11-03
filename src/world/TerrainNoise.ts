@@ -113,6 +113,46 @@ export class TerrainNoise {
   }
 
   /**
+   * Fast conservative chunk-level check using the Lipschitz coarse track bound
+   * so off-track chunks can skip per-vertex getTrackWeight evaluation.
+   */
+  public isChunkNearTrack(centerX: number, centerZ: number, halfDiag: number): boolean {
+    const cfg = this.config;
+    if (!cfg.enableTracks) return false;
+
+    const bound = halfDiag * 1.75 + 21.2 + cfg.trackWidth * 0.5 + 2.1;
+
+    const periodA = 210.0;
+    const steerA =
+      this.macroNoise(centerX * cfg.macroScale, centerZ * cfg.macroScale) * 36.0;
+    const coarseA =
+      centerX * 0.82 -
+      centerZ * 0.57 +
+      steerA +
+      this.trackNoiseA(centerX * 0.0038, centerZ * 0.0038) * 68.0 -
+      this.trackOriginOffsetA;
+    const dA = Math.abs(coarseA - Math.round(coarseA / periodA) * periodA);
+    if (dA <= bound) return true;
+
+    if (cfg.trackDensity > 0.05) {
+      const periodB = 300.0 - cfg.trackDensity * 105.0;
+      const steerB =
+        this.macroNoise(centerX * cfg.macroScale + 13.5, centerZ * cfg.macroScale - 9.2) *
+        32.0;
+      const coarseB =
+        centerX * 0.46 +
+        centerZ * 0.888 +
+        steerB +
+        this.trackNoiseB(centerX * 0.0036 - 53.1, centerZ * 0.0036 + 41.7) * 64.0 -
+        this.trackOriginOffsetB;
+      const dB = Math.abs(coarseB - Math.round(coarseB / periodB) * periodB);
+      if (dB <= bound) return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Computes the distance (in meters) to the nearest infinite winding footpath centerline,
    * using coarse-bound early-outs so off-track points skip fine octave evaluations.
    */
@@ -249,7 +289,7 @@ export class TerrainNoise {
    * Evaluates the continuous world elevation (Y in meters) at any world (X, Z) coordinate.
    * Combines domain warping, multi-octave fBm, meandering river valley carving, and natural pond basins.
    */
-  public getHeight(x: number, z: number): number {
+  public getHeight(x: number, z: number, skipTracks = false): number {
     const cfg = this.config;
 
     // 1. Domain Warping: gently bend coordinates so hills and rivers curve organically
@@ -350,7 +390,11 @@ export class TerrainNoise {
 
     // 6. Infinite Winding Forest Tracks (graded footpath trough + subtle shoulder banks)
     this.lastTrackWeight = 0;
-    if (cfg.enableTracks && (!cfg.enableWater || height > cfg.waterLevel + 0.15)) {
+    if (
+      !skipTracks &&
+      cfg.enableTracks &&
+      (!cfg.enableWater || height > cfg.waterLevel + 0.15)
+    ) {
       const trackW = this.getTrackWeight(x, z, height);
       this.lastTrackWeight = trackW;
       if (trackW > 0.001) {
@@ -471,16 +515,21 @@ export class TerrainNoise {
     z: number,
     normal: THREE.Vector3,
     target = new THREE.Color(),
-    precomputedTrackW?: number
+    precomputedTrackW?: number,
+    precomputedPatch?: number,
+    precomputedGrove?: number
   ): THREE.Color {
-    const patch = this.getMeadowPatch(x, z);
+    const patch =
+      precomputedPatch !== undefined ? precomputedPatch : this.getMeadowPatch(x, z);
     const isUnderwater =
       this.config.enableWater && y < this.config.waterLevel - 0.5;
     const grove =
       this.config.forestCoverage > 0.001 &&
       !isUnderwater &&
       (precomputedTrackW === undefined || precomputedTrackW < 0.65)
-        ? this.getForestDensity(x, z)
+        ? precomputedGrove !== undefined
+          ? precomputedGrove
+          : this.getForestDensity(x, z)
         : 0;
 
     // Blend between lush green and warm sunlit yellow-green based on meadow patch noise
@@ -511,16 +560,14 @@ export class TerrainNoise {
       const trackW =
         precomputedTrackW !== undefined ? precomputedTrackW : this.getTrackWeight(x, z, y);
       if (trackW > 0.01) {
-        // High-frequency soil & pebble mottling along the path
-        const soilDetail = this.microNoise(x * 0.19 + 41.2, z * 0.19 - 23.8); // [-1, 1]
-        const stonyPatch = this.meadowNoise(x * 0.095 - 14.5, z * 0.095 + 31.1); // [-1, 1]
-
         // 1. Verge moss & root bank transition on the shoulders (0.01 .. 0.48)
         const vergeFactor = THREE.MathUtils.smoothstep(trackW, 0.02, 0.38);
         tempColorB.lerp(COL_TRACK_VERGE_MOSS, vergeFactor * 0.55);
 
         // 2. Worn sandy-ochre dirt bed in the track interior (0.24 .. 1.0)
         if (trackW > 0.22) {
+          // High-frequency soil & pebble mottling along the path
+          const soilDetail = this.microNoise(x * 0.19 + 41.2, z * 0.19 - 23.8); // [-1, 1]
           const sunSoilT = THREE.MathUtils.clamp(0.5 + soilDetail * 0.45 + (patch - 0.5) * 0.35, 0, 1);
           tempColorC.copy(COL_TRACK_DIRT_MID).lerp(COL_TRACK_DIRT_LIGHT, sunSoilT);
 
@@ -530,9 +577,12 @@ export class TerrainNoise {
           tempColorC.lerp(COL_TRACK_RUT_DARK, rutDarken);
 
           // Weathered grey-taupe gravel/cobble tint in stony pockets along the center
-          if (trackW > 0.52 && stonyPatch > 0.08) {
-            const gravelT = THREE.MathUtils.smoothstep(stonyPatch, 0.08, 0.65) * THREE.MathUtils.smoothstep(trackW, 0.52, 0.85);
-            tempColorC.lerp(COL_TRACK_GRAVEL, gravelT * 0.52);
+          if (trackW > 0.52) {
+            const stonyPatch = this.meadowNoise(x * 0.095 - 14.5, z * 0.095 + 31.1); // [-1, 1]
+            if (stonyPatch > 0.08) {
+              const gravelT = THREE.MathUtils.smoothstep(stonyPatch, 0.08, 0.65) * THREE.MathUtils.smoothstep(trackW, 0.52, 0.85);
+              tempColorC.lerp(COL_TRACK_GRAVEL, gravelT * 0.52);
+            }
           }
 
           // Irregular mossy edge breakup so dirt & grass interpenetrate naturally

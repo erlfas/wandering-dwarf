@@ -23,9 +23,21 @@ export class BackgroundMusic {
     this.audio.volume = this.targetVolume;
 
     this.challengeAudio = new Audio(challengeBgmUrl);
-    this.challengeAudio.preload = 'auto';
+    this.challengeAudio.preload = 'none';
     this.challengeAudio.loop = true;
     this.challengeAudio.volume = Math.min(1, this.targetVolume * 1.25);
+
+    const warmChallengeTrack = () => {
+      if (!this.isChallengeActive) {
+        this.challengeAudio.preload = 'metadata';
+        this.challengeAudio.load();
+      }
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(warmChallengeTrack, { timeout: 4000 });
+    } else {
+      setTimeout(warmChallengeTrack, 3000);
+    }
 
     this.statusEl = document.getElementById(statusElementId);
 

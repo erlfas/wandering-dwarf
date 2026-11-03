@@ -48,14 +48,39 @@ export const RELIC_CATALOG: readonly RelicDefinition[] = [
   },
 ];
 
+type RelicCardState = 'owned' | 'affordable' | 'locked';
+
+interface CachedRelicRow {
+  def: RelicDefinition;
+  button: HTMLButtonElement;
+  costSpan: HTMLSpanElement;
+  lastState: RelicCardState | '';
+}
+
+let sharedAudioCtx: AudioContext | null = null;
+
+export function getSharedAudioContext(): AudioContext | null {
+  try {
+    if (!sharedAudioCtx) {
+      sharedAudioCtx = new AudioContext();
+    }
+    if (sharedAudioCtx.state === 'suspended') {
+      void sharedAudioCtx.resume();
+    }
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Manages Dwarven Relic upgrades, HUD shop interactions, and synthesized Web Audio feedback
  * for movement (jump, double-jump, glide, slide/dash) and relic unlocking.
  */
 export class RelicStore {
   private unlocked = new Set<RelicId>();
-  private audioCtx: AudioContext | null = null;
   private isOpen = false;
+  private cachedRows: CachedRelicRow[] = [];
 
   private shopContainer: HTMLElement | null;
   private shopListEl: HTMLElement | null;
@@ -92,6 +117,7 @@ export class RelicStore {
       }
     });
 
+    this.buildShopDOM();
     this.renderShop();
   }
 
@@ -146,35 +172,69 @@ export class RelicStore {
     return true;
   }
 
+  private buildShopDOM(): void {
+    if (!this.shopListEl) return;
+    this.shopListEl.innerHTML = '';
+    this.cachedRows = [];
+
+    for (const def of RELIC_CATALOG) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'relic-card locked';
+      button.title = `${def.name}: ${def.shortDesc} (Press ${def.keyHint})`;
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'relic-icon';
+      iconSpan.textContent = def.icon;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'relic-name';
+      const kbd = document.createElement('kbd');
+      kbd.className = 'relic-key';
+      kbd.textContent = def.keyHint;
+      nameSpan.appendChild(kbd);
+      nameSpan.appendChild(document.createTextNode(` ${def.name}`));
+
+      const costSpan = document.createElement('span');
+      costSpan.className = 'relic-cost';
+      costSpan.textContent = `${def.cost}g`;
+
+      button.appendChild(iconSpan);
+      button.appendChild(nameSpan);
+      button.appendChild(costSpan);
+
+      button.addEventListener('click', () => {
+        if (!this.unlocked.has(def.id)) {
+          this.tryBuy(def.id);
+        }
+      });
+
+      this.shopListEl.appendChild(button);
+      this.cachedRows.push({
+        def,
+        button,
+        costSpan,
+        lastState: '',
+      });
+    }
+  }
+
   public renderShop(): void {
     if (!this.shopListEl) return;
     const gold = this.getGold();
-    this.shopListEl.innerHTML = '';
 
-    for (const def of RELIC_CATALOG) {
-      const owned = this.unlocked.has(def.id);
-      const canAfford = !owned && gold >= def.cost;
+    for (let i = 0; i < this.cachedRows.length; i++) {
+      const row = this.cachedRows[i];
+      const owned = this.unlocked.has(row.def.id);
+      const canAfford = !owned && gold >= row.def.cost;
+      const nextState: RelicCardState = owned ? 'owned' : canAfford ? 'affordable' : 'locked';
 
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = `relic-card ${owned ? 'owned' : canAfford ? 'affordable' : 'locked'}`;
-      item.title = `${def.name}: ${def.shortDesc} (Press ${def.keyHint})`;
-
-      item.innerHTML = `
-        <span class="relic-icon">${def.icon}</span>
-        <span class="relic-name"><kbd class="relic-key">${def.keyHint}</kbd> ${def.name}</span>
-        <span class="relic-cost ${owned ? 'owned-badge' : ''}">
-          ${owned ? '✓' : `${def.cost}g`}
-        </span>
-      `;
-
-      if (!owned) {
-        item.addEventListener('click', () => {
-          this.tryBuy(def.id);
-        });
+      if (row.lastState !== nextState) {
+        row.lastState = nextState;
+        row.button.className = `relic-card ${nextState}`;
+        row.costSpan.className = owned ? 'relic-cost owned-badge' : 'relic-cost';
+        row.costSpan.textContent = owned ? '✓' : `${row.def.cost}g`;
       }
-
-      this.shopListEl.appendChild(item);
     }
   }
 
@@ -190,17 +250,7 @@ export class RelicStore {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   public playJumpSound(isDoubleJump: boolean): void {
@@ -221,6 +271,10 @@ export class RelicStore {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.19);
   }
@@ -241,6 +295,10 @@ export class RelicStore {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.25);
   }
@@ -261,6 +319,10 @@ export class RelicStore {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.2);
   }
@@ -282,6 +344,10 @@ export class RelicStore {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.07);
       osc.stop(now + idx * 0.07 + 0.44);
     });

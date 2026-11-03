@@ -67,6 +67,8 @@ dirLight.shadow.camera.right = shadowExtent;
 dirLight.shadow.camera.top = shadowExtent;
 dirLight.shadow.camera.bottom = -shadowExtent;
 dirLight.shadow.bias = -0.0003;
+dirLight.shadow.autoUpdate = false;
+dirLight.shadow.needsUpdate = true;
 dirLight.matrixAutoUpdate = false;
 dirLight.target.matrixAutoUpdate = false;
 dirLight.updateMatrix();
@@ -162,6 +164,13 @@ scene.add(livingWorldManager.group);
 const challengeManager = new ChallengeManager(config, noise, treasureManager);
 scene.add(challengeManager.group);
 
+// Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
+const sampleSurfaceHeight = (wx: number, wz: number): number =>
+  chunkManager.getSurfaceHeight(wx, wz);
+treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+livingWorldManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
   // Lighting Watchtower Beacons clears up to 40% of distant horizon mist!
@@ -231,16 +240,23 @@ function persistCurrentProgress(sync = false): void {
   lastSavedZ = explorer.playerPos.z;
   lastSavedYaw = explorer.yaw;
   if (sync) {
+    if (saveIdleHandle !== null) {
+      window.clearTimeout(saveIdleHandle);
+      saveIdleHandle = null;
+    }
     saveProgress(populateSaveState());
     return;
   }
   if (saveIdleHandle !== null) return;
-  const schedule =
-    window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 0));
-  saveIdleHandle = schedule(() => {
+  // Coalesce rapid pickups (e.g. 5-coin trail runs) over a 350ms window before serializing to localStorage
+  saveIdleHandle = window.setTimeout(() => {
     saveIdleHandle = null;
-    saveProgress(populateSaveState());
-  });
+    const schedule =
+      window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 0));
+    schedule(() => {
+      saveProgress(populateSaveState());
+    });
+  }, 350);
 }
 
 treasureManager.onChestCollected = () => {
@@ -318,10 +334,20 @@ let lastShadowX = NaN;
 let lastShadowY = NaN;
 let lastShadowZ = NaN;
 let lastSunSnapX = NaN;
+let lastSunSnapY = NaN;
+let lastShadowRenderTime = -1;
 let lastHudUpdate = -1;
 let lastCompassYaw = NaN;
+let lastChestWorldAngle = NaN;
+let lastPointerVisible = false;
+let lastPointerDeg = NaN;
 let lastChestHintText = '';
 let lastCoordsText = '';
+let lastQPx = NaN;
+let lastQPy = NaN;
+let lastQPz = NaN;
+let lastQTimeMins = -1;
+let lastActiveChunks = -1;
 let lastMoveStatusText = '';
 
 function animate(): void {
@@ -363,18 +389,34 @@ function animate(): void {
   const sx = Math.round(px / snap) * snap;
   const sy = Math.round(py / snap) * snap;
   const sz = Math.round(pz / snap) * snap;
-  const sunSnapX = Math.round(sunOffset.x);
-  if (sx !== lastShadowX || sy !== lastShadowY || sz !== lastShadowZ || sunSnapX !== lastSunSnapX) {
+  const sunSnapX = Math.round(sunOffset.x / snap) * snap;
+  const sunSnapY = Math.round(sunOffset.y / snap) * snap;
+  let shadowMoved = false;
+  if (
+    sx !== lastShadowX ||
+    sy !== lastShadowY ||
+    sz !== lastShadowZ ||
+    sunSnapX !== lastSunSnapX ||
+    sunSnapY !== lastSunSnapY
+  ) {
     lastShadowX = sx;
     lastShadowY = sy;
     lastShadowZ = sz;
     lastSunSnapX = sunSnapX;
-    dirLight.position.set(sx + sunOffset.x, sy + sunOffset.y, sz + sunOffset.z);
+    lastSunSnapY = sunSnapY;
+    dirLight.position.set(sx + sunSnapX, sy + sunSnapY, sz + sunOffset.z);
     dirLight.target.position.set(sx, sy, sz);
     dirLight.updateMatrix();
     dirLight.updateMatrixWorld();
     dirLight.target.updateMatrix();
     dirLight.target.updateMatrixWorld();
+    shadowMoved = true;
+  }
+
+  // Throttle shadow map depth re-rasterization to 30 Hz (or immediate on frustum snap)
+  if (shadowMoved || elapsedTime - lastShadowRenderTime >= 0.033) {
+    lastShadowRenderTime = elapsedTime;
+    dirLight.shadow.needsUpdate = true;
   }
 
   // Throttle HUD DOM text mutations to 5 Hz and skip DOM writes when text is unchanged
@@ -387,15 +429,21 @@ function animate(): void {
       nearestChestHint.textContent = nextHint;
     }
 
-    // Update compass chest pointer arrow (visible with Lodestone Runes, active Map Hoards, or within 55m)
+    // Update compass chest pointer visibility & world bearing at 5 Hz
     const pointerRange = hasLodestone ? 240 : 65;
-    if (nearest && nearest.dist <= pointerRange) {
-      const worldAngle = Math.atan2(nearest.pos.x - px, -(nearest.pos.z - pz));
-      const relDeg = ((worldAngle + explorer.yaw) * 180) / Math.PI;
-      compassChestPointer.style.opacity = '1';
-      compassChestPointer.style.transform = `rotate(${relDeg.toFixed(1)}deg)`;
+    const showPointer = Boolean(nearest && nearest.dist <= pointerRange);
+    if (showPointer && nearest) {
+      lastChestWorldAngle = Math.atan2(nearest.pos.x - px, -(nearest.pos.z - pz));
+      if (!lastPointerVisible) {
+        lastPointerVisible = true;
+        compassChestPointer.style.opacity = '1';
+      }
     } else {
-      compassChestPointer.style.opacity = '0';
+      lastChestWorldAngle = NaN;
+      if (lastPointerVisible) {
+        lastPointerVisible = false;
+        compassChestPointer.style.opacity = '0';
+      }
     }
 
     const moveStatus = explorer.getMovementStatus();
@@ -409,14 +457,32 @@ function animate(): void {
       }
     }
 
-    const hrs = Math.floor(config.timeOfDay) % 24;
-    const mins = Math.floor((config.timeOfDay % 1) * 60);
-    const timeIcon = hrs >= 6 && hrs < 19 ? '☀️' : '🌙';
-    const timeStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${timeIcon}`;
-    const nextCoords = `${timeStr} | Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
-    if (nextCoords !== lastCoordsText) {
-      lastCoordsText = nextCoords;
-      coordsReadout.textContent = nextCoords;
+    const qPx = Math.round(px * 10);
+    const qPy = Math.round(py * 10);
+    const qPz = Math.round(pz * 10);
+    const qTimeMins = Math.floor((config.timeOfDay % 24) * 60);
+    const activeChunks = chunkManager.getActiveChunkCount();
+    if (
+      qPx !== lastQPx ||
+      qPy !== lastQPy ||
+      qPz !== lastQPz ||
+      qTimeMins !== lastQTimeMins ||
+      activeChunks !== lastActiveChunks
+    ) {
+      lastQPx = qPx;
+      lastQPy = qPy;
+      lastQPz = qPz;
+      lastQTimeMins = qTimeMins;
+      lastActiveChunks = activeChunks;
+      const hrs = Math.floor(qTimeMins / 60) % 24;
+      const mins = qTimeMins % 60;
+      const timeIcon = hrs >= 6 && hrs < 19 ? '☀️' : '🌙';
+      const timeStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${timeIcon}`;
+      const nextCoords = `${timeStr} | Pos: (${(qPx * 0.1).toFixed(1)}, ${(qPz * 0.1).toFixed(1)}) | Elev: ${(qPy * 0.1).toFixed(1)}m | Chunks: ${activeChunks}`;
+      if (nextCoords !== lastCoordsText) {
+        lastCoordsText = nextCoords;
+        coordsReadout.textContent = nextCoords;
+      }
     }
   }
 
@@ -434,6 +500,15 @@ function animate(): void {
   if (compassDeg !== lastCompassYaw) {
     lastCompassYaw = compassDeg;
     compassNeedle.style.transform = `rotate(${compassDeg.toFixed(1)}deg)`;
+  }
+
+  // Smoothly rotate chest pointer arrow at 60 Hz when visible and bearing/yaw changes by >= 0.1 deg
+  if (lastPointerVisible && !Number.isNaN(lastChestWorldAngle)) {
+    const pointerDeg = Math.round(((lastChestWorldAngle + explorer.yaw) * 1800) / Math.PI) * 0.1;
+    if (pointerDeg !== lastPointerDeg) {
+      lastPointerDeg = pointerDeg;
+      compassChestPointer.style.transform = `rotate(${pointerDeg.toFixed(1)}deg)`;
+    }
   }
 
   renderer.render(scene, camera);

@@ -362,13 +362,16 @@ export class TreasureManager {
   public readonly group = new THREE.Group();
   public score = 0;
   public chestsCollected = 0;
-  public onChestCollected?: () => void;
+  public onChestCollected?: (isCoin?: boolean) => void;
+  public onCoinCollected?: () => void;
 
   // Gold Combo Streak state (30s chain window for 2x / 3x / 5x multiplier)
   public streakCount = 0;
   public streakTimer = 0;
   public coinComboStep = 0;
   private readonly streakDuration = 30.0;
+  private lastStreakSec = -1;
+  private lastStreakMult = -1;
 
   private activeChests = new Map<number, ChestInstance[]>();
   private desiredKeys = new Set<number>();
@@ -379,12 +382,16 @@ export class TreasureManager {
   private activeDigSite: BuriedDigSite | null = null;
   private audioCtx: AudioContext | null = null;
   private humCooldown = 0;
+  private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
   // Diegetic Golden Firefly Guiding Stream (world-space Points)
   private readonly fireflyCount = 26;
   private fireflyPoints!: THREE.Points;
   private fireflyPosAttr!: THREE.BufferAttribute;
   private fireflyPhase = new Float32Array(26);
+  private firefliesVisible = false;
+  private guideTargetTimer = 0;
+  private cachedGuideTarget: { dist: number; pos: THREE.Vector3; label: string } | null = null;
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -431,6 +438,14 @@ export class TreasureManager {
     this.fireflyPoints = new THREE.Points(geo, mat);
     this.fireflyPoints.frustumCulled = false;
     this.group.add(this.fireflyPoints);
+  }
+
+  public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
+    this.getSurfaceHeightFn = fn;
+  }
+
+  private sampleGroundHeight(wx: number, wz: number): number {
+    return this.getSurfaceHeightFn ? this.getSurfaceHeightFn(wx, wz) : this.noise.getHeight(wx, wz);
   }
 
   private getKey(cx: number, cz: number): number {
@@ -687,6 +702,7 @@ export class TreasureManager {
               const rdz = playerPos.z - rs.worldPos.z;
               if (rdx * rdx + rdz * rdz <= 2.5 * 2.5) {
                 rs.activated = true;
+                this.guideTargetTimer = 0;
                 rs.crystalMesh.material = getSharedChestAssets().matCrystalActive;
                 activeCount += 1;
                 const totalNow = chest.runestones.filter((n) => n.activated).length;
@@ -700,6 +716,7 @@ export class TreasureManager {
 
           if (activeCount === chest.runestones.length && chest.runestones.length > 0) {
             chest.sealed = false;
+            this.guideTargetTimer = 0;
             if (chest.sealDome) {
               chest.sealDome.visible = false;
             }
@@ -713,7 +730,7 @@ export class TreasureManager {
           const pullStep = Math.min(dist, dt * 11.5);
           chest.worldPos.x += (dx / dist) * pullStep;
           chest.worldPos.z += (dz / dist) * pullStep;
-          chest.worldPos.y = this.noise.getHeight(chest.worldPos.x, chest.worldPos.z);
+          chest.worldPos.y = this.sampleGroundHeight(chest.worldPos.x, chest.worldPos.z);
           chest.root.position.copy(chest.worldPos);
           chest.root.updateMatrix();
           chest.root.updateMatrixWorld(true);
@@ -798,27 +815,48 @@ export class TreasureManager {
     playerPos: THREE.Vector3,
     hasLodestone: boolean
   ): void {
-    const target = this.getNearestChest(playerPos);
+    this.guideTargetTimer -= dt;
+    if (this.guideTargetTimer <= 0) {
+      this.guideTargetTimer = 0.15;
+      this.cachedGuideTarget = this.getNearestChest(playerPos);
+    }
+    const target = this.cachedGuideTarget;
     const maxGuideDist = hasLodestone ? 115 : 58;
     const posArr = this.fireflyPosAttr.array as Float32Array;
 
-    if (!target || target.dist > maxGuideDist || target.dist < 2.2) {
-      for (let i = 0; i < this.fireflyCount; i++) {
-        posArr[i * 3 + 1] = -9999;
+    if (!target) {
+      if (this.firefliesVisible) {
+        this.firefliesVisible = false;
+        for (let i = 0; i < this.fireflyCount; i++) {
+          posArr[i * 3 + 1] = -9999;
+        }
+        this.fireflyPosAttr.needsUpdate = true;
       }
-      this.fireflyPosAttr.needsUpdate = true;
       return;
-    }
-
-    // Play a soft spatial harmonic hum when getting close (< 20m)
-    if (target.dist < 20.0 && this.humCooldown <= 0) {
-      this.humCooldown = THREE.MathUtils.clamp(target.dist * 0.22, 1.2, 3.8);
-      this.playProximityHum(target.dist);
     }
 
     const dx = target.pos.x - playerPos.x;
     const dz = target.pos.z - playerPos.z;
-    const dist = Math.max(0.01, target.dist);
+    const liveDist = Math.hypot(dx, dz);
+
+    if (liveDist > maxGuideDist || liveDist < 2.2) {
+      if (this.firefliesVisible) {
+        this.firefliesVisible = false;
+        for (let i = 0; i < this.fireflyCount; i++) {
+          posArr[i * 3 + 1] = -9999;
+        }
+        this.fireflyPosAttr.needsUpdate = true;
+      }
+      return;
+    }
+
+    // Play a soft spatial harmonic hum when getting close (< 20m)
+    if (liveDist < 20.0 && this.humCooldown <= 0) {
+      this.humCooldown = THREE.MathUtils.clamp(liveDist * 0.22, 1.2, 3.8);
+      this.playProximityHum(liveDist);
+    }
+
+    const dist = Math.max(0.01, liveDist);
     const dirX = dx / dist;
     const dirZ = dz / dist;
     const perpX = -dirZ;
@@ -833,7 +871,7 @@ export class TreasureManager {
       const swirl = Math.sin(elapsedTime * 3.2 + i * 0.9) * (0.45 + phase * 0.65);
       const wx = playerPos.x + dirX * along + perpX * swirl;
       const wz = playerPos.z + dirZ * along + perpZ * swirl;
-      const groundY = this.noise.getHeight(wx, wz);
+      const groundY = this.sampleGroundHeight(wx, wz);
       const wy =
         Math.max(groundY, this.config.waterLevel - 0.2) +
         0.85 +
@@ -843,6 +881,7 @@ export class TreasureManager {
       posArr[i * 3 + 1] = wy;
       posArr[i * 3 + 2] = wz;
     }
+    this.firefliesVisible = true;
     this.fireflyPosAttr.needsUpdate = true;
   }
 
@@ -963,6 +1002,8 @@ export class TreasureManager {
     chest.goldMound.visible = true;
     this.collectedIds.add(chest.id);
     this.collectedIdsDirty = true;
+    this.guideTargetTimer = 0;
+    this.cachedGuideTarget = null;
 
     // Advance Gold Streak Multiplier!
     this.streakCount = Math.min(5, this.streakCount + 1);
@@ -997,7 +1038,7 @@ export class TreasureManager {
       this.spawnBuriedDigSite(chest.worldPos);
     }
 
-    this.onChestCollected?.();
+    this.onChestCollected?.(false);
   }
 
   private spawnBuriedDigSite(originPos: THREE.Vector3): void {
@@ -1037,6 +1078,7 @@ export class TreasureManager {
         ringMesh,
         beamMesh,
       };
+      this.guideTargetTimer = 0;
 
       const dir = formatCompassDir(wx - originPos.x, wz - originPos.z);
       this.showToast(`🗺️ Map Found! Buried Hoard ${dist.toFixed(0)}m ${dir}!`, true);
@@ -1047,6 +1089,8 @@ export class TreasureManager {
   private unearthBuriedCache(dig: BuriedDigSite, hasLodestone: boolean): void {
     this.group.remove(dig.root);
     this.activeDigSite = null;
+    this.guideTargetTimer = 0;
+    this.cachedGuideTarget = null;
 
     this.streakCount = Math.min(5, this.streakCount + 1);
     this.streakTimer = this.streakDuration;
@@ -1059,7 +1103,7 @@ export class TreasureManager {
     this.updateHUD(earned, true, '🗺️ Buried Hoard Unearthed!');
     this.syncStreakHUD();
     this.playPickupChime(true);
-    this.onChestCollected?.();
+    this.onChestCollected?.(false);
   }
 
   public spendGold(amount: number): boolean {
@@ -1078,7 +1122,7 @@ export class TreasureManager {
     this.syncStreakHUD();
     this.showToast(toastMessage, amount >= 0);
     if (amount !== 0) {
-      this.onChestCollected?.();
+      this.onChestCollected?.(false);
     }
   }
 
@@ -1101,7 +1145,11 @@ export class TreasureManager {
     this.score += earned;
     this.syncHUDTotals();
     this.syncStreakHUD();
-    this.onChestCollected?.();
+    if (this.onCoinCollected) {
+      this.onCoinCollected();
+    } else {
+      this.onChestCollected?.(true);
+    }
     return earned;
   }
 
@@ -1131,7 +1179,7 @@ export class TreasureManager {
     }
     this.updateHUD(earned, isFinalBonus, toastPrefix);
     this.syncStreakHUD();
-    this.onChestCollected?.();
+    this.onChestCollected?.(false);
     return earned;
   }
 
@@ -1148,9 +1196,16 @@ export class TreasureManager {
     if (!this.streakEl) return;
     const mult = this.getStreakMultiplier();
     if (mult > 1.0 && this.streakTimer > 0) {
-      this.streakEl.textContent = `🔥 ${mult}x Streak (${Math.ceil(this.streakTimer)}s)`;
-      this.streakEl.classList.remove('hidden');
-    } else {
+      const sec = Math.ceil(this.streakTimer);
+      if (sec !== this.lastStreakSec || mult !== this.lastStreakMult) {
+        this.lastStreakSec = sec;
+        this.lastStreakMult = mult;
+        this.streakEl.textContent = `🔥 ${mult}x Streak (${sec}s)`;
+        this.streakEl.classList.remove('hidden');
+      }
+    } else if (this.lastStreakSec !== 0 || this.lastStreakMult !== 1) {
+      this.lastStreakSec = 0;
+      this.lastStreakMult = 1;
       this.streakEl.classList.add('hidden');
     }
   }
@@ -1220,6 +1275,10 @@ export class TreasureManager {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.4);
     });
@@ -1243,6 +1302,10 @@ export class TreasureManager {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.38);
   }
@@ -1264,6 +1327,10 @@ export class TreasureManager {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.3);
   }
@@ -1374,6 +1441,8 @@ export class TreasureManager {
       this.group.remove(this.activeDigSite.root);
       this.activeDigSite = null;
     }
+    this.guideTargetTimer = 0;
+    this.cachedGuideTarget = null;
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
   }

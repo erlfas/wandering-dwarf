@@ -8,14 +8,14 @@ This document details the algorithmic, mathematical, and rendering-pipeline opti
 
 | Subsystem | Previous Algorithm | New Algorithm | Complexity / Cost Reduction |
 | :--- | :--- | :--- | :--- |
-| **Terrain Vertex Normals** | 4 finite-difference `getHeight()` calls per vertex (`5 × (N+1)²` height samples) | 1-cell padded height grid `(N+3)²` with central differences | **~78.7% fewer** Simplex noise calls per terrain chunk (`270,400` → `53,868` calls for $N=64$) |
+| **Terrain Vertex Normals & Colors** | 4 finite-difference `getHeight()` calls + per-vertex `getSurfaceColor()` (`(N+1)²` evaluations) | 1-cell padded height grid `(N+3)²`, coarse `17×17` biome color grid with bilinear interpolation, and chunk-center Lipschitz track bound | **~78.7% fewer** height calls + **~93% fewer** biome color Simplex calls on $N=64$ chunks |
 | **Foliage Surface Queries (`ChunkGrass` & `ChunkForest`)** | Re-evaluated `getHeight()`, `getNormal()` (4× `getHeight`), and `getSurfaceColor()` per instance | `O(1)` bilinear interpolation (`ChunkSurfaceSampler`) over the chunk's vertex buffers | **100% elimination** of redundant height/normal/color noise calls (~160,000 Simplex evaluations saved per chunk) |
-| **Per-Frame Ground Height (`getSurfaceHeight`)** | 5× `noise.getHeight()` evaluations (60 Simplex noise calls) per query | `O(1)` direct array indexing into `chunk.mesh.geometry.attributes.position` | **60 → 0** Simplex noise evaluations per query (180 noise calls/frame eliminated) |
-| **Chunk LOD Transitions** | Full `TerrainChunk` disposal + terrain & forest rebuild when grass density changes | Decoupled in-place `updateGrass()` and `updateForestLOD()` with 4.5 ms frame time budget | **0 terrain/forest rebuilds** on grass LOD transitions (`dist = 1.5` & `2.6`) |
-| **Chunk Geometry Lifecycle** | Allocate new `PlaneGeometry`, `rotateX`, `computeBoundingBox/Sphere`, and `dispose()` on unload | Segment-bucketed `BufferGeometry` pool + analytical `O(1)` bounding box/sphere from `[minH, maxH]` | **0 WebGL buffer reallocations** during normal movement; `O(V)` → `O(1)` bounds calculation |
-| **Foliage 3D Asset Instancing** | 18,926-tri Pine GLB across all 137 chunks + up to 104× 18,955-tri Grass Clump GLBs per chunk with shadows | Close-range GLB LOD (`dist <= 1.5`) + 160-tri procedural pine for `dist > 1.5` + capped shadowless clumps | **~30M–45M fewer triangles** processed per frame across main + shadow passes |
+| **Per-Frame & Prop Surface Queries (`getSurfaceHeight` / `getSurfaceNormal`)** | 5× `noise.getHeight()` evaluations (60 Simplex noise calls) per query in camera, chests, landmarks, and challenges | `O(1)` direct array indexing into `chunk.mesh.geometry.attributes.position` & `normal` wired across all world managers | **60 → 0** Simplex noise evaluations per query across camera, `TreasureManager`, `LandmarkManager`, and `ChallengeManager` |
+| **Chunk LOD Transitions** | Full `TerrainChunk` disposal + terrain & forest rebuild when grass density changes | Decoupled in-place `updateGrass()` and `updateForestLOD()` with primary/secondary `instanceMatrix` partitioning & 4.5 ms frame budget | **0 terrain/forest/grass buffer rebuilds** on LOD transitions (`dist = 1.5` & `2.6`) |
+| **Chunk Geometry & Water Lifecycle** | Allocate new `PlaneGeometry`, `rotateX`, full-chunk water plane, `computeBoundingBox/Sphere`, and `dispose()` on unload | Segment-bucketed `BufferGeometry` pool + analytical `O(1)` bounds + tight sub-chunk water AABB fitting | **0 WebGL buffer reallocations** during movement; dry chunks skip water meshes and partially wet chunks shrink water overdraw |
+| **Foliage 3D Asset Instancing & GLB Parsing** | Full PBR texture decoding + `MeshPhysicalMaterial`, unwelded 39,784-vert Pine GLB, 75-tri tall grass, and unthrottled clump shadows | Pre-parse GLB texture/specular stripping, `mergeVertices()` pine welding (~61.7% fewer verts), 33-tri tall grass, and `onBeforeShadow` `drawRange` proxy | **~30M–45M fewer triangles** and **>150 MB less GPU texture memory** across main + shadow passes |
 | **Treasure Chest Rendering & Sync** | 9 meshes, 7 geometries, 4 materials allocated per chest; 169-cell grid scan every frame | Pre-merged static base/lid geometries, shared materials, chunk-boundary cache, 45 m ring-pulse culling | **~65% fewer chest draw calls**, **0 per-frame Set/string allocations**, and **0 GPU memory leaks** |
-| **Skeletal Animation (`DwarfCharacter`)** | 195 keyframe tracks (65 bones × pos/quat/scale) interpolated every frame | Track pruning of constant `.scale` and non-root `.position` tracks | **~66% fewer** `THREE.AnimationMixer` property bindings evaluated per frame (195 → 66 tracks) |
+| **Skeletal Animation & VFX (`DwarfCharacter`)** | 195 keyframe tracks (65 bones × pos/quat/scale) + 48-slot particle loop & container matrix updates every frame | Pruning of `.scale`, non-root `.position`, and 30 finger phalange tracks; 30 Hz idle mixer throttling; `activeParticleCount` & tilt epsilon guards | **~80% fewer** `THREE.AnimationMixer` bindings evaluated, **0 idle particle loops**, and **0 redundant 65-bone matrix dirtying** |
 
 ---
 
@@ -44,6 +44,10 @@ Because the 1-cell border padding uses exact world coordinates $(wx, wz)$, verti
 
 **Result:** For $N = 64$, height evaluations drop from $5 \times 65^2 = 21,125$ down to $(64 + 3)^2 = 4,489$ — a **78.7% reduction** in terrain noise evaluations.
 
+### Coarse $17 \times 17$ Biome Color Grid & Sub-Chunk Water AABB (`TerrainChunk.ts`)
+- **Coarse Biome Color Interpolation:** Low-frequency biome and forest-canopy Simplex noise varies smoothly across space. Instead of evaluating `noise.getSurfaceColor()` at all $65 \times 65 = 4,225$ vertices of a high-resolution chunk, `TerrainChunk` samples low-frequency biome colors on a coarse grid capped at $17 \times 17$ ($289$ samples) and bilinearly interpolates them across the dense vertex grid while still applying exact per-vertex elevation, slope, river-bank, and footpath blending (**~93% reduction** in biome color Simplex calls on $N=64$ chunks).
+- **Tight Sub-Chunk Water AABB Fitting:** While populating the height grid, `TerrainChunk` tracks the exact bounding rectangle $[minWetX, maxWetX] \times [minWetZ, maxWetZ]$ of vertices below `waterLevel`. Dry chunks skip water mesh creation entirely (`waterMesh = null`), and partially wet chunks scale and position their water plane strictly over the wet sub-rectangle, reducing transparent water pixel overdraw.
+
 ---
 
 ## 2. $O(1)$ Bilinear Surface Interpolation for Foliage (`ChunkSurfaceSampler`)
@@ -68,13 +72,13 @@ Given a local coordinate $(x, z) \in [-\frac{\text{size}}{2}, \frac{\text{size}}
 
 ---
 
-## 3. $O(1)$ Exact Triangle Barycentric Height Lookup (`ChunkManager.getSurfaceHeight`)
+## 3. $O(1)$ Exact Triangle Barycentric Height & Normal Lookup (`ChunkManager`)
 
 ### The Problem
-`ExplorerCamera` queries `chunkManager.getSurfaceHeight(x, z)` up to 3 times every frame (for player pre-movement slope checks, post-movement ground snapping, and camera terrain-collision prevention). Previously, `getSurfaceHeight()` called `this.noise.getHeight()` **5 times per invocation** (`exactNoiseY`, `h00`, `h10`, `h01`, `h11`), costing **60 Simplex noise calls per query** (180 calls per frame), even when the player was standing inside an already-loaded chunk.
+`ExplorerCamera`, `TreasureManager`, `LandmarkManager`, and `ChallengeManager` query ground heights and normals across loaded chunks. Previously, `getSurfaceHeight()` called `this.noise.getHeight()` **5 times per invocation** (`exactNoiseY`, `h00`, `h10`, `h01`, `h11`), costing **60 Simplex noise calls per query**, and world managers called `noise.getHeight()` / `noise.getNormal()` directly even when the chunk was already loaded in memory.
 
 ### The Algorithmic Fix
-1. In `ChunkManager.getSurfaceHeight(worldX, worldZ)`, when the target chunk is loaded in `this.chunks`, the 4 quad corner heights $(h_{00}, h_{10}, h_{01}, h_{11})$ are read directly from `chunk.mesh.geometry.attributes.position` via `posAttr.getY(...)`:
+1. In `ChunkManager.getSurfaceHeight(worldX, worldZ)` and `ChunkManager.getSurfaceNormal(worldX, worldZ, target)`, when the target chunk is loaded in `this.chunks`, the 4 quad corner attributes are read directly from `chunk.mesh.geometry.attributes.position` and `normal`:
    ```ts
    const row0 = iz0 * stride;
    const row1 = (iz0 + 1) * stride;
@@ -83,34 +87,36 @@ Given a local coordinate $(x, z) \in [-\frac{\text{size}}{2}, \frac{\text{size}}
    const h01 = posAttr.getY(row1 + ix0);
    const h11 = posAttr.getY(row1 + ix0 + 1);
    ```
-2. Using the exact diagonal split of `THREE.PlaneGeometry` ($f_x + f_z \le 1$ for upper-left triangle, $f_x + f_z > 1$ for lower-right triangle), the exact rendered triangle height is interpolated in **$O(1)$ time with 0 noise evaluations**.
-3. In `ExplorerCamera.update(dt)`, when horizontal movement `moveLen <= 0.001` (player is stationary), `groundY` reuses `preGroundY` instead of querying `getSurfaceHeight()` a second time for identical coordinates.
+2. Using the exact diagonal split of `THREE.PlaneGeometry` ($f_x + f_z \le 1$ for upper-left triangle, $f_x + f_z > 1$ for lower-right triangle), the exact rendered triangle height and bilinear surface normal are interpolated in **$O(1)$ time with 0 noise evaluations**.
+3. `ChunkManager`'s `getSurfaceHeight` and `getSurfaceNormal` callbacks are wired into `TreasureManager`, `LandmarkManager`, and `ChallengeManager` so chest placement, stone circles, campfires, and ring challenge gates all reuse the $O(1)$ vertex-buffer lookup.
+4. In `ExplorerCamera.update(dt)`, when horizontal movement `moveLen <= 0.001` (player is stationary), `groundY` reuses `preGroundY` instead of querying `getSurfaceHeight()` a second time for identical coordinates.
 
 ---
 
-## 4. Noise Function Early-Outs & Loop Unrolling (`TerrainNoise.ts`)
+## 4. Noise Function Early-Outs, Loop Unrolling & Lipschitz Track Bound (`TerrainNoise.ts`)
 
-Inside `TerrainNoise.getHeight(x, z)` and `getForestDensity(x, z)`:
+Inside `TerrainNoise.getHeight(x, z)`, `getForestDensity(x, z)`, and `getTrackInfluence(x, z)`:
 1. **Unrolled 3-Octave Meso Noise:** Replaced the 3-iteration `for` loop and runtime normalization division (`/ norm`) with an unrolled expression multiplied by the compile-time reciprocal constant `INV_MESO_NORM = 1.0 / 1.7104`.
 2. **Conditional Pond Evaluation:** Previously, `this.pondNoise(...)` was evaluated for every $(x, z)$ coordinate even on high mountain peaks where ponds cannot form (`height >= waterY + 11.0`) or far away from river channels (`rVal >= cfg.riverWidth * 0.013832`). Guarding `this.pondNoise` behind those spatial/elevation bounds skips 2 Simplex evaluations on the vast majority of terrain vertices.
 3. **Spawn Clearing Early-Out:** In `getForestDensity(x, z)`, checking `if (spawnDistSq <= 100) return 0;` *before* evaluating the two `forestNoise` octaves avoids 2 Simplex calls inside the spawn clearing.
+4. **Chunk-Center Lipschitz Bound for Forest Tracks:** Because the domain-warped track noise fields have a bounded spatial gradient (Lipschitz constant), `TerrainChunk` evaluates the raw track field distance at the chunk center $(cx, cz)$ once before the vertex loop. If the center distance exceeds the Lipschitz safety bound for the chunk's half-diagonal, the entire chunk is guaranteed to contain no footpath and skips per-vertex `getTrackInfluence(wx, wz)` calls across all $4,225$ vertices.
 
 ---
 
-## 5. Decoupled Chunk LOD State Machine, Geometry Pooling & Time-Budgeted Streaming
+## 5. Decoupled Chunk LOD State Machine, Primary/Secondary Instance Partitioning & Geometry Pooling
 
-### Decoupled Grass & Forest LOD Transitions
+### Decoupled Grass & Forest LOD Transitions with $O(1)$ `instanceMatrix` Slicing
 Previously, `ChunkManager` checked:
 ```ts
 if (!existing || existing.segments !== segments || existing.hasGrass !== wantGrass)
 ```
 This caused two problems:
 1. Crossing `dist = 2.6` (where `wantGrass` toggles between `true` and `false`, while terrain `segments` stays at `32`) **destroyed and rebuilt the entire `TerrainChunk`**—regenerating the $32 \times 32$ terrain mesh, water plane, and `ChunkForest` trees just to attach or detach grass.
-2. Crossing `dist = 1.5` (where grass density changes between `1.0` and `0.55`) never triggered an update because `hasGrass` remained `true`.
+2. Crossing `dist = 1.5` (where grass density changes between `1.0` and `0.55`) either failed to update or rebuilt the entire `ChunkGrass` instance buffers.
 
 **Solution:**
-- `TerrainChunk` now provides `updateGrass(grassDensityMult, ...)` and `updateForestLOD(dist)`.
-- When `existing.segments === req.segments`, `ChunkManager` preserves the terrain mesh and forest instances, updating only the grass layer or swapping the pine tree LOD in-place.
+- `TerrainChunk` provides `updateGrass(grassDensityMult, ...)` and `updateForestLOD(dist)`.
+- **Primary/Secondary Buffer Partitioning (`GrassField.ts`):** During initial `ChunkGrass` construction, deterministic PRNG sampling partitions instances into a **primary 55% prefix** (`0 .. primaryCount - 1`) and a **secondary 45% suffix** (`primaryCount .. totalCount - 1`) inside each `InstancedMesh` (`grassInstanced`, `tallGrassInstanced`, `flowerHeads`). When transitioning between `dist <= 1.5` (`densityMultiplier = 1.0`) and `1.5 < dist <= 2.6` (`densityMultiplier = 0.55`), `ChunkGrass.setLOD()` simply updates `instancedMesh.count = isNear ? totalCount : primaryCount` and toggles `clumpInstanced.visible = isNear` in **$O(1)$ time with zero buffer rebuilds or heap allocations**.
 - `ChunkManager.update()` enforces a **4.5 ms per-frame time budget** (`performance.now() - frameStart > 4.5`) so heavy chunk builds automatically spread across consecutive frames rather than stalling `requestAnimationFrame`.
 
 ### Segment-Bucketed `BufferGeometry` Pooling & Analytical Bounds
@@ -120,24 +126,27 @@ This caused two problems:
 
 ---
 
-## 6. Close-Range 3D Asset LODs & Frustum Culling (`ForestField.ts`, `GrassField.ts` & `LandmarkManager.ts`)
+## 6. Close-Range 3D Asset LODs, Pre-Parse GLB Stripping, Vertex Welding & Shadow Proxies (`ForestField.ts`, `GrassField.ts` & `LandmarkManager.ts`)
 
-### Close-Range GLB LOD Architecture
-Inspecting the binary `.glb` assets revealed that `pine tree 3d model.glb` contains **39,784 vertices / 18,926 triangles**, `oak tree 3d model.glb` contains **28,477 vertices / 20,066 triangles**, `simple dwarven hut 3d model.glb` contains **23,556 vertices / 18,514 triangles**, `ancient stone circle asset.glb` contains **22,713 vertices / 19,418 triangles**, and `grass clump 3d model.glb` contains **22,709 vertices / 18,955 triangles**. Instancing these across all 137 chunks would produce 30M–60M triangles per frame.
+### Pre-Parse GLB Texture & Specular Extension Stripping (`GLTFLoader` Plugin)
+All `.glb` assets (`pine tree`, `oak tree`, `simple dwarven hut`, `ancient stone circle`, `grass clump`, and `dwarf front t-pose`) were exported with `KHR_materials_specular` (forcing Three.js to compile expensive `THREE.MeshPhysicalMaterial` shaders) plus unused `metallicRoughnessTexture`, `normalTexture`, and `occlusionTexture` maps.
+- Registering a `GLTFLoader` `beforeRoot` plugin strips `matDef.extensions.KHR_materials_specular`, `metallicRoughnessTexture`, `normalTexture`, and `occlusionTexture` from `parser.json.materials` *before* `GLTFLoader` instantiates `ImageBitmap` decoders or materials—saving **>150 MB of GPU texture memory** and ensuring lightweight `MeshStandardMaterial` compilation across all models.
 
-To preserve the visual fidelity of the 3D models close to the player while eliminating distant GPU overload:
+### Close-Range GLB LOD Architecture & Geometry Optimizations
 1. **Pine Trees, Oak Trees & Dwarven Huts (`ChunkForest.setLOD`):**
-   - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the full 18,926-triangle `pine tree 3d model.glb` (`sharedPineGeo` + `sharedPineMat`), 20,066-triangle `oak tree 3d model.glb` (`sharedOakGeo` + `sharedOakMat`), and 18,514-triangle `simple dwarven hut 3d model.glb` (`sharedHutGeo` + `sharedHutMat`).
-   - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Dynamically swaps `pineInstanced`, `broadleafInstanced`, and `hutInstanced` geometry and materials in-place to the lightweight procedural pine (`createPineTreeGeometry()`), procedural broadleaf/oak (`createBroadleafTreeGeometry()`), and 112-triangle procedural dwarven hut (`createDwarvenHutGeometry()`) geometries, reducing distant triangle counts by **>98.5%**.
+   - **Vertex Welding (`mergeVertices`):** `pine tree 3d model.glb` contained 39,784 unwelded vertices for 18,926 triangles. Welding shared vertices via `BufferGeometryUtils.mergeVertices(geo, 1e-4)` reduces vertex shader invocations by **~61.7%** (~15,248 vertices) without altering silhouette or UVs.
+   - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the welded `pine tree 3d model.glb` (`sharedPineGeo` + `sharedPineMat`), `oak tree 3d model.glb` (`sharedOakGeo` + `sharedOakMat`), and `simple dwarven hut 3d model.glb` (`sharedHutGeo` + `sharedHutMat`).
+   - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Dynamically swaps `pineInstanced`, `broadleafInstanced`, and `hutInstanced` geometry and materials in-place to lightweight procedural geometries (`createPineTreeGeometry()`, `createBroadleafTreeGeometry()`, and 112-triangle `createDwarvenHutGeometry()`), reducing distant triangle counts by **>98.5%**.
    - **Shadow Culling:** Tree, hut, and boulder shadow casting (`castShadow`) is enabled only within `dist <= 2.2` chunks.
 2. **Ancient Stone Circles (`LandmarkManager.update`):**
    - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Swaps `stoneCircleMesh` in-place to the 19,418-triangle `ancient stone circle asset.glb` (`sharedStoneCircleGeo` + `sharedStoneCircleMat`), with the inner floor aligned to terrain `Y = 0` and the outer foundation skirt embedded into sloped terrain.
    - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Swaps back to the pre-merged 60-triangle procedural mossy megalith ring (`stoneCircleSimpleGeo` + `matMossStone`) and log benches (`logBenchesGeo`). Shadow casting is gated behind `dist <= 2.2` chunks.
-3. **Grass Clumps (`ChunkGrass`):**
-   - **Close-Range LOD (`dist <= 1.5`, `densityMultiplier = 1.0`):** Spawns up to 16 instances per chunk of `grass clump 3d model.glb` with `castShadow = false` alongside full-density procedural grass tufts and wildflowers.
-   - **Mid-Range LOD (`1.5 < dist <= 2.6`, `densityMultiplier = 0.55`):** Spawns only the 35-vertex procedural grass tufts (`maxClumps = 0`).
-4. **Broadleaf Geometry Reduction:** Reduced `THREE.IcosahedronGeometry(1.0, detail)` canopy lobes from `detail = 2` to `detail = 1`, cutting broadleaf vertex count by **75%**.
-5. **Explicit `InstancedMesh` Bounding Spheres:** Assigned a chunk-enclosing `THREE.Sphere` (`radius = size * 0.85`) to all foliage `InstancedMesh` objects so Three.js frustum culling accurately culls off-screen chunks.
+3. **Grass Clumps, 33-Tri Tall Grass & Shadow-Proxy `drawRange` (`ChunkGrass`):**
+   - **33-Triangle Tall Grass Tuft:** Reduced procedural waist-high tall grass tuft geometry from 9 blades (75 triangles) to 5 blades (33 triangles, **56% triangle reduction**) with slightly wider blade bases to preserve meadow volume.
+   - **Shadow-Proxy `drawRange` (`onBeforeShadow` / `onAfterShadow`):** `grass clump 3d model.glb` contains 18,955 triangles. When rendering directional shadow maps on close-range clumps, `onBeforeShadow` temporarily restricts `geometry.drawRange.count` to a coarse ~1,800-triangle subset (`shadowIndexCount`) and `onAfterShadow` restores the full index range—cutting grass clump shadow-map vertex load by **~90%**.
+   - **Backface Normal Preservation (`DoubleSide` Foliage):** Custom wind shaders preserve smooth upward-biased canopy/blade normals on backfaces rather than flipping `vNormal` via `gl_FrontFacing`, eliminating harsh dark bands on double-sided grass blades and tree foliage.
+4. **Broadleaf Geometry Reduction & Explicit Bounding Spheres:**
+   - Reduced `THREE.IcosahedronGeometry(1.0, detail)` canopy lobes from `detail = 2` to `detail = 1` (**75% vertex reduction**) and assigned an explicit chunk-enclosing `THREE.Sphere` (`radius = size * 0.85`) to all `InstancedMesh` objects for accurate frustum culling.
 
 ---
 
@@ -159,15 +168,19 @@ To preserve the visual fidelity of the 3D models close to the player while elimi
 
 ---
 
-## 8. Render Loop, Shadow Frustum Snapping & Animation Track Pruning
+## 8. Render Loop, Throttled Shadow Maps, Skeletal Animation & UI/Audio Optimizations
 
-1. **Texel-Grid Shadow Snapping (`main.ts`):**
+1. **Texel-Grid Shadow Snapping & Throttled Shadow Map Updates (`main.ts`):**
    - Switched from 9-tap `THREE.PCFSoftShadowMap` to 4-tap `THREE.PCFShadowMap`, tightened `shadowExtent` from `95` to `65`, and capped `devicePixelRatio` at `1.5`.
-   - Snapped directional light and target positions to a `2.0 m` step grid (`Math.round(p / 2) * 2`) and updated light matrices only when the snapped grid cell changes, eliminating sub-texel shadow swimming and unnecessary per-frame matrix updates.
-2. **Keyframe Track Pruning (`DwarfCharacter.ts`):**
-   - The 65-bone humanoid rig in `dwarf front t-pose 3d model.glb` exported 195 tracks per clip (`position`, `quaternion`, and `scale` on every bone), even though non-root bone positions and all bone scales are constant.
-   - `setupAnimations()` and `createIdleClip()` now strip all `.scale` tracks and all non-`Hips` `.position` tracks at load time, reducing `THREE.AnimationMixer` evaluations from **195 tracks to 66 tracks per frame** (~66% reduction).
-   - `swimRippleRing` and `swimOuterRing` now toggle `visible = false` when on land so transparent water-ring meshes are excluded from the renderer's transparency sort list.
-3. **HUD DOM Throttling & Event-Driven Debug UI (`main.ts` & `DebugOverlay.ts`):**
-   - Throttled HUD text mutations (`nearestChestHint.textContent` and `coordsReadout.textContent`) from 60–144 Hz down to 5 Hz (`200 ms`), and guarded `compassNeedle.style.transform` behind yaw change detection (`> 0.001 rad`).
-   - Removed all `.listen()` polling controllers in `DebugOverlay.ts`, replacing them with an event-driven `syncDisplay()` call when camera or wireframe hotkeys are pressed.
+   - Set `renderer.shadowMap.autoUpdate = false` and snapped directional light and target positions to a `2.0 m` step grid (`Math.round(p / 2) * 2`), triggering `renderer.shadowMap.needsUpdate = true` only when the snapped sun cell moves or at a throttled interval for near-camera animation.
+2. **Keyframe Track Pruning, Idle Throttling & Particle/Tilt Guards (`DwarfCharacter.ts`):**
+   - The 65-bone humanoid rig in `dwarf front t-pose 3d model.glb` exported 195 tracks per clip (`position`, `quaternion`, and `scale` on every bone), including 30 individual finger phalange bones (`Index1..4`, `Middle1..4`, `Ring1..4`, `Pinky1..4`, `Thumb1..4`).
+   - `setupAnimations()` and `createIdleClip()` strip all `.scale` tracks, all non-`Hips` `.position` tracks, and all finger phalange tracks at load time (~80% reduction in evaluated tracks), and `createIdleClip()` uses 2-keyframe endpoints on static rest bones.
+   - Once the 0.25 s crossfade into `'idle'` completes, `this.mixer.update()` is throttled to ~30 Hz (`0.033 s` accumulator).
+   - `trailPoints` sets `matrixAutoUpdate = false` and `visible = false` when `activeParticleCount === 0`, skipping the 48-slot particle simulation loop and draw call entirely when no particles are live.
+   - `modelContainer.rotation.set(this.slideTiltX, 0, this.slideTiltZ)` is guarded behind an epsilon check (`0.0005 rad`) so the 65-bone `SkinnedMesh` hierarchy does not dirty its world matrices every frame when upright on land.
+3. **HUD DOM Caching, Quick-Sync Debug UI & Deferred Audio (`RelicStore.ts`, `DebugOverlay.ts`, `BackgroundMusic.ts`):**
+   - `RelicStore` builds the 4 relic `<button>` DOM nodes once in `buildShopDOM()` and caches `{ button, costSpan, lastState }`, updating classes and text in-place in $O(1)$ only when a card's state (`owned` / `affordable` / `locked`) actually changes.
+   - Web Audio API sound effects share a singleton `AudioContext` (`getSharedAudioContext()`) and attach `osc.onended = () => { osc.disconnect(); gain.disconnect(); }` to prevent audio-graph node accumulation.
+   - `DebugOverlay.syncDisplay(full = false)` updates only the 3 hotkey-driven `quickSyncControllers` (`timeOfDay`, `cameraMode`, `wireframe`) instead of traversing the entire `lil-gui` controller tree.
+   - `BackgroundMusic` initializes `challengeAudio.preload = 'none'` at startup and warms the secondary challenge track lazily via `requestIdleCallback` so initial network and audio-decode bandwidth is dedicated to primary world startup.

@@ -1,4 +1,4 @@
-import GUI from 'lil-gui';
+import GUI, { Controller } from 'lil-gui';
 import * as THREE from 'three';
 import { WorldConfig } from '../world/Config';
 import { ChunkManager } from '../world/ChunkManager';
@@ -8,6 +8,7 @@ import { TreasureManager } from '../world/TreasureManager';
 export class DebugOverlay {
   public readonly gui: GUI;
   private rebuildRafId: number | null = null;
+  private quickSyncControllers: Controller[] = [];
 
   constructor(
     config: WorldConfig,
@@ -195,11 +196,11 @@ export class DebugOverlay {
       .add(config, 'enableDayNightCycle')
       .name('Auto Day/Night Cycle');
 
-    debugFolder
+    const timeCtrl = debugFolder
       .add(config, 'timeOfDay', 0, 24, 0.1)
       .name('Time of Day (h) [N]');
 
-    debugFolder
+    const camCtrl = debugFolder
       .add(config, 'cameraMode', ['dwarf', 'free'])
       .name('Camera Mode (V)');
 
@@ -207,12 +208,14 @@ export class DebugOverlay {
       .add(config, 'showDwarfProxy')
       .name('Show Dwarf Proxy');
 
-    debugFolder
+    const wireCtrl = debugFolder
       .add(config, 'wireframe')
       .name('Wireframe Mesh (M)')
       .onChange((v: boolean) => {
         chunkManager.material.wireframe = v;
       });
+
+    this.quickSyncControllers = [timeCtrl, camCtrl, wireCtrl];
 
     debugFolder
       .add(config, 'showChunkBorders')
@@ -239,7 +242,13 @@ export class DebugOverlay {
     }
   }
 
-  public syncDisplay(): void {
-    this.gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  public syncDisplay(full = false): void {
+    if (full) {
+      this.gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      return;
+    }
+    for (let i = 0; i < this.quickSyncControllers.length; i++) {
+      this.quickSyncControllers[i].updateDisplay();
+    }
   }
 }
