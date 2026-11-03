@@ -25,9 +25,9 @@ scene.fog = fog;
 // 2. Renderer
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 appContainer.appendChild(renderer.domElement);
@@ -52,7 +52,7 @@ dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.near = 10;
 dirLight.shadow.camera.far = 320;
-const shadowExtent = 95;
+const shadowExtent = 65;
 dirLight.shadow.camera.left = -shadowExtent;
 dirLight.shadow.camera.right = shadowExtent;
 dirLight.shadow.camera.top = shadowExtent;
@@ -82,6 +82,10 @@ const explorer = new ExplorerCamera(
   dwarf,
   () => {
     chunkManager.material.wireframe = config.wireframe;
+    debugOverlay.syncDisplay();
+  },
+  () => {
+    debugOverlay.syncDisplay();
   }
 );
 
@@ -95,18 +99,24 @@ chunkManager.update(
 );
 
 // 7. Live Terrain & Grass Planner GUI + Background Music
-new DebugOverlay(config, noise, chunkManager, fog, () => explorer.playerPos);
+const debugOverlay = new DebugOverlay(config, noise, chunkManager, fog, () => explorer.playerPos);
 new BackgroundMusic();
 
 // 8. Resize Handler
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
 // 9. Main Loop
 const clock = new THREE.Clock();
+let lastShadowX = NaN;
+let lastShadowY = NaN;
+let lastShadowZ = NaN;
+let lastHudUpdate = -1;
+let lastCompassYaw = NaN;
 
 function animate(): void {
   requestAnimationFrame(animate);
@@ -124,22 +134,37 @@ function animate(): void {
   chunkManager.update(px, py, pz, elapsedTime, false);
   treasureManager.update(dt, elapsedTime, explorer.playerPos);
 
-  // Update nearest chest tracker in the HUD
-  const nearest = treasureManager.getNearestChest(explorer.playerPos);
-  if (nearest) {
-    nearestChestHint.textContent = `Nearest: ${nearest.dist.toFixed(0)}m`;
-  } else {
-    nearestChestHint.textContent = 'Explore further!';
+  // Keep directional sun shadow frustum centered on player in discrete grid steps
+  const snap = 2.0;
+  const sx = Math.round(px / snap) * snap;
+  const sy = Math.round(py / snap) * snap;
+  const sz = Math.round(pz / snap) * snap;
+  if (sx !== lastShadowX || sy !== lastShadowY || sz !== lastShadowZ) {
+    lastShadowX = sx;
+    lastShadowY = sy;
+    lastShadowZ = sz;
+    dirLight.position.set(sx + sunOffset.x, sy + sunOffset.y, sz + sunOffset.z);
+    dirLight.target.position.set(sx, sy, sz);
+    dirLight.target.updateMatrixWorld();
   }
 
-  // Keep directional sun shadow frustum centered on player for crisp shadows everywhere
-  dirLight.position.set(px + sunOffset.x, py + sunOffset.y, pz + sunOffset.z);
-  dirLight.target.position.set(px, py, pz);
-  dirLight.target.updateMatrixWorld();
+  // Throttle HUD DOM text mutations to 5 Hz
+  if (elapsedTime - lastHudUpdate >= 0.2) {
+    lastHudUpdate = elapsedTime;
+    const nearest = treasureManager.getNearestChest(explorer.playerPos);
+    if (nearest) {
+      nearestChestHint.textContent = `Nearest: ${nearest.dist.toFixed(0)}m`;
+    } else {
+      nearestChestHint.textContent = 'Explore further!';
+    }
+    coordsReadout.textContent = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
+  }
 
-  // Update HUD readout & top-left compass needle
-  coordsReadout.textContent = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
-  compassNeedle.style.transform = `rotate(${(explorer.yaw * 180) / Math.PI}deg)`;
+  // Only update compass needle transform when camera yaw changes
+  if (Math.abs(explorer.yaw - lastCompassYaw) > 0.001) {
+    lastCompassYaw = explorer.yaw;
+    compassNeedle.style.transform = `rotate(${(explorer.yaw * 180) / Math.PI}deg)`;
+  }
 
   renderer.render(scene, camera);
 }

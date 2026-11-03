@@ -6,6 +6,11 @@ export class BackgroundMusic {
   private isMuted = false;
   private targetVolume = 0.45;
   private statusEl: HTMLElement | null;
+  private unlockHandler = () => {
+    if (!this.isStarted) {
+      this.tryPlay();
+    }
+  };
 
   constructor(statusElementId = 'music-toggle') {
     this.audio = new Audio(bgmUrl);
@@ -19,14 +24,8 @@ export class BackgroundMusic {
 
   private bindEvents(): void {
     // Unlock and start audio on first user interaction if browser blocked initial autoplay
-    const unlock = () => {
-      if (!this.isStarted) {
-        this.tryPlay();
-      }
-    };
-
-    window.addEventListener('keydown', unlock, { passive: true });
-    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', this.unlockHandler, { passive: true });
+    window.addEventListener('pointerdown', this.unlockHandler, { passive: true });
 
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyP' && !e.repeat) {
@@ -51,6 +50,8 @@ export class BackgroundMusic {
       .play()
       .then(() => {
         this.isStarted = true;
+        window.removeEventListener('keydown', this.unlockHandler);
+        window.removeEventListener('pointerdown', this.unlockHandler);
         this.updateUI();
       })
       .catch(() => {

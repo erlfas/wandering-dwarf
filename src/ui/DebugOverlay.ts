@@ -45,13 +45,11 @@ export class DebugOverlay {
 
     forestFolder
       .add(config, 'windSpeed', 0, 5, 0.1)
-      .name('Wind Speed')
-      .listen();
+      .name('Wind Speed');
 
     forestFolder
       .add(config, 'windStrength', 0, 0.8, 0.02)
-      .name('Wind Gust Strength')
-      .listen();
+      .name('Wind Gust Strength');
 
     // 2. Rivers & Ponds Folder
     const waterFolder = this.gui.addFolder('Rivers & Ponds');
@@ -103,16 +101,6 @@ export class DebugOverlay {
       .onFinishChange(rebuild);
 
     grassFolder
-      .add(config, 'windSpeed', 0, 5, 0.1)
-      .name('Wind Speed')
-      .listen();
-
-    grassFolder
-      .add(config, 'windStrength', 0, 0.8, 0.02)
-      .name('Wind Gust Strength')
-      .listen();
-
-    grassFolder
       .add(config, 'blankClayMode')
       .name('Blank Clay Mode (Phase 1)')
       .onChange(rebuild);
@@ -148,8 +136,7 @@ export class DebugOverlay {
     const debugFolder = this.gui.addFolder('Camera & Debug');
     debugFolder
       .add(config, 'cameraMode', ['dwarf', 'free'])
-      .name('Camera Mode (C)')
-      .listen();
+      .name('Camera Mode (V)');
 
     debugFolder
       .add(config, 'showDwarfProxy')
@@ -158,7 +145,6 @@ export class DebugOverlay {
     debugFolder
       .add(config, 'wireframe')
       .name('Wireframe Mesh (M)')
-      .listen()
       .onChange((v: boolean) => {
         chunkManager.material.wireframe = v;
       });
@@ -177,5 +163,9 @@ export class DebugOverlay {
         fog.density = v;
       });
     debugFolder.close();
+  }
+
+  public syncDisplay(): void {
+    this.gui.controllersRecursive().forEach((c) => c.updateDisplay());
   }
 }

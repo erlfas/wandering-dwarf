@@ -45,6 +45,7 @@ export class DwarfCharacter {
     });
     this.swimRippleRing = new THREE.Mesh(ringGeo1, ringMat1);
     this.swimRippleRing.position.y = 0.56;
+    this.swimRippleRing.visible = false;
     this.root.add(this.swimRippleRing);
 
     const ringGeo2 = new THREE.RingGeometry(0.62, 0.72, 24);
@@ -57,6 +58,7 @@ export class DwarfCharacter {
     });
     this.swimOuterRing = new THREE.Mesh(ringGeo2, ringMat2);
     this.swimOuterRing.position.y = 0.55;
+    this.swimOuterRing.visible = false;
     this.root.add(this.swimOuterRing);
   }
 
@@ -72,7 +74,7 @@ export class DwarfCharacter {
         model.traverse((obj) => {
           if (obj instanceof THREE.Mesh) {
             obj.castShadow = true;
-            obj.receiveShadow = true;
+            obj.receiveShadow = false;
             obj.frustumCulled = false;
           }
         });
@@ -90,8 +92,13 @@ export class DwarfCharacter {
   private setupAnimations(model: THREE.Object3D, clips: THREE.AnimationClip[]): void {
     this.mixer = new THREE.AnimationMixer(model);
 
-    // Strip horizontal (X/Z) root motion on Hips so the character stays anchored to root.position
+    // Prune redundant scale/position tracks and strip horizontal (X/Z) root motion on Hips
     for (const clip of clips) {
+      clip.tracks = clip.tracks.filter((track) => {
+        if (track.name.endsWith('.scale')) return false;
+        if (track.name.endsWith('.position') && !track.name.includes('Hips')) return false;
+        return true;
+      });
       for (const track of clip.tracks) {
         if (track.name.includes('Hips') && track.name.endsWith('.position')) {
           const values = track.values;
@@ -206,11 +213,11 @@ export class DwarfCharacter {
         qMid.toArray(outVals, 4);
         qA.toArray(outVals, 8);
         idleTracks.push(new THREE.QuaternionKeyframeTrack(track.name, times, outVals));
-      } else if (prop === 'position') {
+      } else if (prop === 'position' && nodeName.includes('Hips')) {
         const px = node ? node.position.x : track.values[0];
         const py = node ? node.position.y : track.values[1];
         const pz = node ? node.position.z : track.values[2];
-        const midY = nodeName.includes('Hips') ? py - 0.004 : py;
+        const midY = py - 0.004;
         const outVals = new Float32Array([px, py, pz, px, midY, pz, px, py, pz]);
         idleTracks.push(new THREE.VectorKeyframeTrack(track.name, times, outVals));
       }
@@ -293,6 +300,8 @@ export class DwarfCharacter {
     }
 
     if (isSwimming) {
+      this.swimRippleRing.visible = true;
+      this.swimOuterRing.visible = true;
       this.swimTime += dt * (isMoving ? 5.5 : 2.6);
       const bob = Math.sin(this.swimTime * 0.85) * 0.035;
       const targetY = THREE.MathUtils.lerp(this.landYOffset, this.swimYOffset, this.swimBlend) + bob;
@@ -313,14 +322,16 @@ export class DwarfCharacter {
       (this.swimOuterRing.material as THREE.MeshBasicMaterial).opacity =
         (1.0 - ring2Phase) * 0.4 * this.swimBlend;
     } else {
-      // Fade out water ripple rings on land and restore land ground clearance
-      (this.swimRippleRing.material as THREE.MeshBasicMaterial).opacity = 0;
-      (this.swimOuterRing.material as THREE.MeshBasicMaterial).opacity = 0;
-      this.modelContainer.position.y = THREE.MathUtils.lerp(
-        this.modelContainer.position.y,
-        this.landYOffset,
-        Math.min(1, dt * 10)
-      );
+      // Hide water ripple rings on land and restore land ground clearance
+      this.swimRippleRing.visible = false;
+      this.swimOuterRing.visible = false;
+      if (Math.abs(this.modelContainer.position.y - this.landYOffset) > 0.001) {
+        this.modelContainer.position.y = THREE.MathUtils.lerp(
+          this.modelContainer.position.y,
+          this.landYOffset,
+          Math.min(1, dt * 10)
+        );
+      }
     }
   }
 }

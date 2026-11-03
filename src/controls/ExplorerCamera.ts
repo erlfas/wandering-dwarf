@@ -22,6 +22,7 @@ export class ExplorerCamera {
   private lastMouseX = 0;
   private lastMouseY = 0;
   private smoothedTarget = new THREE.Vector3();
+  private desiredTarget = new THREE.Vector3();
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -153,7 +154,10 @@ export class ExplorerCamera {
     }
 
     // Clamp player height to the rendered triangle surface (or buoyant swimming elevation in rivers/ponds)
-    const groundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+    const groundY =
+      moveLen > 0.001
+        ? this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z)
+        : preGroundY;
     const swimSurfaceY = this.config.waterLevel - 0.54;
     this.playerPos.y =
       this.config.enableWater && !this.config.blankClayMode
@@ -174,12 +178,12 @@ export class ExplorerCamera {
 
     // Smooth camera target follow
     const lookHeightOffset = this.config.cameraMode === 'dwarf' ? 1.55 : 4.0;
-    const desiredTarget = new THREE.Vector3(
+    this.desiredTarget.set(
       this.playerPos.x,
       this.playerPos.y + lookHeightOffset,
       this.playerPos.z
     );
-    this.smoothedTarget.lerp(desiredTarget, Math.min(1, dt * 12));
+    this.smoothedTarget.lerp(this.desiredTarget, Math.min(1, dt * 12));
 
     // Position camera on spherical orbit behind target
     const effDist = this.config.cameraMode === 'dwarf' ? this.distance : this.distance * 1.8;

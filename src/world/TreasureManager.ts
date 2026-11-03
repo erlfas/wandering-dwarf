@@ -17,6 +17,190 @@ interface ChestInstance {
   sparkles?: THREE.Points;
 }
 
+interface SharedChestAssets {
+  matWoodStandard: THREE.MeshStandardMaterial;
+  matWoodRare: THREE.MeshStandardMaterial;
+  matTrimStandard: THREE.MeshStandardMaterial;
+  matTrimRare: THREE.MeshStandardMaterial;
+  matGoldInside: THREE.MeshStandardMaterial;
+  ringMatStandard: THREE.MeshBasicMaterial;
+  ringMatRare: THREE.MeshBasicMaterial;
+  baseWoodGeo: THREE.BufferGeometry;
+  baseTrimGeo: THREE.BufferGeometry;
+  lidWoodGeo: THREE.BufferGeometry;
+  lidTrimGeo: THREE.BufferGeometry;
+  goldGeo: THREE.BufferGeometry;
+  ringGeo: THREE.BufferGeometry;
+}
+
+let sharedAssets: SharedChestAssets | null = null;
+
+function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  let totalVerts = 0;
+  let totalIndices = 0;
+
+  for (const geo of geometries) {
+    const pos = geo.getAttribute('position');
+    totalVerts += pos.count;
+    const index = geo.getIndex();
+    totalIndices += index ? index.count : pos.count;
+  }
+
+  const positions = new Float32Array(totalVerts * 3);
+  const normals = new Float32Array(totalVerts * 3);
+  const uvs = new Float32Array(totalVerts * 2);
+  const indices = new Uint32Array(totalIndices);
+
+  let vertOffset = 0;
+  let indexOffset = 0;
+
+  for (const geo of geometries) {
+    const pos = geo.getAttribute('position');
+    const norm = geo.getAttribute('normal');
+    const uv = geo.getAttribute('uv');
+    const count = pos.count;
+
+    positions.set(pos.array as Float32Array, vertOffset * 3);
+    if (norm) {
+      normals.set(norm.array as Float32Array, vertOffset * 3);
+    }
+    if (uv) {
+      uvs.set(uv.array as Float32Array, vertOffset * 2);
+    }
+
+    const index = geo.getIndex();
+    if (index) {
+      const idxArray = index.array;
+      for (let i = 0; i < index.count; i++) {
+        indices[indexOffset + i] = idxArray[i] + vertOffset;
+      }
+      indexOffset += index.count;
+    } else {
+      for (let i = 0; i < count; i++) {
+        indices[indexOffset + i] = vertOffset + i;
+      }
+      indexOffset += count;
+    }
+
+    vertOffset += count;
+    geo.dispose();
+  }
+
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  merged.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  merged.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  merged.setIndex(new THREE.BufferAttribute(indices, 1));
+  return merged;
+}
+
+function getSharedChestAssets(): SharedChestAssets {
+  if (sharedAssets) return sharedAssets;
+
+  const matWoodStandard = new THREE.MeshStandardMaterial({
+    color: 0x6e4223,
+    roughness: 0.78,
+    metalness: 0.08,
+  });
+  const matWoodRare = new THREE.MeshStandardMaterial({
+    color: 0x6b2d26,
+    roughness: 0.78,
+    metalness: 0.08,
+  });
+
+  const matTrimStandard = new THREE.MeshStandardMaterial({
+    color: 0xd4a238,
+    roughness: 0.3,
+    metalness: 0.82,
+    emissive: 0x241700,
+    emissiveIntensity: 0.4,
+  });
+  const matTrimRare = new THREE.MeshStandardMaterial({
+    color: 0xffd147,
+    roughness: 0.3,
+    metalness: 0.82,
+    emissive: 0x4a3200,
+    emissiveIntensity: 0.4,
+  });
+
+  const matGoldInside = new THREE.MeshStandardMaterial({
+    color: 0xffdf4f,
+    roughness: 0.25,
+    metalness: 0.9,
+    emissive: 0x664800,
+    emissiveIntensity: 0.6,
+  });
+
+  const ringMatStandard = new THREE.MeshBasicMaterial({
+    color: 0xffe066,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.45,
+  });
+  const ringMatRare = new THREE.MeshBasicMaterial({
+    color: 0xffae00,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.45,
+  });
+
+  // Base wood geometry
+  const baseWoodGeo = new THREE.BoxGeometry(0.92, 0.48, 0.62);
+  baseWoodGeo.translate(0, 0.24, 0);
+
+  // Base trim straps merged into 1 geometry
+  const strapLGeo = new THREE.BoxGeometry(0.1, 0.5, 0.66);
+  strapLGeo.translate(-0.34, 0.24, 0);
+  const strapRGeo = new THREE.BoxGeometry(0.1, 0.5, 0.66);
+  strapRGeo.translate(0.34, 0.24, 0);
+  const baseTrimGeo = mergeBufferGeometries([strapLGeo, strapRGeo]);
+
+  // Gold mound inside base
+  const goldGeo = new THREE.SphereGeometry(0.36, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  goldGeo.scale(1.15, 0.45, 0.72);
+  goldGeo.translate(0, 0.42, 0);
+
+  // Lid wood geometry (lidBox + lidArch merged in lidPivot space)
+  const lidBoxGeo = new THREE.BoxGeometry(0.92, 0.16, 0.62);
+  lidBoxGeo.translate(0, 0.08, 0.31);
+
+  const lidArchGeo = new THREE.CylinderGeometry(0.31, 0.31, 0.92, 12, 1, false, 0, Math.PI);
+  lidArchGeo.scale(1, 0.72, 1);
+  lidArchGeo.rotateZ(Math.PI / 2);
+  lidArchGeo.translate(0, 0.14, 0.31);
+  const lidWoodGeo = mergeBufferGeometries([lidBoxGeo, lidArchGeo]);
+
+  // Lid trim geometry (lidStrapL + lidStrapR + lockPlate merged in lidPivot space)
+  const lidStrapLGeo = new THREE.BoxGeometry(0.11, 0.28, 0.66);
+  lidStrapLGeo.translate(-0.34, 0.14, 0.31);
+  const lidStrapRGeo = new THREE.BoxGeometry(0.11, 0.28, 0.66);
+  lidStrapRGeo.translate(0.34, 0.14, 0.31);
+  const lockPlateGeo = new THREE.BoxGeometry(0.18, 0.24, 0.06);
+  lockPlateGeo.translate(0, 0.02, 0.63);
+  const lidTrimGeo = mergeBufferGeometries([lidStrapLGeo, lidStrapRGeo, lockPlateGeo]);
+
+  // Subtle ground glow ring
+  const ringGeo = new THREE.RingGeometry(0.58, 0.82, 24);
+  ringGeo.rotateX(-Math.PI / 2);
+
+  sharedAssets = {
+    matWoodStandard,
+    matWoodRare,
+    matTrimStandard,
+    matTrimRare,
+    matGoldInside,
+    ringMatStandard,
+    ringMatRare,
+    baseWoodGeo,
+    baseTrimGeo,
+    lidWoodGeo,
+    lidTrimGeo,
+    goldGeo,
+    ringGeo,
+  };
+  return sharedAssets;
+}
+
 export class TreasureManager {
   public readonly group = new THREE.Group();
   public score = 0;
@@ -26,6 +210,10 @@ export class TreasureManager {
   private collectedIds = new Set<string>();
   private openingChests: ChestInstance[] = [];
   private audioCtx: AudioContext | null = null;
+
+  private lastCenterCx = Number.NaN;
+  private lastCenterCz = Number.NaN;
+  private nearestResult = { dist: 0, pos: new THREE.Vector3() };
 
   private scoreEl: HTMLElement | null;
   private countEl: HTMLElement | null;
@@ -49,51 +237,29 @@ export class TreasureManager {
     lidPivot: THREE.Group;
     glowRing: THREE.Mesh;
   } {
+    const assets = getSharedChestAssets();
     const root = new THREE.Group();
 
-    const woodColor = isRare ? 0x6b2d26 : 0x6e4223; // Crimson-mahogany for rare chests, oak for standard
-    const trimColor = isRare ? 0xffd147 : 0xd4a238; // Bright gold vs brass-gold trim
+    const matWood = isRare ? assets.matWoodRare : assets.matWoodStandard;
+    const matTrim = isRare ? assets.matTrimRare : assets.matTrimStandard;
+    const ringMat = isRare ? assets.ringMatRare : assets.ringMatStandard;
 
-    const matWood = new THREE.MeshStandardMaterial({
-      color: woodColor,
-      roughness: 0.78,
-      metalness: 0.08,
-    });
-    const matTrim = new THREE.MeshStandardMaterial({
-      color: trimColor,
-      roughness: 0.3,
-      metalness: 0.82,
-      emissive: isRare ? 0x4a3200 : 0x241700,
-      emissiveIntensity: 0.4,
-    });
-    const matGoldInside = new THREE.MeshStandardMaterial({
-      color: 0xffdf4f,
-      roughness: 0.25,
-      metalness: 0.9,
-      emissive: 0x664800,
-      emissiveIntensity: 0.6,
-    });
-
-    // Chest base box
-    const base = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.48, 0.62), matWood);
-    base.position.y = 0.24;
+    // Chest base box (casts and receives shadow)
+    const base = new THREE.Mesh(assets.baseWoodGeo, matWood);
+    base.castShadow = true;
+    base.receiveShadow = true;
     root.add(base);
 
-    // Gold/brass vertical corner straps on base
-    const strapGeo = new THREE.BoxGeometry(0.1, 0.5, 0.66);
-    const strapL = new THREE.Mesh(strapGeo, matTrim);
-    strapL.position.set(-0.34, 0.24, 0);
-    const strapR = new THREE.Mesh(strapGeo, matTrim);
-    strapR.position.set(0.34, 0.24, 0);
-    root.add(strapL, strapR);
+    // Merged gold/brass vertical corner straps on base
+    const baseTrim = new THREE.Mesh(assets.baseTrimGeo, matTrim);
+    baseTrim.castShadow = false;
+    baseTrim.receiveShadow = false;
+    root.add(baseTrim);
 
     // Gold coins mound inside the base (visible when lid opens!)
-    const goldMound = new THREE.Mesh(
-      new THREE.SphereGeometry(0.36, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-      matGoldInside
-    );
-    goldMound.scale.set(1.15, 0.45, 0.72);
-    goldMound.position.set(0, 0.42, 0);
+    const goldMound = new THREE.Mesh(assets.goldGeo, assets.matGoldInside);
+    goldMound.castShadow = false;
+    goldMound.receiveShadow = false;
     root.add(goldMound);
 
     // Hinged Lid Pivot at back top edge of base
@@ -101,52 +267,22 @@ export class TreasureManager {
     lidPivot.position.set(0, 0.48, -0.31);
     root.add(lidPivot);
 
-    // Rounded chest lid
-    const lidBox = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.16, 0.62), matWood);
-    lidBox.position.set(0, 0.08, 0.31);
-    lidPivot.add(lidBox);
+    // Merged rounded chest lid wood (casts and receives shadow)
+    const lidWood = new THREE.Mesh(assets.lidWoodGeo, matWood);
+    lidWood.castShadow = true;
+    lidWood.receiveShadow = true;
+    lidPivot.add(lidWood);
 
-    const lidArch = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.31, 0.31, 0.92, 12, 1, false, 0, Math.PI),
-      matWood
-    );
-    lidArch.rotation.z = Math.PI / 2;
-    lidArch.scale.set(1, 0.72, 1);
-    lidArch.position.set(0, 0.14, 0.31);
-    lidPivot.add(lidArch);
-
-    // Lid gold straps
-    const lidStrapGeo = new THREE.BoxGeometry(0.11, 0.28, 0.66);
-    const lidStrapL = new THREE.Mesh(lidStrapGeo, matTrim);
-    lidStrapL.position.set(-0.34, 0.14, 0.31);
-    const lidStrapR = new THREE.Mesh(lidStrapGeo, matTrim);
-    lidStrapR.position.set(0.34, 0.14, 0.31);
-    lidPivot.add(lidStrapL, lidStrapR);
-
-    // Front golden lock clasp
-    const lockPlate = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.24, 0.06), matTrim);
-    lockPlate.position.set(0, 0.02, 0.63);
-    lidPivot.add(lockPlate);
+    // Merged lid gold straps + front golden lock clasp
+    const lidTrim = new THREE.Mesh(assets.lidTrimGeo, matTrim);
+    lidTrim.castShadow = false;
+    lidTrim.receiveShadow = false;
+    lidPivot.add(lidTrim);
 
     // Subtle ground glow ring so chests stand out amidst tall grass
-    const ringGeo = new THREE.RingGeometry(0.58, 0.82, 24);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({
-      color: isRare ? 0xffae00 : 0xffe066,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.45,
-    });
-    const glowRing = new THREE.Mesh(ringGeo, ringMat);
+    const glowRing = new THREE.Mesh(assets.ringGeo, ringMat);
     glowRing.position.y = 0.08;
     root.add(glowRing);
-
-    root.traverse((obj) => {
-      if (obj instanceof THREE.Mesh && obj !== glowRing) {
-        obj.castShadow = true;
-        obj.receiveShadow = true;
-      }
-    });
 
     return { root, lidPivot, glowRing };
   }
@@ -164,48 +300,58 @@ export class TreasureManager {
     const centerCx = Math.round(playerPos.x / size);
     const centerCz = Math.round(playerPos.z / size);
 
-    const desiredKeys = new Set<string>();
+    if (centerCx !== this.lastCenterCx || centerCz !== this.lastCenterCz) {
+      this.lastCenterCx = centerCx;
+      this.lastCenterCz = centerCz;
 
-    for (let dz = -r; dz <= r; dz++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (dx * dx + dz * dz > (r + 0.5) * (r + 0.5)) continue;
-        const cx = centerCx + dx;
-        const cz = centerCz + dz;
-        const key = `${cx},${cz}`;
-        desiredKeys.add(key);
+      const desiredKeys = new Set<string>();
 
-        if (!this.activeChests.has(key)) {
-          this.spawnChestsForChunk(cx, cz, key);
-        }
-      }
-    }
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (dx * dx + dz * dz > (r + 0.5) * (r + 0.5)) continue;
+          const cx = centerCx + dx;
+          const cz = centerCz + dz;
+          const key = `${cx},${cz}`;
+          desiredKeys.add(key);
 
-    // Unload distant uncollected chests outside chunk radius
-    for (const [key, list] of this.activeChests.entries()) {
-      if (!desiredKeys.has(key)) {
-        for (const c of list) {
-          if (c.state === 'idle') {
-            this.group.remove(c.root);
+          if (!this.activeChests.has(key)) {
+            this.spawnChestsForChunk(cx, cz, key);
           }
         }
-        this.activeChests.delete(key);
+      }
+
+      // Unload distant uncollected chests outside chunk radius
+      for (const [key, list] of this.activeChests.entries()) {
+        if (!desiredKeys.has(key)) {
+          for (const c of list) {
+            if (c.state === 'idle') {
+              this.group.remove(c.root);
+            }
+          }
+          this.activeChests.delete(key);
+        }
       }
     }
 
     // Check proximity & animate idle glow / collection
     const pickupRadiusSq = 1.95 * 1.95;
+    const glowAnimRadiusSq = 45 * 45;
 
     for (const list of this.activeChests.values()) {
       for (const chest of list) {
         if (chest.state !== 'idle') continue;
 
-        // Pulse ground aura gently
-        const pulse = 1.0 + Math.sin(elapsedTime * 3.5 + chest.worldPos.x) * 0.08;
-        chest.glowRing.scale.setScalar(pulse);
-
         const dx = playerPos.x - chest.worldPos.x;
         const dz = playerPos.z - chest.worldPos.z;
-        if (dx * dx + dz * dz <= pickupRadiusSq) {
+        const dSq = dx * dx + dz * dz;
+
+        if (dSq < glowAnimRadiusSq) {
+          // Pulse ground aura gently only for nearby chests
+          const pulse = 1.0 + Math.sin(elapsedTime * 3.5 + chest.worldPos.x) * 0.08;
+          chest.glowRing.scale.setScalar(pulse);
+        }
+
+        if (dSq <= pickupRadiusSq) {
           this.collectChest(chest);
         }
       }
@@ -241,10 +387,23 @@ export class TreasureManager {
       }
 
       if (t >= 1.42) {
+        this.disposeOpeningChestResources(chest);
         this.group.remove(chest.root);
         chest.state = 'collected';
         this.openingChests.splice(i, 1);
       }
+    }
+  }
+
+  private disposeOpeningChestResources(chest: ChestInstance): void {
+    const assets = getSharedChestAssets();
+    const ringMat = chest.glowRing.material as THREE.Material;
+    if (ringMat !== assets.ringMatStandard && ringMat !== assets.ringMatRare) {
+      ringMat.dispose();
+    }
+    if (chest.sparkles) {
+      chest.sparkles.geometry.dispose();
+      (chest.sparkles.material as THREE.Material).dispose();
     }
   }
 
@@ -319,6 +478,9 @@ export class TreasureManager {
     this.collectedIds.add(chest.id);
     this.score += chest.points;
     this.chestsCollected += 1;
+
+    // Clone glowRing material so fading opacity doesn't affect idle chests
+    chest.glowRing.material = (chest.glowRing.material as THREE.MeshBasicMaterial).clone();
 
     // Create golden coin/sparkle burst particles
     const count = 24;
@@ -428,15 +590,26 @@ export class TreasureManager {
       }
     }
 
-    return bestPos ? { dist: Math.sqrt(bestDistSq), pos: bestPos } : null;
+    if (!bestPos) return null;
+    this.nearestResult.dist = Math.sqrt(bestDistSq);
+    this.nearestResult.pos.copy(bestPos);
+    return this.nearestResult;
   }
 
   public rebuildAll(): void {
+    for (const chest of this.openingChests) {
+      this.disposeOpeningChestResources(chest);
+      this.group.remove(chest.root);
+    }
+    this.openingChests.length = 0;
+
     for (const list of this.activeChests.values()) {
       for (const c of list) {
         this.group.remove(c.root);
       }
     }
     this.activeChests.clear();
+    this.lastCenterCx = Number.NaN;
+    this.lastCenterCz = Number.NaN;
   }
 }

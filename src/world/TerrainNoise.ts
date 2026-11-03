@@ -26,6 +26,7 @@ const COL_SHORE_BANK = new THREE.Color(0x8c7355);    // Warm sandy/muddy pond & 
 const COL_RIVERBED = new THREE.Color(0x4c4639);      // Wet pebbles/silt below water level
 const tempColorA = new THREE.Color();
 const tempColorB = new THREE.Color();
+const INV_MESO_NORM = 1.0 / 1.7104;
 
 export class TerrainNoise {
   private macroNoise!: NoiseFunction2D;
@@ -80,21 +81,20 @@ export class TerrainNoise {
       macro = -Math.pow(-macro, t) * (1.0 - cfg.valleyFlatten * 0.25);
     }
 
-    // 3. Meso Layer: rolling ridges, knolls, and local slopes (3 octaves)
-    let meso = 0;
-    let amp = 1.0;
-    let freq = cfg.mesoScale;
-    let norm = 0;
-    for (let i = 0; i < 3; i++) {
-      const n = this.mesoNoise(wx * freq + i * 31.7, wz * freq - i * 19.3);
-      const ridged = 1.0 - Math.abs(n);
-      const blended = n * 0.72 + (ridged * 2.0 - 1.0) * 0.28;
-      meso += blended * amp;
-      norm += amp;
-      amp *= 0.48;
-      freq *= 2.08;
-    }
-    meso /= norm;
+    // 3. Meso Layer: rolling ridges, knolls, and local slopes (3 octaves, unrolled)
+    const f0 = cfg.mesoScale;
+    const n0 = this.mesoNoise(wx * f0, wz * f0);
+    const b0 = n0 * 0.72 + (1.0 - 2.0 * Math.abs(n0)) * 0.28;
+
+    const f1 = f0 * 2.2;
+    const n1 = this.mesoNoise(wx * f1 + 31.7, wz * f1 - 19.3);
+    const b1 = n1 * 0.72 + (1.0 - 2.0 * Math.abs(n1)) * 0.28;
+
+    const f2 = f0 * 4.84;
+    const n2 = this.mesoNoise(wx * f2 + 63.4, wz * f2 - 38.6);
+    const b2 = n2 * 0.72 + (1.0 - 2.0 * Math.abs(n2)) * 0.28;
+
+    const meso = (b0 + b1 * 0.48 + b2 * 0.2304) * INV_MESO_NORM;
 
     const valleyMask = THREE.MathUtils.clamp((macro + 0.65) * 0.85, 0.35, 1.0);
 
@@ -120,35 +120,38 @@ export class TerrainNoise {
         const rz = wz - 35.0;
         const rVal = Math.abs(this.riverNoise(rx * riverFreq, rz * riverFreq));
 
-        // Vary river width along its length so it naturally widens into river-ponds
-        const widthMod = 0.75 + 0.65 * (this.pondNoise(x * 0.008, z * 0.008) * 0.5 + 0.5);
-        const channelHalfWidth = cfg.riverWidth * widthMod * 0.0019;
-        const valleyHalfWidth = channelHalfWidth * 5.2;
+        // Max possible valleyHalfWidth occurs when widthMod = 1.4 (1.4 * 0.0019 * 5.2 = 0.013832)
+        if (rVal < cfg.riverWidth * 0.013832) {
+          // Vary river width along its length so it naturally widens into river-ponds
+          const widthMod = 0.75 + 0.65 * (this.pondNoise(x * 0.008, z * 0.008) * 0.5 + 0.5);
+          const channelHalfWidth = cfg.riverWidth * widthMod * 0.0019;
+          const valleyHalfWidth = channelHalfWidth * 5.2;
 
-        if (rVal < valleyHalfWidth) {
-          // Smoothly grade surrounding hills down into a gentle river valley corridor
-          const valleyT = 1.0 - THREE.MathUtils.smoothstep(rVal, channelHalfWidth, valleyHalfWidth);
-          const bankElevation = waterY + 1.35 + micro * 0.45;
-          height = THREE.MathUtils.lerp(
-            height,
-            Math.min(height, bankElevation + (height - bankElevation) * 0.18),
-            valleyT * cfg.riverCarveStrength
-          );
+          if (rVal < valleyHalfWidth) {
+            // Smoothly grade surrounding hills down into a gentle river valley corridor
+            const valleyT = 1.0 - THREE.MathUtils.smoothstep(rVal, channelHalfWidth, valleyHalfWidth);
+            const bankElevation = waterY + 1.35 + micro * 0.45;
+            height = THREE.MathUtils.lerp(
+              height,
+              Math.min(height, bankElevation + (height - bankElevation) * 0.18),
+              valleyT * cfg.riverCarveStrength
+            );
 
-          // Carve the wet river channel below waterLevel
-          if (rVal < channelHalfWidth) {
-            const channelT = 1.0 - THREE.MathUtils.smoothstep(rVal, 0, channelHalfWidth);
-            const bedDepth = 2.2 * widthMod;
-            height -= channelT * bedDepth * cfg.riverCarveStrength;
+            // Carve the wet river channel below waterLevel
+            if (rVal < channelHalfWidth) {
+              const channelT = 1.0 - THREE.MathUtils.smoothstep(rVal, 0, channelHalfWidth);
+              const bedDepth = 2.2 * widthMod;
+              height -= channelT * bedDepth * cfg.riverCarveStrength;
+            }
           }
         }
       }
 
-      // B) Natural Pond Basins in low-to-mid valleys (matching images 1 & 2)
-      if (cfg.pondFrequency > 0) {
+      // B) Natural Pond Basins in low-to-mid valleys (early-out on high terrain before evaluating pondNoise)
+      if (cfg.pondFrequency > 0 && height < waterY + 11.0) {
         const pondN = this.pondNoise(wx * 0.0065 + 110, wz * 0.0065 - 75);
         const threshold = 0.68 - cfg.pondFrequency * 0.32; // Higher pondFrequency -> lower threshold
-        if (pondN > threshold && height < waterY + 11.0) {
+        if (pondN > threshold) {
           const pondFactor = THREE.MathUtils.smoothstep(pondN, threshold, threshold + 0.22);
           // Only form ponds where terrain isn't a high mountain peak
           const elevWeight = 1.0 - THREE.MathUtils.smoothstep(height, waterY + 1.0, waterY + 11.0);
@@ -193,6 +196,7 @@ export class TerrainNoise {
   public getForestDensity(x: number, z: number): number {
     // Keep a small natural clearing right at player spawn (0, 0) for an unobstructed initial vista
     const spawnDistSq = x * x + z * z;
+    if (spawnDistSq <= 100) return 0;
     const spawnClearing = THREE.MathUtils.smoothstep(spawnDistSq, 100, 550);
 
     const n1 = this.forestNoise(x * 0.0055, z * 0.0055);

@@ -101,19 +101,37 @@ export class ChunkManager {
     }
 
     const budget = immediate ? this.buildQueue.length : this.config.maxChunksPerFrame;
+    const frameStart = performance.now();
     let built = 0;
 
     while (this.buildQueue.length > 0 && built < budget) {
+      if (!immediate && built > 0 && performance.now() - frameStart > 4.5) {
+        break;
+      }
+
       const req = this.buildQueue.shift()!;
       const key = this.getKey(req.cx, req.cz);
       const existing = this.chunks.get(key);
+      const dist = Math.sqrt(req.distSq);
 
-      const wantGrass =
-        req.grassDensityMult > 0 &&
-        this.config.enableGrassBlades &&
-        !this.config.blankClayMode;
+      const effectiveGrassMult =
+        this.config.enableGrassBlades && !this.config.blankClayMode
+          ? req.grassDensityMult
+          : 0;
+
       if (existing) {
-        if (existing.segments === req.segments && existing.hasGrass === wantGrass) {
+        if (existing.segments === req.segments) {
+          existing.updateForestLOD(dist);
+          if (Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01) {
+            existing.updateGrass(
+              effectiveGrassMult,
+              this.config,
+              this.noise,
+              this.grassMaterial,
+              this.flowerMaterial
+            );
+            built++;
+          }
           continue;
         }
         this.group.remove(existing.mesh);
@@ -126,14 +144,15 @@ export class ChunkManager {
         req.cz,
         size,
         req.segments,
-        req.grassDensityMult,
+        effectiveGrassMult,
         this.config,
         this.noise,
         this.material,
         this.grassMaterial,
         this.flowerMaterial,
         this.treeMaterial,
-        this.waterMaterial
+        this.waterMaterial,
+        dist
       );
       this.chunks.set(key, chunk);
       this.group.add(chunk.mesh);
@@ -159,13 +178,16 @@ export class ChunkManager {
         const dist = Math.sqrt(distSq);
         const segments = this.getSegmentsForDistance(dist);
         const grassDensityMult = this.getGrassDensityForDistance(dist);
-        const wantGrass = grassDensityMult > 0;
         const existing = this.chunks.get(key);
+
+        if (existing) {
+          existing.updateForestLOD(dist);
+        }
 
         if (
           !existing ||
           existing.segments !== segments ||
-          existing.hasGrass !== wantGrass
+          Math.abs(existing.grassDensityMult - grassDensityMult) > 0.01
         ) {
           requests.push({ cx, cz, segments, grassDensityMult, distSq });
         }
@@ -211,41 +233,41 @@ export class ChunkManager {
    * so the dwarf's boots never clip or sink underneath terrain triangles on concave slopes.
    */
   public getSurfaceHeight(worldX: number, worldZ: number): number {
-    const exactNoiseY = this.noise.getHeight(worldX, worldZ);
     const size = this.config.chunkSize;
     const cx = Math.round(worldX / size);
     const cz = Math.round(worldZ / size);
     const chunk = this.chunks.get(this.getKey(cx, cz));
-    const segments = chunk ? chunk.segments : 64;
 
+    if (!chunk) {
+      return this.noise.getHeight(worldX, worldZ);
+    }
+
+    const segments = chunk.segments;
     const step = size / segments;
     const half = size * 0.5;
     const localX = worldX - cx * size + half;
     const localZ = worldZ - cz * size + half;
 
-    const gx = Math.floor(localX / step);
-    const gz = Math.floor(localZ / step);
+    const gx = THREE.MathUtils.clamp(Math.floor(localX / step), 0, segments - 1);
+    const gz = THREE.MathUtils.clamp(Math.floor(localZ / step), 0, segments - 1);
     const fx = THREE.MathUtils.clamp((localX - gx * step) / step, 0, 1);
     const fz = THREE.MathUtils.clamp((localZ - gz * step) / step, 0, 1);
 
-    const x0 = cx * size - half + gx * step;
-    const z0 = cz * size - half + gz * step;
-    const x1 = x0 + step;
-    const z1 = z0 + step;
+    const stride = segments + 1;
+    const posAttr = chunk.mesh.geometry.attributes.position as THREE.BufferAttribute;
+    const row0 = gz * stride + gx;
+    const row1 = row0 + stride;
 
-    const h00 = this.noise.getHeight(x0, z0);
-    const h10 = this.noise.getHeight(x1, z0);
-    const h01 = this.noise.getHeight(x0, z1);
-    const h11 = this.noise.getHeight(x1, z1);
+    const h00 = posAttr.getY(row0);
+    const h10 = posAttr.getY(row0 + 1);
+    const h01 = posAttr.getY(row1);
+    const h11 = posAttr.getY(row1 + 1);
 
     // PlaneGeometry splits each quad from top-right (1,0) to bottom-left (0,1)
-    let triY: number;
     if (fx + fz <= 1.0) {
-      triY = h00 + fx * (h10 - h00) + fz * (h01 - h00);
+      return h00 + fx * (h10 - h00) + fz * (h01 - h00);
     } else {
-      triY = h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
+      return h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
     }
-
-    return Math.max(exactNoiseY, triY);
   }
 }

@@ -12,6 +12,7 @@ export function createWaterMaterial(uniforms: GrassUniforms): THREE.MeshStandard
     metalness: 0.12,
     transparent: true,
     opacity: 0.82,
+    depthWrite: false,
   });
 
   mat.onBeforeCompile = (shader) => {

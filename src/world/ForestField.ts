@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
 import { WorldConfig } from './Config';
-import { GrassUniforms } from './GrassField';
+import { ChunkSurfaceSampler, GrassUniforms } from './GrassField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
 /**
@@ -130,7 +130,7 @@ function createBroadleafTreeGeometry(): THREE.BufferGeometry {
   ];
 
   for (const l of lobes) {
-    const sphere = new THREE.IcosahedronGeometry(1.0, 2);
+    const sphere = new THREE.IcosahedronGeometry(1.0, 1);
     sphere.scale(l.rx, l.ry, l.rz);
     sphere.translate(l.x, l.y, l.z);
     parts.push(
@@ -260,6 +260,7 @@ export function createTreeMaterial(uniforms: GrassUniforms): THREE.MeshStandardM
   return mat;
 }
 
+let fallbackPineGeo: THREE.BufferGeometry | null = null;
 let sharedPineGeo: THREE.BufferGeometry | null = null;
 let sharedPineMat: THREE.MeshStandardMaterial | null = null;
 let pineLoadStarted = false;
@@ -268,7 +269,7 @@ const activePineMeshes = new Set<THREE.InstancedMesh>();
 /**
  * Asynchronously loads `3dmodels/pine tree 3d model.glb`, normalizes its transform and scale
  * to ~8.0m tall with roots at Y=0, applies the wind shader to its PBR material, and upgrades
- * all active pine InstancedMeshes across the world.
+ * all active near-LOD pine InstancedMeshes across the world.
  */
 export function loadPineTreeModel(uniforms: GrassUniforms): void {
   if (pineLoadStarted) return;
@@ -308,7 +309,9 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
 
       geo.translate(-centerX, -box.min.y, -centerZ);
       geo.scale(scaleFactor, scaleFactor, scaleFactor);
-      geo.computeVertexNormals();
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -327,7 +330,7 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
         pineMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
 
-      // Hot-swap all currently active pine InstancedMeshes to the loaded 3D GLB model & material
+      // Hot-swap all currently active near-LOD pine InstancedMeshes to the loaded 3D GLB model & material
       for (const inst of activePineMeshes) {
         inst.geometry = sharedPineGeo;
         inst.material = sharedPineMat;
@@ -346,11 +349,16 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
 let sharedBroadleafGeo: THREE.BufferGeometry | null = null;
 let sharedRockGeo: THREE.BufferGeometry | null = null;
 
+const forestDummy = new THREE.Object3D();
+const forestNormal = new THREE.Vector3();
+
 export class ChunkForest {
   public readonly group = new THREE.Group();
   private pineInstanced?: THREE.InstancedMesh;
   private broadleafInstanced?: THREE.InstancedMesh;
   private rockInstanced?: THREE.InstancedMesh;
+  private treeMaterial: THREE.Material;
+  private isNearLOD = false;
 
   constructor(
     cx: number,
@@ -358,9 +366,14 @@ export class ChunkForest {
     size: number,
     config: WorldConfig,
     noise: TerrainNoise,
-    treeMaterial: THREE.Material
+    treeMaterial: THREE.Material,
+    isNearLOD = false,
+    castShadow = false,
+    sampler?: ChunkSurfaceSampler
   ) {
-    if (!sharedPineGeo) sharedPineGeo = createPineTreeGeometry();
+    this.treeMaterial = treeMaterial;
+    this.isNearLOD = isNearLOD;
+    if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
     if (!sharedBroadleafGeo) sharedBroadleafGeo = createBroadleafTreeGeometry();
     if (!sharedRockGeo) sharedRockGeo = createShorelineRockGeometry();
 
@@ -377,8 +390,6 @@ export class ChunkForest {
     const broadleafTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
     const rockTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
 
-    const dummy = new THREE.Object3D();
-    const normal = new THREE.Vector3();
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
 
@@ -390,8 +401,13 @@ export class ChunkForest {
         const wx = worldOffsetX + lx;
         const wz = worldOffsetZ + lz;
 
-        const wy = noise.getHeight(wx, wz);
-        noise.getNormal(wx, wz, normal);
+        let wy: number;
+        if (sampler) {
+          wy = sampler.sampleHeightAndNormal(lx, lz, forestNormal);
+        } else {
+          wy = noise.getHeight(wx, wz);
+          noise.getNormal(wx, wz, forestNormal);
+        }
 
         // Check if right on a pond or river shoreline -> occasionally place a mossy shoreline boulder!
         const distAboveWater = wy - config.waterLevel;
@@ -401,23 +417,23 @@ export class ChunkForest {
           distAboveWater < 0.75 &&
           rng() < 0.28
         ) {
-          dummy.position.set(lx, wy - 0.12, lz);
-          dummy.rotation.set(
+          forestDummy.position.set(lx, wy - 0.12, lz);
+          forestDummy.rotation.set(
             (rng() - 0.5) * 0.3,
             rng() * Math.PI * 2,
             (rng() - 0.5) * 0.3
           );
           const rScale = 0.6 + rng() * 0.95;
-          dummy.scale.set(rScale, rScale * (0.75 + rng() * 0.4), rScale);
-          dummy.updateMatrix();
+          forestDummy.scale.set(rScale, rScale * (0.75 + rng() * 0.4), rScale);
+          forestDummy.updateMatrix();
           const rockTint = new THREE.Color(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
-          rockTransforms.push({ matrix: dummy.matrix.clone(), tint: rockTint });
+          rockTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rockTint });
           continue;
         }
 
         // Do not place trees in water, on wet shorelines, or on steep cliffs
         if (config.enableWater && distAboveWater < 1.25) continue;
-        if (normal.y < 0.78) continue;
+        if (forestNormal.y < 0.78) continue;
 
         // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
         const groveDensity = noise.getForestDensity(wx, wz);
@@ -431,14 +447,14 @@ export class ChunkForest {
         const groveScale = 0.68 + groveDensity * 0.42;
         const randomScale = (0.82 + rng() * 0.42) * groveScale * config.treeScale;
 
-        dummy.position.set(lx, wy - 0.08, lz);
-        dummy.rotation.set(
+        forestDummy.position.set(lx, wy - 0.08, lz);
+        forestDummy.rotation.set(
           (rng() - 0.5) * 0.06,
           rng() * Math.PI * 2,
           (rng() - 0.5) * 0.06
         );
-        dummy.scale.setScalar(randomScale);
-        dummy.updateMatrix();
+        forestDummy.scale.setScalar(randomScale);
+        forestDummy.updateMatrix();
 
         const tint = new THREE.Color(0xffffff).offsetHSL(
           (rng() - 0.5) * 0.035,
@@ -449,22 +465,27 @@ export class ChunkForest {
         // Mix conifers and broadleaf trees (more pines on higher slopes, more oaks in warm valleys)
         const pineBias = THREE.MathUtils.clamp(0.48 + (wy - config.waterLevel) * 0.008, 0.3, 0.75);
         if (rng() < pineBias) {
-          pineTransforms.push({ matrix: dummy.matrix.clone(), tint });
+          pineTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
         } else {
-          broadleafTransforms.push({ matrix: dummy.matrix.clone(), tint });
+          broadleafTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
         }
       }
     }
 
+    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, 4, 0), size * 0.85);
+
     if (pineTransforms.length > 0 && pineTransforms.length <= maxCandidates) {
-      const activeMat = sharedPineMat ?? treeMaterial;
+      const useHighPoly = isNearLOD && sharedPineGeo && sharedPineMat;
+      const activeGeo = useHighPoly ? sharedPineGeo! : fallbackPineGeo;
+      const activeMat = useHighPoly ? sharedPineMat! : treeMaterial;
       this.pineInstanced = new THREE.InstancedMesh(
-        sharedPineGeo,
+        activeGeo,
         activeMat,
         pineTransforms.length
       );
-      this.pineInstanced.castShadow = true;
+      this.pineInstanced.castShadow = castShadow;
       this.pineInstanced.receiveShadow = true;
+      this.pineInstanced.boundingSphere = chunkBoundSphere;
       const customDepth = (
         activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
@@ -477,7 +498,9 @@ export class ChunkForest {
       });
       this.pineInstanced.instanceMatrix.needsUpdate = true;
       if (this.pineInstanced.instanceColor) this.pineInstanced.instanceColor.needsUpdate = true;
-      activePineMeshes.add(this.pineInstanced);
+      if (isNearLOD) {
+        activePineMeshes.add(this.pineInstanced);
+      }
       this.group.add(this.pineInstanced);
     }
 
@@ -487,8 +510,9 @@ export class ChunkForest {
         treeMaterial,
         broadleafTransforms.length
       );
-      this.broadleafInstanced.castShadow = true;
+      this.broadleafInstanced.castShadow = castShadow;
       this.broadleafInstanced.receiveShadow = true;
+      this.broadleafInstanced.boundingSphere = chunkBoundSphere;
       const customDepth = (
         treeMaterial as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
@@ -511,8 +535,9 @@ export class ChunkForest {
         treeMaterial,
         rockTransforms.length
       );
-      this.rockInstanced.castShadow = true;
+      this.rockInstanced.castShadow = castShadow;
       this.rockInstanced.receiveShadow = true;
+      this.rockInstanced.boundingSphere = chunkBoundSphere;
       rockTransforms.forEach((item, idx) => {
         this.rockInstanced!.setMatrixAt(idx, item.matrix);
         this.rockInstanced!.setColorAt(idx, item.tint);
@@ -520,6 +545,46 @@ export class ChunkForest {
       this.rockInstanced.instanceMatrix.needsUpdate = true;
       if (this.rockInstanced.instanceColor) this.rockInstanced.instanceColor.needsUpdate = true;
       this.group.add(this.rockInstanced);
+    }
+  }
+
+  public setLOD(isNearLOD: boolean, castShadow: boolean): void {
+    if (this.pineInstanced) {
+      this.pineInstanced.castShadow = castShadow;
+      if (this.isNearLOD !== isNearLOD) {
+        this.isNearLOD = isNearLOD;
+        if (isNearLOD) {
+          activePineMeshes.add(this.pineInstanced);
+          if (sharedPineGeo && sharedPineMat) {
+            this.pineInstanced.geometry = sharedPineGeo;
+            this.pineInstanced.material = sharedPineMat;
+            const customDepth = (
+              sharedPineMat as THREE.MeshStandardMaterial & {
+                customDepthMaterial?: THREE.MeshDepthMaterial;
+              }
+            ).customDepthMaterial;
+            if (customDepth) this.pineInstanced.customDepthMaterial = customDepth;
+          }
+        } else {
+          activePineMeshes.delete(this.pineInstanced);
+          if (fallbackPineGeo) {
+            this.pineInstanced.geometry = fallbackPineGeo;
+            this.pineInstanced.material = this.treeMaterial;
+            const customDepth = (
+              this.treeMaterial as THREE.MeshStandardMaterial & {
+                customDepthMaterial?: THREE.MeshDepthMaterial;
+              }
+            ).customDepthMaterial;
+            if (customDepth) this.pineInstanced.customDepthMaterial = customDepth;
+          }
+        }
+      }
+    }
+    if (this.broadleafInstanced) {
+      this.broadleafInstanced.castShadow = castShadow;
+    }
+    if (this.rockInstanced) {
+      this.rockInstanced.castShadow = castShadow;
     }
   }
 

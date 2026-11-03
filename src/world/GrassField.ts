@@ -12,6 +12,11 @@ export interface GrassUniforms {
   uMaxDistance: { value: number };
 }
 
+export interface ChunkSurfaceSampler {
+  sampleHeightAndNormal(localX: number, localZ: number, outNormal: THREE.Vector3): number;
+  sampleColor(localX: number, localZ: number, outColor: THREE.Color): void;
+}
+
 /**
  * Builds a shared 5-blade stylized grass tuft BufferGeometry.
  * Each blade is a 3-segment curved, tapered ribbon arranged in a natural clump.
@@ -284,7 +289,9 @@ export function loadGrassClumpModel(uniforms: GrassUniforms): void {
 
       geo.translate(-centerX, -box.min.y, -centerZ);
       geo.scale(scaleFactor, scaleFactor, scaleFactor);
-      geo.computeVertexNormals();
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -318,6 +325,12 @@ const FLOWER_PALETTE = [
   new THREE.Color(0xff9ff3), // Soft pink clover accent
 ];
 
+const sharedDummy = new THREE.Object3D();
+const sharedNormal = new THREE.Vector3();
+const sharedBaseColor = new THREE.Color();
+const sharedClumpColor = new THREE.Color();
+const sharedFlowerColor = new THREE.Color();
+
 export class ChunkGrass {
   public readonly group = new THREE.Group();
   private grassInstanced?: THREE.InstancedMesh;
@@ -332,7 +345,8 @@ export class ChunkGrass {
     config: WorldConfig,
     noise: TerrainNoise,
     grassMaterial: THREE.Material,
-    flowerMaterial: THREE.Material
+    flowerMaterial: THREE.Material,
+    sampler?: ChunkSurfaceSampler
   ) {
     if (!sharedTuftGeo) sharedTuftGeo = createGrassTuftGeometry();
     if (!sharedFlowerGeo) sharedFlowerGeo = createWildflowerClusterGeometry();
@@ -344,31 +358,41 @@ export class ChunkGrass {
     const chunkSeed = ((cx * 73856093) ^ (cz * 19349663) ^ config.seed) >>> 0;
     const rng = createSeededRandom(chunkSeed);
 
+    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), size * 0.85);
+
     const grassMesh = new THREE.InstancedMesh(sharedTuftGeo, grassMaterial, maxCount);
     grassMesh.castShadow = false;
     grassMesh.receiveShadow = true;
+    grassMesh.boundingSphere = chunkBoundSphere;
 
     // 3D modelled tall grass & seed-head clumps (`3dmodels/grass clump 3d model.glb`)
-    const maxClumps = Math.max(8, Math.floor(maxCount * 0.04));
-    const clumpMesh = new THREE.InstancedMesh(
-      sharedClumpGeo ?? sharedTuftGeo,
-      sharedClumpMat ?? grassMaterial,
-      maxClumps
-    );
-    clumpMesh.castShadow = true;
-    clumpMesh.receiveShadow = true;
+    // Spawn only on close-range LOD chunks (dist <= 1.5, where densityMultiplier === 1.0)
+    const maxClumps =
+      densityMultiplier >= 0.9
+        ? Math.min(16, Math.max(4, Math.floor(maxCount * 0.008)))
+        : 0;
+    const clumpMesh =
+      maxClumps > 0
+        ? new THREE.InstancedMesh(
+            sharedClumpGeo ?? sharedTuftGeo,
+            sharedClumpMat ?? grassMaterial,
+            maxClumps
+          )
+        : undefined;
+    if (clumpMesh) {
+      clumpMesh.castShadow = false;
+      clumpMesh.receiveShadow = false;
+      clumpMesh.boundingSphere = chunkBoundSphere;
+    }
 
     const maxFlowers = config.enableFlowers ? Math.floor(maxCount * 0.075) : 0;
     const flowerMesh =
       maxFlowers > 0
         ? new THREE.InstancedMesh(sharedFlowerGeo, flowerMaterial, maxFlowers)
         : undefined;
-
-    const dummy = new THREE.Object3D();
-    const normal = new THREE.Vector3();
-    const baseColor = new THREE.Color();
-    const clumpColor = new THREE.Color();
-    const flowerColor = new THREE.Color();
+    if (flowerMesh) {
+      flowerMesh.boundingSphere = chunkBoundSphere;
+    }
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
@@ -383,22 +407,25 @@ export class ChunkGrass {
       const wx = worldOffsetX + lx;
       const wz = worldOffsetZ + lz;
 
-      noise.getNormal(wx, wz, normal);
+      // Fast O(1) height & normal lookup from chunk vertex buffer when available
+      let wy: number;
+      if (sampler) {
+        wy = sampler.sampleHeightAndNormal(lx, lz, sharedNormal);
+      } else {
+        wy = noise.getHeight(wx, wz);
+        noise.getNormal(wx, wz, sharedNormal);
+      }
 
-      // Skip very steep rocky slopes so dirt/rock ledges peek through naturally
-      if (normal.y < 0.72) continue;
+      // Skip very steep rocky slopes or underwater/shoreline before evaluating meadow patch or colors
+      if (sharedNormal.y < 0.72) continue;
+      if (config.enableWater && wy < config.waterLevel + 0.52) continue;
 
       const patch = noise.getMeadowPatch(wx, wz);
       // Create natural clumping: slightly sparser in some pockets, thicker in lush patches
       if (rng() > 0.35 + patch * 0.65) continue;
 
-      const wy = noise.getHeight(wx, wz);
-
-      // Keep 3D grass blades above pond & river shorelines so sandy banks stay clean
-      if (config.enableWater && wy < config.waterLevel + 0.52) continue;
-
-      dummy.position.set(lx, wy - 0.03, lz);
-      dummy.rotation.set(
+      sharedDummy.position.set(lx, wy - 0.03, lz);
+      sharedDummy.rotation.set(
         (rng() - 0.5) * 0.15,
         rng() * Math.PI * 2,
         (rng() - 0.5) * 0.15
@@ -409,23 +436,28 @@ export class ChunkGrass {
         (0.65 + rng() * 0.75) *
         (0.75 + patch * 0.45) *
         config.grassHeight;
-      dummy.scale.set(scaleXZ, scaleY, scaleXZ);
-      dummy.updateMatrix();
+      sharedDummy.scale.set(scaleXZ, scaleY, scaleXZ);
+      sharedDummy.updateMatrix();
 
-      grassMesh.setMatrixAt(grassIdx, dummy.matrix);
+      grassMesh.setMatrixAt(grassIdx, sharedDummy.matrix);
 
       // Match the exact terrain surface color with slight per-tuft organic variation
-      noise.getSurfaceColor(wx, wy, wz, normal, baseColor);
-      baseColor.offsetHSL(
+      if (sampler) {
+        sampler.sampleColor(lx, lz, sharedBaseColor);
+      } else {
+        noise.getSurfaceColor(wx, wy, wz, sharedNormal, sharedBaseColor);
+      }
+      sharedBaseColor.offsetHSL(
         (rng() - 0.5) * 0.03,
         (rng() - 0.5) * 0.08,
         (rng() - 0.5) * 0.06
       );
-      grassMesh.setColorAt(grassIdx, baseColor);
+      grassMesh.setColorAt(grassIdx, sharedBaseColor);
       grassIdx++;
 
       // Spawn the 3D modelled tall grass clump in lush meadow patches & near groves
       if (
+        clumpMesh &&
         clumpIdx < maxClumps &&
         patch > 0.35 &&
         rng() < 0.055 * (0.6 + patch * 0.8)
@@ -435,18 +467,18 @@ export class ChunkGrass {
           (0.75 + rng() * 0.55) *
           (0.85 + patch * 0.35) *
           config.grassHeight;
-        dummy.position.set(lx, wy - 0.04, lz);
-        dummy.scale.set(clumpScaleXZ, clumpScaleY, clumpScaleXZ);
-        dummy.updateMatrix();
-        clumpMesh.setMatrixAt(clumpIdx, dummy.matrix);
+        sharedDummy.position.set(lx, wy - 0.04, lz);
+        sharedDummy.scale.set(clumpScaleXZ, clumpScaleY, clumpScaleXZ);
+        sharedDummy.updateMatrix();
+        clumpMesh.setMatrixAt(clumpIdx, sharedDummy.matrix);
 
         // Keep bright natural texture colors with subtle organic warm/cool variation per clump
-        clumpColor.setHex(0xffffff).offsetHSL(
+        sharedClumpColor.setHex(0xffffff).offsetHSL(
           (rng() - 0.5) * 0.035,
           (rng() - 0.5) * 0.08,
           (rng() - 0.5) * 0.07
         );
-        clumpMesh.setColorAt(clumpIdx, clumpColor);
+        clumpMesh.setColorAt(clumpIdx, sharedClumpColor);
         clumpIdx++;
       }
 
@@ -457,10 +489,10 @@ export class ChunkGrass {
         patch > 0.42 &&
         rng() < 0.095
       ) {
-        dummy.position.set(lx, wy - 0.03, lz);
-        dummy.scale.setScalar(0.85 + rng() * 0.55);
-        dummy.updateMatrix();
-        flowerMesh.setMatrixAt(flowerIdx, dummy.matrix);
+        sharedDummy.position.set(lx, wy - 0.03, lz);
+        sharedDummy.scale.setScalar(0.85 + rng() * 0.55);
+        sharedDummy.updateMatrix();
+        flowerMesh.setMatrixAt(flowerIdx, sharedDummy.matrix);
 
         const palettePick =
           rng() < 0.48
@@ -470,35 +502,45 @@ export class ChunkGrass {
             : rng() < 0.94
             ? FLOWER_PALETTE[2] // Sky-blue forget-me-nots
             : FLOWER_PALETTE[3];
-        flowerColor.copy(palettePick);
-        flowerMesh.setColorAt(flowerIdx, flowerColor);
+        sharedFlowerColor.copy(palettePick);
+        flowerMesh.setColorAt(flowerIdx, sharedFlowerColor);
         flowerIdx++;
       }
     }
 
-    grassMesh.count = grassIdx;
-    grassMesh.instanceMatrix.needsUpdate = true;
-    if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
-    this.grassInstanced = grassMesh;
-    this.group.add(grassMesh);
-
-    if (clumpIdx > 0) {
-      clumpMesh.count = clumpIdx;
-      clumpMesh.instanceMatrix.needsUpdate = true;
-      if (clumpMesh.instanceColor) clumpMesh.instanceColor.needsUpdate = true;
-      this.clumpInstanced = clumpMesh;
-      activeClumpMeshes.add(clumpMesh);
-      this.group.add(clumpMesh);
+    if (grassIdx > 0) {
+      grassMesh.count = grassIdx;
+      grassMesh.instanceMatrix.needsUpdate = true;
+      if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+      this.grassInstanced = grassMesh;
+      this.group.add(grassMesh);
     } else {
-      clumpMesh.dispose();
+      grassMesh.dispose();
     }
 
-    if (flowerMesh && flowerIdx > 0) {
-      flowerMesh.count = flowerIdx;
-      flowerMesh.instanceMatrix.needsUpdate = true;
-      if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
-      this.flowerInstanced = flowerMesh;
-      this.group.add(flowerMesh);
+    if (clumpMesh) {
+      if (clumpIdx > 0) {
+        clumpMesh.count = clumpIdx;
+        clumpMesh.instanceMatrix.needsUpdate = true;
+        if (clumpMesh.instanceColor) clumpMesh.instanceColor.needsUpdate = true;
+        this.clumpInstanced = clumpMesh;
+        activeClumpMeshes.add(clumpMesh);
+        this.group.add(clumpMesh);
+      } else {
+        clumpMesh.dispose();
+      }
+    }
+
+    if (flowerMesh) {
+      if (flowerIdx > 0) {
+        flowerMesh.count = flowerIdx;
+        flowerMesh.instanceMatrix.needsUpdate = true;
+        if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
+        this.flowerInstanced = flowerMesh;
+        this.group.add(flowerMesh);
+      } else {
+        flowerMesh.dispose();
+      }
     }
   }
 
