@@ -12,9 +12,12 @@ interface WatchtowerInstance {
   worldPos: THREE.Vector3;
   lit: boolean;
   root: THREE.Group;
+  structureMesh: THREE.Mesh;
+  brazierMesh: THREE.Mesh;
   flameMesh: THREE.Mesh;
   skyBeamMesh: THREE.Mesh;
   ringMesh: THREE.Mesh;
+  isNearLOD: boolean;
 }
 
 interface CampfireInstance {
@@ -56,8 +59,7 @@ interface SharedLandmarkAssets {
   matRingUnlit: THREE.MeshBasicMaterial;
   matRingLit: THREE.MeshBasicMaterial;
   matCampfireRing: THREE.MeshBasicMaterial;
-  towerBaseGeo: THREE.BufferGeometry;
-  towerPillarGeo: THREE.BufferGeometry;
+  watchtowerSimpleGeo: THREE.BufferGeometry;
   brazierGeo: THREE.BufferGeometry;
   flameGeo: THREE.BufferGeometry;
   skyBeamGeo: THREE.BufferGeometry;
@@ -72,12 +74,14 @@ let sharedLandmarkAssets: SharedLandmarkAssets | null = null;
 let sharedStoneCircleGeo: THREE.BufferGeometry | null = null;
 let sharedStoneCircleMat: THREE.MeshStandardMaterial | null = null;
 let stoneCircleLoadStarted = false;
+const activeNearWatchtowers = new Set<WatchtowerInstance>();
 const activeNearStoneCircles = new Set<CampfireInstance>();
 
 /**
  * Asynchronously loads `3dmodels/ancient stone circle asset.glb`, normalizes its transform
- * and scale (~7.4m outer diameter with central floor at Y=0 and outer foundation skirt embedded),
- * optimizes its PBR material, and hot-swaps all active close-range (dist <= 1.5 chunks) stone circles.
+ * and scale (~12.5m outer diameter matching `art/stone_circle_with_dwarf.jpg`, with central floor
+ * at Y=0 and outer foundation skirt embedded), optimizes its PBR material, and hot-swaps all
+ * active close-range (dist <= 1.5 chunks) Hilltop Beacons and Stone Circles.
  */
 export function loadStoneCircleModel(): void {
   if (stoneCircleLoadStarted) return;
@@ -106,7 +110,7 @@ export function loadStoneCircleModel(): void {
       geo.deleteAttribute('skinWeight');
 
       // 2. Normalize bounding box: center X/Z at 0, align inner stone circle floor to Y=0
-      // (so the outer foundation skirt embeds into sloped terrain), and scale to ~7.4m diameter
+      // (so the outer foundation skirt embeds into sloped terrain), and scale to ~12.5m diameter
       geo.computeBoundingBox();
       const box = geo.boundingBox!;
       const centerX = (box.min.x + box.max.x) * 0.5;
@@ -115,7 +119,7 @@ export function loadStoneCircleModel(): void {
       const spanZ = box.max.z - box.min.z;
       const spanY = Math.max(0.01, box.max.y - box.min.y);
       const diameter = Math.max(0.01, Math.max(spanX, spanZ));
-      const targetDiameter = 7.4;
+      const targetDiameter = 12.5;
       const scaleFactor = targetDiameter / diameter;
       const innerFloorY = box.min.y + spanY * 0.285;
 
@@ -155,7 +159,14 @@ export function loadStoneCircleModel(): void {
       sharedStoneCircleGeo = geo;
       sharedStoneCircleMat = mat;
 
-      // 4. Hot-swap all currently active close-range LOD stone circles
+      // 4. Hot-swap all currently active close-range LOD watchtowers and stone circles
+      for (const wt of activeNearWatchtowers) {
+        wt.structureMesh.geometry = sharedStoneCircleGeo;
+        wt.structureMesh.material = sharedStoneCircleMat;
+        wt.ringMesh.position.y = 0.14;
+        wt.ringMesh.updateMatrix();
+        wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
+      }
       for (const cf of activeNearStoneCircles) {
         cf.stoneCircleMesh.geometry = sharedStoneCircleGeo;
         cf.stoneCircleMesh.material = sharedStoneCircleMat;
@@ -244,17 +255,35 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
     opacity: 0.4,
   });
 
+  const dummy = new THREE.Object3D();
+
+  // Merge the Watchtower plinth + 4 ruined stone pillars into a single low-poly fallback geometry
   const towerBaseGeo = new THREE.CylinderGeometry(3.2, 3.6, 0.75, 8);
   towerBaseGeo.translate(0, 0.375, 0);
-
   const towerPillarGeo = new THREE.BoxGeometry(0.62, 3.6, 0.62);
   towerPillarGeo.translate(0, 1.8, 0);
+  const towerParts: THREE.BufferGeometry[] = [towerBaseGeo];
+  for (let i = 0; i < 4; i++) {
+    const angle = (i * Math.PI) / 2 + Math.PI / 4;
+    const part = towerPillarGeo.clone();
+    dummy.position.set(Math.cos(angle) * 2.25, 0.5, Math.sin(angle) * 2.25);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1, i % 2 === 0 ? 1.0 : 0.72, 1);
+    dummy.updateMatrix();
+    part.applyMatrix4(dummy.matrix);
+    towerParts.push(part);
+  }
+  towerPillarGeo.dispose();
+  const watchtowerSimpleGeo = mergeGeometries(towerParts, false);
+  for (const p of towerParts) p.dispose();
+  watchtowerSimpleGeo.computeBoundingBox();
+  watchtowerSimpleGeo.computeBoundingSphere();
 
   const brazierGeo = new THREE.CylinderGeometry(0.75, 0.45, 0.95, 8);
-  brazierGeo.translate(0, 0.85, 0);
+  brazierGeo.translate(0, 0.48, 0);
 
   const flameGeo = new THREE.ConeGeometry(0.65, 1.65, 7);
-  flameGeo.translate(0, 1.85, 0);
+  flameGeo.translate(0, 1.48, 0);
 
   const skyBeamGeo = new THREE.CylinderGeometry(0.45, 1.1, 28.0, 10, 1, true);
   skyBeamGeo.translate(0, 14.0, 0);
@@ -267,7 +296,6 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
   megalithBase.translate(0, 1.15, 0);
   const megalithParts: THREE.BufferGeometry[] = [];
   const stoneCount = 5;
-  const dummy = new THREE.Object3D();
   for (let i = 0; i < stoneCount; i++) {
     const angle = (i / stoneCount) * Math.PI * 2;
     const part = megalithBase.clone();
@@ -318,8 +346,7 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
     matRingUnlit,
     matRingLit,
     matCampfireRing,
-    towerBaseGeo,
-    towerPillarGeo,
+    watchtowerSimpleGeo,
     brazierGeo,
     flameGeo,
     skyBeamGeo,
@@ -552,7 +579,10 @@ export class LandmarkManager {
 
       for (const [key, lm] of this.activeLandmarks.entries()) {
         if (!desiredKeys.has(key)) {
-          if (lm.watchtower) this.group.remove(lm.watchtower.root);
+          if (lm.watchtower) {
+            activeNearWatchtowers.delete(lm.watchtower);
+            this.group.remove(lm.watchtower.root);
+          }
           if (lm.campfire) {
             activeNearStoneCircles.delete(lm.campfire);
             this.group.remove(lm.campfire.root);
@@ -575,6 +605,36 @@ export class LandmarkManager {
         const dx = playerPos.x - wt.worldPos.x;
         const dz = playerPos.z - wt.worldPos.z;
         const dSq = dx * dx + dz * dz;
+
+        // Swap in-place between high-poly Ancient Stone Circle GLB (dist <= 1.5 chunks)
+        // and simple low-poly procedural stone pillars when at a distance (dist > 1.5 chunks)
+        const wantNearLOD = dSq <= nearLodDistSq;
+        const castShadow = dSq <= shadowDistSq;
+        if (wt.structureMesh.castShadow !== castShadow) {
+          wt.structureMesh.castShadow = castShadow;
+          wt.brazierMesh.castShadow = castShadow;
+        }
+        if (wt.isNearLOD !== wantNearLOD) {
+          wt.isNearLOD = wantNearLOD;
+          if (wantNearLOD) {
+            activeNearWatchtowers.add(wt);
+            if (sharedStoneCircleGeo && sharedStoneCircleMat) {
+              wt.structureMesh.geometry = sharedStoneCircleGeo;
+              wt.structureMesh.material = sharedStoneCircleMat;
+              wt.ringMesh.position.y = 0.14;
+              wt.ringMesh.updateMatrix();
+              wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
+            }
+          } else {
+            activeNearWatchtowers.delete(wt);
+            const assets = getSharedLandmarkAssets();
+            wt.structureMesh.geometry = assets.watchtowerSimpleGeo;
+            wt.structureMesh.material = assets.matStone;
+            wt.ringMesh.position.y = 0.78;
+            wt.ringMesh.updateMatrix();
+            wt.ringMesh.matrixWorld.multiplyMatrices(wt.root.matrixWorld, wt.ringMesh.matrix);
+          }
+        }
 
         if (wt.lit) {
           const flicker = 1.0 + Math.sin(elapsedTime * 7.5 + wt.worldPos.x) * 0.14;
@@ -759,29 +819,16 @@ export class LandmarkManager {
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
-    const base = new THREE.Mesh(assets.towerBaseGeo, assets.matStone);
-    base.castShadow = true;
-    base.receiveShadow = true;
-    base.matrixAutoUpdate = false;
-    root.add(base);
+    const structureMesh = new THREE.Mesh(assets.watchtowerSimpleGeo, assets.matStone);
+    structureMesh.castShadow = false;
+    structureMesh.receiveShadow = true;
+    structureMesh.matrixAutoUpdate = false;
+    root.add(structureMesh);
 
-    // 4 Ruined stone corner pillars
-    for (let i = 0; i < 4; i++) {
-      const angle = (i * Math.PI) / 2 + Math.PI / 4;
-      const pillar = new THREE.Mesh(assets.towerPillarGeo, assets.matStone);
-      pillar.position.set(Math.cos(angle) * 2.25, 0.5, Math.sin(angle) * 2.25);
-      pillar.scale.y = i % 2 === 0 ? 1.0 : 0.72;
-      pillar.castShadow = true;
-      pillar.receiveShadow = true;
-      pillar.updateMatrix();
-      pillar.matrixAutoUpdate = false;
-      root.add(pillar);
-    }
-
-    const brazier = new THREE.Mesh(assets.brazierGeo, assets.matBrazier);
-    brazier.castShadow = true;
-    brazier.matrixAutoUpdate = false;
-    root.add(brazier);
+    const brazierMesh = new THREE.Mesh(assets.brazierGeo, assets.matBrazier);
+    brazierMesh.castShadow = false;
+    brazierMesh.matrixAutoUpdate = false;
+    root.add(brazierMesh);
 
     const flameMesh = new THREE.Mesh(assets.flameGeo, assets.matFlame);
     flameMesh.visible = isLit;
@@ -811,9 +858,12 @@ export class LandmarkManager {
       worldPos: new THREE.Vector3(wx, wy, wz),
       lit: isLit,
       root,
+      structureMesh,
+      brazierMesh,
       flameMesh,
       skyBeamMesh,
       ringMesh,
+      isNearLOD: false,
     };
   }
 
@@ -915,6 +965,7 @@ export class LandmarkManager {
   }
 
   public rebuildAll(): void {
+    activeNearWatchtowers.clear();
     activeNearStoneCircles.clear();
     for (const lm of this.activeLandmarks.values()) {
       if (lm.watchtower) this.group.remove(lm.watchtower.root);
