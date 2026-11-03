@@ -1,7 +1,10 @@
 import bgmUrl from '../../music/Wandering_Through_the_Pines.mp3?url';
+import challengeBgmUrl from '../../music/Dwarven_Ring_Sprint.mp3?url';
 
 export class BackgroundMusic {
   private audio: HTMLAudioElement;
+  private challengeAudio: HTMLAudioElement;
+  private isChallengeActive = false;
   private isStarted = false;
   private isPlayPending = false;
   private isMuted = false;
@@ -18,6 +21,12 @@ export class BackgroundMusic {
     this.audio.preload = 'metadata';
     this.audio.loop = true;
     this.audio.volume = this.targetVolume;
+
+    this.challengeAudio = new Audio(challengeBgmUrl);
+    this.challengeAudio.preload = 'auto';
+    this.challengeAudio.loop = true;
+    this.challengeAudio.volume = Math.min(1, this.targetVolume * 1.25);
+
     this.statusEl = document.getElementById(statusElementId);
 
     this.bindEvents();
@@ -73,12 +82,16 @@ export class BackgroundMusic {
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     this.audio.muted = this.isMuted;
+    this.challengeAudio.muted = this.isMuted;
     if (this.isMuted) {
       if (this.isStarted) {
         this.audio.pause();
+        this.challengeAudio.pause();
       }
     } else if (!this.isStarted) {
       this.tryPlay();
+    } else if (this.isChallengeActive) {
+      void this.challengeAudio.play();
     } else {
       void this.audio.play();
     }
@@ -86,12 +99,37 @@ export class BackgroundMusic {
     return !this.isMuted;
   }
 
+  public startChallengeTune(): void {
+    if (this.isChallengeActive) return;
+    this.isChallengeActive = true;
+    this.audio.pause();
+    this.challengeAudio.currentTime = 0;
+    this.challengeAudio.muted = this.isMuted;
+    if (!this.isMuted) {
+      void this.challengeAudio.play().catch(() => {});
+    }
+    this.updateUI();
+  }
+
+  public stopChallengeTune(): void {
+    if (!this.isChallengeActive) return;
+    this.isChallengeActive = false;
+    this.challengeAudio.pause();
+    this.challengeAudio.currentTime = 0;
+    if (this.isStarted && !this.isMuted) {
+      void this.audio.play().catch(() => {});
+    }
+    this.updateUI();
+  }
+
   public setVolume(vol: number): void {
     this.targetVolume = Math.max(0, Math.min(1, vol));
     this.audio.volume = this.targetVolume;
+    this.challengeAudio.volume = Math.min(1, this.targetVolume * 1.25);
     if (this.targetVolume > 0 && this.isMuted) {
       this.isMuted = false;
       this.audio.muted = false;
+      this.challengeAudio.muted = false;
     }
     this.updateUI();
   }
@@ -102,14 +140,17 @@ export class BackgroundMusic {
 
   private updateUI(): void {
     if (!this.statusEl) return;
-    if (!this.isStarted) {
-      this.statusEl.textContent = '♪ Wandering Through the Pines (Click or Move to Play)';
+    const trackLabel = this.isChallengeActive
+      ? 'Dwarven Ring Sprint'
+      : 'Wandering Through the Pines';
+    if (!this.isStarted && !this.isChallengeActive) {
+      this.statusEl.textContent = `♪ ${trackLabel} (Click or Move to Play)`;
       this.statusEl.classList.add('paused');
     } else if (this.isMuted || this.targetVolume === 0) {
-      this.statusEl.textContent = '♪ Wandering Through the Pines (Muted - P)';
+      this.statusEl.textContent = `♪ ${trackLabel} (Muted - P)`;
       this.statusEl.classList.add('paused');
     } else {
-      this.statusEl.textContent = '♪ Wandering Through the Pines (Playing - P)';
+      this.statusEl.textContent = `♪ ${trackLabel} (Playing - P)`;
       this.statusEl.classList.remove('paused');
     }
   }

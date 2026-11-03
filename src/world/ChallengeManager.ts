@@ -195,6 +195,7 @@ function getSharedChallengeAssets(): SharedChallengeAssets {
  */
 export class ChallengeManager {
   public readonly group = new THREE.Group();
+  public onChallengeStateChange?: (active: boolean) => void;
 
   private activeCoins = new Map<number, TrailCoinInstance[]>();
   private openingCoins: TrailCoinInstance[] = [];
@@ -489,6 +490,7 @@ export class ChallengeManager {
     }
 
     this.playChallengeStartFanfare();
+    this.onChallengeStateChange?.(true);
     this.showToast('⏱️ Hillside Ring Sprint! Pass 5 Rings in 20s!', true);
     this.syncChallengeBanner();
   }
@@ -632,6 +634,7 @@ export class ChallengeManager {
   }
 
   private clearActiveRings(): void {
+    const wasActive = this.currentTrialArch !== null;
     for (const r of this.activeRings) {
       this.group.remove(r.root);
     }
@@ -640,6 +643,9 @@ export class ChallengeManager {
     this.currentRingIndex = 0;
     this.trialTimer = 0;
     this.hideGuideParticles();
+    if (wasActive) {
+      this.onChallengeStateChange?.(false);
+    }
   }
 
   private syncChallengeBanner(): void {

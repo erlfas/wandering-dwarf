@@ -297,7 +297,14 @@ const debugOverlay = new DebugOverlay(
     lastSavedYaw = explorer.yaw;
   }
 );
-new BackgroundMusic();
+const bgm = new BackgroundMusic();
+challengeManager.onChallengeStateChange = (active) => {
+  if (active) {
+    bgm.startChallengeTune();
+  } else {
+    bgm.stopChallengeTune();
+  }
+};
 
 // 8. Resize Handler (coalesced into animation loop to avoid mid-frame framebuffer reallocations)
 let resizePending = false;
