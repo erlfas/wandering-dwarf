@@ -16,13 +16,13 @@ function colorizeGeometry(
   topColor: THREE.Color,
   swayWeight: number
 ): THREE.BufferGeometry {
-  const cloned = geo.clone();
-  cloned.computeBoundingBox();
-  const minY = cloned.boundingBox!.min.y;
-  const maxY = cloned.boundingBox!.max.y;
+  const nonIndexed = geo.index ? geo.toNonIndexed() : geo.clone();
+  nonIndexed.computeBoundingBox();
+  const minY = nonIndexed.boundingBox!.min.y;
+  const maxY = nonIndexed.boundingBox!.max.y;
   const spanY = Math.max(0.01, maxY - minY);
 
-  const posAttr = cloned.attributes.position as THREE.BufferAttribute;
+  const posAttr = nonIndexed.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(posAttr.count * 3);
   const uvs = new Float32Array(posAttr.count * 2);
   const c = new THREE.Color();
@@ -40,9 +40,9 @@ function colorizeGeometry(
     uvs[i * 2 + 1] = swayWeight * (0.25 + 0.75 * t);
   }
 
-  cloned.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  cloned.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  return cloned;
+  nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  nonIndexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  return nonIndexed;
 }
 
 /**
