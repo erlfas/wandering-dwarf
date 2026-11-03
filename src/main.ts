@@ -6,6 +6,7 @@ import { DwarfCharacter } from './player/DwarfCharacter';
 import { RelicStore } from './player/RelicStore';
 import { ExplorerCamera } from './controls/ExplorerCamera';
 import { DebugOverlay } from './ui/DebugOverlay';
+import { WorldMap } from './ui/WorldMap';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
 import { LandmarkManager } from './world/LandmarkManager';
@@ -137,6 +138,7 @@ const landmarkManager = new LandmarkManager(
     );
     dwarf.spawnBurst(explorer.playerPos.x, explorer.playerPos.y, explorer.playerPos.z, 14);
     treasureManager.grantBonusGold(0, `⚡ Fast-Traveled to ${label}`);
+    worldMap?.updateDiscovery(explorer.playerPos.x, explorer.playerPos.z, true);
     persistCurrentProgress(false);
   },
   (gold, msg) => {
@@ -301,6 +303,9 @@ const reusableSaveState: SavedProgress = {
   collectedIds: [],
   unlockedRelics: [],
   litBeacons: [],
+  discoveredCells: [],
+  discoveredHuts: [],
+  exploredTrail: [],
 };
 
 function populateSaveState(): SavedProgress {
@@ -318,6 +323,9 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.collectedIds = treasureManager.getCollectedIds();
   reusableSaveState.unlockedRelics = relicStore.getUnlockedIds();
   reusableSaveState.litBeacons = landmarkManager.getLitBeacons();
+  reusableSaveState.discoveredCells = worldMap.getSerializedDiscoveredCells();
+  reusableSaveState.discoveredHuts = worldMap.getSerializedDiscoveredHuts();
+  reusableSaveState.exploredTrail = worldMap.getSerializedTrail();
   return reusableSaveState;
 }
 
@@ -352,8 +360,9 @@ treasureManager.onChestCollected = () => {
 relicStore.onRelicUnlocked = () => {
   persistCurrentProgress(false);
 };
-landmarkManager.onBeaconLit = () => {
+landmarkManager.onBeaconLit = (waypoint) => {
   syncBeaconFog();
+  worldMap.revealCircle(waypoint.x, waypoint.z, 96);
   relicStore.renderShop();
   persistCurrentProgress(false);
 };
@@ -366,6 +375,30 @@ chunkManager.update(
   explorer.playerPos.z,
   0,
   true
+);
+
+// Interactive Cartographic Map of the Entire Area Discovered by Our Dwarf
+const worldMap = new WorldMap(
+  config,
+  noise,
+  chunkManager,
+  treasureManager,
+  landmarkManager,
+  () => explorer.playerPos,
+  () => explorer.getHeading(),
+  () => relicStore.has('lodestone_amulet'),
+  () => {
+    chunkManager.material.wireframe = config.wireframe;
+    debugOverlay.syncDisplay();
+  },
+  () => {
+    persistCurrentProgress(false);
+  }
+);
+worldMap.restoreProgress(
+  savedProgress?.discoveredCells,
+  savedProgress?.discoveredHuts,
+  savedProgress?.exploredTrail
 );
 
 // 7. Live Terrain & Grass Planner GUI + Background Music
@@ -398,10 +431,14 @@ const debugOverlay = new DebugOverlay(
       explorer.playerPos.y,
       explorer.playerPos.z
     );
+    worldMap.reset();
     debugOverlay.syncDisplay();
     lastSavedX = explorer.playerPos.x;
     lastSavedZ = explorer.playerPos.z;
     lastSavedYaw = explorer.yaw;
+  },
+  () => {
+    worldMap.invalidateTerrainTiles();
   }
 );
 const bgm = new BackgroundMusic();
@@ -450,6 +487,9 @@ function animate(): void {
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (worldMap.isMapOpen()) {
+      worldMap.render();
+    }
   }
 
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -467,6 +507,7 @@ function animate(): void {
 
   if (!hutManager.isInsideHut()) {
     chunkManager.update(px, py, pz, elapsedTime, false);
+    worldMap.updateDiscovery(px, pz, false);
     treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
     landmarkManager.update(dt, elapsedTime, explorer.playerPos);
     challengeManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);

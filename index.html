@@ -40,6 +40,9 @@
             <button id="hunting-mode-toggle" type="button" title="Equip Bow &amp; Arrow from Backpack (H)">
               🏹 Hunt (H)
             </button>
+            <button id="world-map-toggle" type="button" title="Open Discovered World Map (M)">
+              🗺️ Map (M)
+            </button>
           </div>
           <div class="sub-row">
             <span id="chests-value">0 Chests</span>
@@ -84,6 +87,64 @@
       <!-- Floating Pickup Toasts -->
       <div id="pickup-toasts"></div>
 
+      <!-- Interactive Cartographic Map of the Entire Discovered Area -->
+      <div id="world-map-modal" class="hidden">
+        <div class="world-map-frame">
+          <div class="world-map-header">
+            <div class="world-map-title-group">
+              <div class="world-map-title">🗺️ DWARVEN CARTOGRAPHER'S MAP — DISCOVERED LANDS</div>
+              <div id="world-map-stats">Explored: 0 m² • Span: 0m × 0m</div>
+            </div>
+            <div class="world-map-toolbar">
+              <button id="map-btn-fit" type="button" class="map-tool-btn primary" title="Frame the entire area discovered by our dwarf (F)">
+                🗺️ Fit Discovered Area (<kbd>F</kbd>)
+              </button>
+              <button id="map-btn-center-dwarf" type="button" class="map-tool-btn" title="Center map on our dwarf (C)">
+                🧔 Center on Dwarf (<kbd>C</kbd>)
+              </button>
+              <button id="map-btn-zoom-in" type="button" class="map-tool-btn icon-btn" title="Zoom In (+)">
+                ＋
+              </button>
+              <button id="map-btn-zoom-out" type="button" class="map-tool-btn icon-btn" title="Zoom Out (−)">
+                －
+              </button>
+              <span class="map-toolbar-sep"></span>
+              <button id="map-toggle-trail" type="button" class="map-tool-btn toggle active" title="Toggle Dwarf Exploration Trail">
+                👣 Trail
+              </button>
+              <button id="map-toggle-markers" type="button" class="map-tool-btn toggle active" title="Toggle Landmarks, Huts &amp; Chests">
+                📍 Markers
+              </button>
+              <button id="map-toggle-grid" type="button" class="map-tool-btn toggle active" title="Toggle Coordinate Grid">
+                # Grid
+              </button>
+              <button id="map-btn-close" type="button" class="map-tool-btn close-btn" title="Close Map (M or Esc)">
+                ✕ Close (<kbd>M</kbd>)
+              </button>
+            </div>
+          </div>
+
+          <div id="world-map-canvas-wrap">
+            <canvas id="world-map-canvas"></canvas>
+            <div id="world-map-tooltip" class="hidden"></div>
+          </div>
+
+          <div class="world-map-footer">
+            <div class="world-map-legend">
+              <span class="legend-item"><span class="legend-dot dwarf"></span>🧔 Dwarf</span>
+              <span class="legend-item"><span class="legend-dot spawn"></span>🏕️ Spawn (Fast-Travel)</span>
+              <span class="legend-item"><span class="legend-dot beacon-lit"></span>🔥 Lit Beacon (Fast-Travel)</span>
+              <span class="legend-item"><span class="legend-dot beacon-unlit"></span>🗼 Unlit Watchtower</span>
+              <span class="legend-item"><span class="legend-dot hut"></span>🏠 Dwarven Hut</span>
+              <span class="legend-item"><span class="legend-dot campfire"></span>🪨 Stone Circle</span>
+              <span class="legend-item"><span class="legend-dot chest"></span>🪙/💎 Chest</span>
+              <span class="legend-item"><span class="legend-line-sample"></span>👣 Path Walked</span>
+            </div>
+            <div id="world-map-cursor-coords">Drag to Pan • Scroll to Zoom • Click 🔥 Beacon to Fast-Travel</div>
+          </div>
+        </div>
+      </div>
+
       <div id="stats-badge">
         <div class="badge-header">
           <div class="badge-title">PHASE 3: FOREST GROVES, PONDS &amp; RIVERS</div>
@@ -98,6 +159,7 @@
           <span><kbd>Space</kbd> Jump / Glide</span>
           <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
           <span><kbd>E</kbd> Enter/Exit Hut</span>
+          <span><kbd>M</kbd> World Map</span>
           <span><kbd>F</kbd> Fish Rod</span>
           <span><kbd>H</kbd> Bow Hunt</span>
           <span><kbd>1</kbd>-<kbd>4</kbd> Buy Relic</span>

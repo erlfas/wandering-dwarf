@@ -8,6 +8,13 @@ export interface SavedBeaconWaypoint {
   z: number;
 }
 
+export interface SavedDiscoveredHut {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface SavedProgress {
   version: 1;
   seed: number;
@@ -22,6 +29,9 @@ export interface SavedProgress {
   collectedIds: string[];
   unlockedRelics?: string[];
   litBeacons?: SavedBeaconWaypoint[];
+  discoveredCells?: number[];
+  discoveredHuts?: SavedDiscoveredHut[];
+  exploredTrail?: number[];
 }
 
 export function loadProgress(): SavedProgress | null {
@@ -71,6 +81,22 @@ export function loadProgress(): SavedProgress | null {
               typeof b.y === 'number' &&
               typeof b.z === 'number'
           )
+        : [],
+      discoveredCells: Array.isArray(data.discoveredCells)
+        ? data.discoveredCells.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
+        : [],
+      discoveredHuts: Array.isArray(data.discoveredHuts)
+        ? data.discoveredHuts.filter(
+            (h): h is SavedDiscoveredHut =>
+              Boolean(h) &&
+              typeof h.id === 'string' &&
+              typeof h.x === 'number' &&
+              typeof h.y === 'number' &&
+              typeof h.z === 'number'
+          )
+        : [],
+      exploredTrail: Array.isArray(data.exploredTrail)
+        ? data.exploredTrail.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
         : [],
     };
   } catch {

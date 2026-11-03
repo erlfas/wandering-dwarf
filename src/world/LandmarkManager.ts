@@ -472,6 +472,15 @@ export class LandmarkManager {
     return this.litBeaconMap.size;
   }
 
+  public isBeaconLit(id: string): boolean {
+    return this.litBeaconMap.has(id);
+  }
+
+  public teleportToWaypoint(x: number, z: number, label: string): void {
+    this.playBeaconFanfare();
+    this.onTeleportTo(x, z, label);
+  }
+
   public getLitBeacons(): SavedBeaconWaypoint[] {
     if (this.litBeaconsDirty) {
       this.cachedLitBeacons = Array.from(this.litBeaconMap.values());

@@ -18,7 +18,8 @@ export class DebugOverlay {
     fog: THREE.FogExp2,
     getPlayerPos: () => THREE.Vector3,
     onSaveProgress?: () => void,
-    onResetProgress?: () => void
+    onResetProgress?: () => void,
+    onRebuildTerrain?: () => void
   ) {
     this.gui = new GUI({ title: 'World Planner (Phase 3)' });
 
@@ -31,6 +32,7 @@ export class DebugOverlay {
         const p = getPlayerPos();
         chunkManager.rebuildAll(p.x, p.y, p.z);
         treasureManager.rebuildAll();
+        onRebuildTerrain?.();
       });
     };
 
@@ -210,7 +212,7 @@ export class DebugOverlay {
 
     const wireCtrl = debugFolder
       .add(config, 'wireframe')
-      .name('Wireframe Mesh (M)')
+      .name('Wireframe Mesh (Shift+M)')
       .onChange((v: boolean) => {
         chunkManager.material.wireframe = v;
       });

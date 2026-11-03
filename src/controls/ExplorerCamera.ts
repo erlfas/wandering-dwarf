@@ -71,7 +71,7 @@ export class ExplorerCamera {
     private noise: TerrainNoise,
     private chunkManager: ChunkManager,
     private dwarf: DwarfCharacter,
-    private onToggleWireframe?: () => void,
+    _onToggleWireframe?: () => void,
     private onToggleMode?: () => void
   ) {
     this.camera = camera;
@@ -200,9 +200,6 @@ export class ExplorerCamera {
         if (code === 'KeyV') {
           this.config.cameraMode = this.config.cameraMode === 'dwarf' ? 'free' : 'dwarf';
           this.onToggleMode?.();
-        } else if (code === 'KeyM') {
-          this.config.wireframe = !this.config.wireframe;
-          this.onToggleWireframe?.();
         } else if (code === 'Space') {
           if (!this.fishingManager?.isFishingActive()) {
             this.tryJump();

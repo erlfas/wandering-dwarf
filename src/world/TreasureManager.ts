@@ -1455,6 +1455,14 @@ export class TreasureManager {
     return this.cachedCollectedIds;
   }
 
+  public isChestCollected(id: string): boolean {
+    return this.collectedIds.has(id);
+  }
+
+  public getActiveDigSitePos(): THREE.Vector3 | null {
+    return this.activeDigSite ? this.activeDigSite.worldPos : null;
+  }
+
   public restoreProgress(
     score: number,
     chestsCollected: number,
