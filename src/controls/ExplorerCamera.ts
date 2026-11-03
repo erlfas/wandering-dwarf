@@ -4,6 +4,7 @@ import { ChunkManager } from '../world/ChunkManager';
 import { TerrainNoise } from '../world/TerrainNoise';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { RelicStore } from '../player/RelicStore';
+import { LandmarkManager } from '../world/LandmarkManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -43,6 +44,7 @@ export class ExplorerCamera {
   private isTrailblazing = false;
   private currentSpeed = 0;
   private relicStore?: RelicStore;
+  private landmarkManager?: LandmarkManager;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -63,13 +65,21 @@ export class ExplorerCamera {
     this.relicStore = store;
   }
 
+  public setLandmarkManager(lm: LandmarkManager): void {
+    this.landmarkManager = lm;
+  }
+
   public getMovementStatus(): string {
     if (this.isGliding) return '🪂 Wind Gliding';
     if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
     if (this.heightAboveGround > 0.35) return '⏫ Airborne';
+    const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
     if (this.isTrailblazing && this.currentSpeed > 4.0) {
       const pct = this.relicStore?.has('strider_boots') ? '+45%' : '+25%';
-      return `⚡ Trailblazer Path (${pct})`;
+      return hasWarmth ? `⚡ Trailblazer (${pct}) • 🔥 Warmth` : `⚡ Trailblazer Path (${pct})`;
+    }
+    if (hasWarmth) {
+      return `🔥 Campfire Warmth (+20% Speed • ${Math.ceil(this.landmarkManager!.campfireBuffTimer)}s)`;
     }
     if (this.relicStore?.has('strider_boots') && this.currentSpeed > 10.0) {
       return '🥾 Strider Sprint';
@@ -214,15 +224,16 @@ export class ExplorerCamera {
 
   private tryJump(): void {
     const hasSpringGreaves = this.relicStore?.has('spring_greaves') ?? false;
+    const warmthBoost = this.landmarkManager?.hasCampfireBuff() ? 1.15 : 1.0;
     const maxJumps = hasSpringGreaves ? 2 : 1;
 
     if (this.heightAboveGround <= 0.15) {
-      this.velY = hasSpringGreaves ? 10.8 : 8.5;
+      this.velY = (hasSpringGreaves ? 10.8 : 8.5) * warmthBoost;
       this.jumpsUsed = 1;
       this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y, this.playerPos.z, 8);
       this.relicStore?.playJumpSound(false);
     } else if (this.jumpsUsed < maxJumps) {
-      this.velY = 9.8;
+      this.velY = 9.8 * warmthBoost;
       this.jumpsUsed += 1;
       this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y, this.playerPos.z, 12);
       this.relicStore?.playJumpSound(true);
@@ -279,6 +290,9 @@ export class ExplorerCamera {
     this.isTrailblazing = trackW > 0.35;
     if (this.isTrailblazing) {
       baseSpeed *= hasStriderBoots ? 1.45 : 1.25;
+    }
+    if (this.landmarkManager?.hasCampfireBuff()) {
+      baseSpeed *= 1.2;
     }
 
     // Compute camera-relative horizontal basis vectors once per frame
@@ -383,8 +397,11 @@ export class ExplorerCamera {
 
     this.currentSpeed = actualSpeed;
 
-    // Evaluate surface floor height (or buoyant swimming elevation in rivers/ponds)
-    const groundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+    // Evaluate surface floor height (including Wooden River Bridge decks or buoyant swimming elevation)
+    const rawGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+    const groundY = this.landmarkManager
+      ? this.landmarkManager.getBridgeDeckHeight(this.playerPos.x, this.playerPos.z, rawGroundY)
+      : rawGroundY;
     this.lastGroundY = groundY;
     isSwimming =
       this.config.enableWater &&

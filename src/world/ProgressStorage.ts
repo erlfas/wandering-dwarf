@@ -1,5 +1,13 @@
 const STORAGE_KEY = 'procedural_world_progress_v1';
 
+export interface SavedBeaconWaypoint {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface SavedProgress {
   version: 1;
   seed: number;
@@ -12,6 +20,7 @@ export interface SavedProgress {
   chestsCollected: number;
   collectedIds: string[];
   unlockedRelics?: string[];
+  litBeacons?: SavedBeaconWaypoint[];
 }
 
 export function loadProgress(): SavedProgress | null {
@@ -48,6 +57,17 @@ export function loadProgress(): SavedProgress | null {
       collectedIds: data.collectedIds.filter((id): id is string => typeof id === 'string'),
       unlockedRelics: Array.isArray(data.unlockedRelics)
         ? data.unlockedRelics.filter((id): id is string => typeof id === 'string')
+        : [],
+      litBeacons: Array.isArray(data.litBeacons)
+        ? data.litBeacons.filter(
+            (b): b is SavedBeaconWaypoint =>
+              Boolean(b) &&
+              typeof b.id === 'string' &&
+              typeof b.name === 'string' &&
+              typeof b.x === 'number' &&
+              typeof b.y === 'number' &&
+              typeof b.z === 'number'
+          )
         : [],
     };
   } catch {

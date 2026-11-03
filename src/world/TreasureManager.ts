@@ -1068,6 +1068,17 @@ export class TreasureManager {
     return true;
   }
 
+  public grantBonusGold(amount: number, toastMessage: string): void {
+    this.score += amount;
+    if (this.streakCount > 0) {
+      this.streakTimer = this.streakDuration;
+    }
+    this.syncHUDTotals();
+    this.syncStreakHUD();
+    this.showToast(toastMessage, true);
+    this.onChestCollected?.();
+  }
+
   private syncHUDTotals(): void {
     if (this.scoreEl) {
       this.scoreEl.textContent = this.score.toLocaleString();

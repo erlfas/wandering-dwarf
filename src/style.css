@@ -429,6 +429,56 @@ body {
   margin-top: 2px;
 }
 
+/* Unlocked Watchtower Beacon Fast-Travel Bar */
+#waypoint-bar {
+  position: absolute;
+  bottom: 112px;
+  left: 22px;
+  background: rgba(20, 25, 31, 0.78);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 183, 3, 0.38);
+  border-radius: 10px;
+  padding: 7px 11px;
+  color: #fff6e0;
+  pointer-events: auto;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+
+#waypoint-bar.hidden {
+  display: none;
+}
+
+.waypoint-header {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #ffb703;
+  margin-bottom: 5px;
+}
+
+#waypoint-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.waypoint-chip {
+  cursor: pointer;
+  background: rgba(255, 183, 3, 0.14);
+  border: 1px solid rgba(255, 183, 3, 0.42);
+  color: #ffe8a3;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10.5px;
+  font-weight: 700;
+  transition: all 0.14s ease;
+}
+
+.waypoint-chip:hover {
+  background: rgba(255, 183, 3, 0.3);
+  transform: translateY(-1px);
+}
+
 /* Bottom-left status & controls badge */
 #stats-badge {
   position: absolute;

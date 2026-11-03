@@ -8,6 +8,7 @@ import { ExplorerCamera } from './controls/ExplorerCamera';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
+import { LandmarkManager } from './world/LandmarkManager';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
@@ -113,6 +114,36 @@ const explorer = new ExplorerCamera(
 );
 explorer.setRelicStore(relicStore);
 
+const landmarkManager = new LandmarkManager(
+  config,
+  noise,
+  (tx, tz, label) => {
+    explorer.setPose(tx, tz, explorer.getHeading(), explorer.yaw, explorer.pitch, explorer.distance);
+    chunkManager.update(
+      explorer.playerPos.x,
+      explorer.playerPos.y,
+      explorer.playerPos.z,
+      clock.elapsedTime,
+      true
+    );
+    dwarf.spawnBurst(explorer.playerPos.x, explorer.playerPos.y, explorer.playerPos.z, 14);
+    treasureManager.grantBonusGold(0, `⚡ Fast-Traveled to ${label}`);
+    persistCurrentProgress(false);
+  },
+  (gold, msg) => {
+    treasureManager.grantBonusGold(gold, msg);
+  }
+);
+scene.add(landmarkManager.group);
+explorer.setLandmarkManager(landmarkManager);
+
+function syncBeaconFog(): void {
+  const litCount = landmarkManager.getLitBeaconCount();
+  // Lighting Watchtower Beacons clears up to 40% of distant horizon mist!
+  const clearFactor = Math.max(0.6, 1.0 - litCount * 0.12);
+  fog.density = config.fogDensity * clearFactor;
+}
+
 if (savedProgress) {
   treasureManager.restoreProgress(
     savedProgress.score,
@@ -120,6 +151,8 @@ if (savedProgress) {
     savedProgress.collectedIds
   );
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
+  landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
+  syncBeaconFog();
   explorer.setPose(
     savedProgress.playerPos.x,
     savedProgress.playerPos.z,
@@ -148,6 +181,7 @@ const reusableSaveState: SavedProgress = {
   chestsCollected: 0,
   collectedIds: [],
   unlockedRelics: [],
+  litBeacons: [],
 };
 
 function populateSaveState(): SavedProgress {
@@ -163,6 +197,7 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.chestsCollected = treasureManager.chestsCollected;
   reusableSaveState.collectedIds = treasureManager.getCollectedIds();
   reusableSaveState.unlockedRelics = relicStore.getUnlockedIds();
+  reusableSaveState.litBeacons = landmarkManager.getLitBeacons();
   return reusableSaveState;
 }
 
@@ -188,6 +223,11 @@ treasureManager.onChestCollected = () => {
   persistCurrentProgress(false);
 };
 relicStore.onRelicUnlocked = () => {
+  persistCurrentProgress(false);
+};
+landmarkManager.onBeaconLit = () => {
+  syncBeaconFog();
+  relicStore.renderShop();
   persistCurrentProgress(false);
 };
 window.addEventListener('beforeunload', () => persistCurrentProgress(true));
@@ -216,6 +256,8 @@ const debugOverlay = new DebugOverlay(
     noise.reseed(config.seed);
     treasureManager.resetProgress();
     relicStore.reset();
+    landmarkManager.reset();
+    syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
       explorer.playerPos.x,
@@ -271,6 +313,7 @@ function animate(): void {
   const hasLodestone = relicStore.has('lodestone_amulet');
   chunkManager.update(px, py, pz, elapsedTime, false);
   treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
+  landmarkManager.update(dt, elapsedTime, explorer.playerPos);
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   const snap = 2.0;
