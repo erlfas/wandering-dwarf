@@ -50,6 +50,7 @@ export class TerrainNoise {
   private trackOriginOffsetA = 0;
   private trackOriginOffsetB = 0;
   private config: WorldConfig;
+  public lastTrackWeight = 0;
 
   constructor(config: WorldConfig) {
     this.config = config;
@@ -153,7 +154,8 @@ export class TerrainNoise {
         this.trackOriginOffsetB;
       let dB = Math.abs(coarseB - Math.round(coarseB / periodB) * periodB);
 
-      if (dB < 27.0) {
+      // Only evaluate fineB if it can possibly beat dA or enter the k=3.2 junction smooth-min window
+      if (dB < 27.0 && dB - 20.5 < dA + 3.2) {
         const fineB =
           coarseB +
           this.trackNoiseA(x * 0.0105 - 19.8, z * 0.0105 + 63.4) * 17.5 +
@@ -347,8 +349,10 @@ export class TerrainNoise {
     }
 
     // 6. Infinite Winding Forest Tracks (graded footpath trough + subtle shoulder banks)
+    this.lastTrackWeight = 0;
     if (cfg.enableTracks && (!cfg.enableWater || height > cfg.waterLevel + 0.15)) {
       const trackW = this.getTrackWeight(x, z, height);
+      this.lastTrackWeight = trackW;
       if (trackW > 0.001) {
         // Level out sharp micro bumps along the walking bed
         height -= micro * cfg.microAmplitude * 0.42 * trackW;
@@ -420,7 +424,8 @@ export class TerrainNoise {
     y: number,
     z: number,
     normal: THREE.Vector3,
-    target = new THREE.Color()
+    target = new THREE.Color(),
+    precomputedTrackW?: number
   ): THREE.Color {
     const patch = this.getMeadowPatch(x, z);
     const grove = this.getForestDensity(x, z);
@@ -450,7 +455,8 @@ export class TerrainNoise {
 
     // Painterly Forest Track Coloring (matching art/forest_track.jpg)
     if (this.config.enableTracks) {
-      const trackW = this.getTrackWeight(x, z, y);
+      const trackW =
+        precomputedTrackW !== undefined ? precomputedTrackW : this.getTrackWeight(x, z, y);
       if (trackW > 0.01) {
         // High-frequency soil & pebble mottling along the path
         const soilDetail = this.microNoise(x * 0.19 + 41.2, z * 0.19 - 23.8); // [-1, 1]

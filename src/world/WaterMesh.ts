@@ -15,6 +15,8 @@ export function createWaterMaterial(uniforms: GrassUniforms): THREE.MeshStandard
     depthWrite: false,
   });
 
+  mat.customProgramCacheKey = () => 'water_ripple_v1';
+
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
 
@@ -31,10 +33,15 @@ export function createWaterMaterial(uniforms: GrassUniforms): THREE.MeshStandard
       vec4 wp = modelMatrix * vec4(transformed, 1.0);
       vWaterWorldPos = wp.xyz;
 
-      // Subtle animated water ripples
-      float wave1 = sin(wp.x * 0.65 + wp.z * 0.45 + uTime * 1.6) * 0.035;
-      float wave2 = cos(wp.x * 0.4 - wp.z * 0.75 + uTime * 1.2) * 0.025;
+      // Subtle animated water ripples + analytical normal perturbation
+      float phase1 = wp.x * 0.65 + wp.z * 0.45 + uTime * 1.6;
+      float phase2 = wp.x * 0.4 - wp.z * 0.75 + uTime * 1.2;
+      float wave1 = sin(phase1) * 0.035;
+      float wave2 = cos(phase2) * 0.025;
       transformed.y += wave1 + wave2;
+      float dWaveDx = cos(phase1) * (0.035 * 0.65) - sin(phase2) * (0.025 * 0.4);
+      float dWaveDz = cos(phase1) * (0.035 * 0.45) + sin(phase2) * (0.025 * 0.75);
+      vNormal = normalize(normalMatrix * normalize(vec3(-dWaveDx, 1.0, -dWaveDz)));
       `
     );
 

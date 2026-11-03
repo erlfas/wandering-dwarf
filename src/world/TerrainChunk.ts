@@ -17,6 +17,7 @@ const geometryPool = new Map<number, THREE.BufferGeometry[]>();
 
 // Reusable module-level buffers & temporaries for zero-allocation chunk building
 let paddedHeights = new Float32Array(67 * 67);
+let paddedTrackWeights = new Float32Array(67 * 67);
 const tempNormal = new THREE.Vector3();
 const tempColor = new THREE.Color();
 const clayColor = new THREE.Color(0xdcd6cc);
@@ -25,11 +26,13 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   public readonly cx: number;
   public readonly cz: number;
   public readonly size: number;
-  public readonly segments: number;
+  public segments: number;
   public hasGrass: boolean;
   public grassDensityMult: number;
   public readonly mesh: THREE.Mesh;
   private minElevation = Infinity;
+  private maxElevation = -Infinity;
+  private maxTrackWeight = 0;
   private borderLine?: THREE.LineSegments;
   private chunkGrass?: ChunkGrass;
   private chunkForest?: ChunkForest;
@@ -61,6 +64,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     const geometry = this.buildGeometry(noise, config.blankClayMode);
     this.mesh = new THREE.Mesh(geometry, terrainMaterial);
     this.mesh.position.set(cx * size, 0, cz * size);
+    this.mesh.updateMatrix();
+    this.mesh.matrixAutoUpdate = false;
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = false;
 
@@ -68,7 +73,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     if (
       config.enableWater &&
       !config.blankClayMode &&
-      this.minElevation < config.waterLevel - 0.02
+      this.minElevation < config.waterLevel - 0.10
     ) {
       if (!sharedWaterGeo || sharedWaterGeoSize !== size) {
         sharedWaterGeo?.dispose();
@@ -78,6 +83,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       }
       this.waterMesh = new THREE.Mesh(sharedWaterGeo, waterMaterial);
       this.waterMesh.position.y = config.waterLevel;
+      this.waterMesh.updateMatrix();
+      this.waterMesh.matrixAutoUpdate = false;
       this.waterMesh.receiveShadow = true;
       this.mesh.add(this.waterMesh);
     }
@@ -117,7 +124,37 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     }
 
     if (config.showChunkBorders) {
-      this.setBorderVisible(true, noise);
+      this.setBorderVisible(true);
+    }
+    this.mesh.updateMatrixWorld(true);
+  }
+
+  public getElevationBounds(): { minH: number; maxH: number } {
+    return { minH: this.minElevation, maxH: this.maxElevation };
+  }
+
+  public hasTrack(): boolean {
+    return this.maxTrackWeight > 0.001;
+  }
+
+  public updateSegments(
+    newSegments: number,
+    config: WorldConfig,
+    noise: TerrainNoise
+  ): void {
+    if (this.segments === newSegments) return;
+    let pool = geometryPool.get(this.segments);
+    if (!pool) {
+      pool = [];
+      geometryPool.set(this.segments, pool);
+    }
+    pool.push(this.mesh.geometry);
+
+    this.segments = newSegments;
+    this.mesh.geometry = this.buildGeometry(noise, config.blankClayMode);
+    if (this.borderLine) {
+      this.setBorderVisible(false);
+      this.setBorderVisible(true);
     }
   }
 
@@ -130,13 +167,13 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   ): void {
     const effectiveMult =
       config.enableGrassBlades && !config.blankClayMode ? grassDensityMult : 0;
-    if (this.chunkGrass) {
-      this.mesh.remove(this.chunkGrass.group);
-      this.chunkGrass.dispose();
-      this.chunkGrass = undefined;
-    }
     this.grassDensityMult = effectiveMult;
     this.hasGrass = effectiveMult > 0;
+
+    if (this.chunkGrass) {
+      this.chunkGrass.setDensityMultiplier(effectiveMult);
+      return;
+    }
 
     if (this.hasGrass) {
       this.chunkGrass = new ChunkGrass(
@@ -151,6 +188,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
         this
       );
       this.mesh.add(this.chunkGrass.group);
+      this.chunkGrass.group.updateMatrixWorld(true);
     }
   }
 
@@ -279,26 +317,35 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     const posAttr = geometry.attributes.position as THREE.BufferAttribute;
     const normAttr = geometry.attributes.normal as THREE.BufferAttribute;
     const colAttr = geometry.attributes.color as THREE.BufferAttribute;
+    const posArr = posAttr.array as Float32Array;
+    const normArr = normAttr.array as Float32Array;
     const colors = colAttr.array as Float32Array;
 
     const worldOffsetX = this.cx * size;
     const worldOffsetZ = this.cz * size;
 
-    // 1. Sample heights on a 1-cell padded grid (segments + 3) x (segments + 3)
+    // 1. Sample heights & track weights on a 1-cell padded grid (segments + 3) x (segments + 3)
     const padStride = segments + 3;
     const requiredLen = padStride * padStride;
     if (paddedHeights.length < requiredLen) {
       paddedHeights = new Float32Array(requiredLen);
+      paddedTrackWeights = new Float32Array(requiredLen);
     }
 
+    let maxTrackW = 0;
     for (let pz = 0; pz < padStride; pz++) {
       const wz = worldOffsetZ - half + (pz - 1) * step;
       const rowOffset = pz * padStride;
       for (let px = 0; px < padStride; px++) {
         const wx = worldOffsetX - half + (px - 1) * step;
-        paddedHeights[rowOffset + px] = noise.getHeight(wx, wz);
+        const idx = rowOffset + px;
+        paddedHeights[idx] = noise.getHeight(wx, wz);
+        const tw = noise.lastTrackWeight;
+        paddedTrackWeights[idx] = tw;
+        if (tw > maxTrackW) maxTrackW = tw;
       }
     }
+    this.maxTrackWeight = maxTrackW;
 
     // 2. Populate vertex positions, central-difference normals from padded grid, and surface colors
     let minH = Infinity;
@@ -314,6 +361,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
       for (let ix = 0; ix < vertStride; ix++) {
         const i = vertRow + ix;
+        const cIdx = i * 3;
         const localX = -half + ix * step;
         const wx = worldOffsetX + localX;
 
@@ -322,23 +370,37 @@ export class TerrainChunk implements ChunkSurfaceSampler {
         if (wy < minH) minH = wy;
         if (wy > maxH) maxH = wy;
 
-        posAttr.setXYZ(i, localX, wy, localZ);
+        posArr[cIdx] = localX;
+        posArr[cIdx + 1] = wy;
+        posArr[cIdx + 2] = localZ;
 
         // Compute central-difference normal directly from the 4 neighbor heights in paddedHeights
         const hL = paddedHeights[pIdx - 1];
         const hR = paddedHeights[pIdx + 1];
         const hD = paddedHeights[pIdx - padStride];
         const hU = paddedHeights[pIdx + padStride];
-        tempNormal.set(hL - hR, twoStep, hD - hU).normalize();
-        normAttr.setXYZ(i, tempNormal.x, tempNormal.y, tempNormal.z);
+        const nx = hL - hR;
+        const ny = twoStep;
+        const nz = hD - hU;
+        const invLen = 1.0 / Math.sqrt(nx * nx + ny * ny + nz * nz);
+        tempNormal.set(nx * invLen, ny * invLen, nz * invLen);
+        normArr[cIdx] = tempNormal.x;
+        normArr[cIdx + 1] = tempNormal.y;
+        normArr[cIdx + 2] = tempNormal.z;
 
-        const cIdx = i * 3;
         if (blankClayMode) {
           colors[cIdx] = clayColor.r;
           colors[cIdx + 1] = clayColor.g;
           colors[cIdx + 2] = clayColor.b;
         } else {
-          noise.getSurfaceColor(wx, wy, wz, tempNormal, tempColor);
+          noise.getSurfaceColor(
+            wx,
+            wy,
+            wz,
+            tempNormal,
+            tempColor,
+            paddedTrackWeights[pIdx]
+          );
           colors[cIdx] = tempColor.r;
           colors[cIdx + 1] = tempColor.g;
           colors[cIdx + 2] = tempColor.b;
@@ -347,6 +409,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     }
 
     this.minElevation = minH;
+    this.maxElevation = maxH;
     posAttr.needsUpdate = true;
     normAttr.needsUpdate = true;
     colAttr.needsUpdate = true;
@@ -366,37 +429,38 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     return geometry;
   }
 
-  public setBorderVisible(visible: boolean, noise: TerrainNoise): void {
+  public setBorderVisible(visible: boolean): void {
     if (visible && !this.borderLine) {
-      const pts: THREE.Vector3[] = [];
-      const half = this.size / 2;
-      const steps = 24;
-      const wx0 = this.cx * this.size;
-      const wz0 = this.cz * this.size;
+      const seg = this.segments;
+      const stride = seg + 1;
+      const posArr = (this.mesh.geometry.attributes.position as THREE.BufferAttribute)
+        .array as Float32Array;
+      const count = seg * 4;
+      const borderPos = new Float32Array(count * 2 * 3);
+      let out = 0;
 
-      const sampleEdge = (x1: number, z1: number, x2: number, z2: number) => {
-        for (let i = 0; i < steps; i++) {
-          const t1 = i / steps;
-          const t2 = (i + 1) / steps;
-          const ax = THREE.MathUtils.lerp(x1, x2, t1);
-          const az = THREE.MathUtils.lerp(z1, z2, t1);
-          const bx = THREE.MathUtils.lerp(x1, x2, t2);
-          const bz = THREE.MathUtils.lerp(z1, z2, t2);
-          pts.push(
-            new THREE.Vector3(ax, noise.getHeight(wx0 + ax, wz0 + az) + 0.08, az),
-            new THREE.Vector3(bx, noise.getHeight(wx0 + bx, wz0 + bz) + 0.08, bz)
-          );
-        }
+      const pushSeg = (i0: number, i1: number) => {
+        const a = i0 * 3;
+        const b = i1 * 3;
+        borderPos[out++] = posArr[a];
+        borderPos[out++] = posArr[a + 1] + 0.08;
+        borderPos[out++] = posArr[a + 2];
+        borderPos[out++] = posArr[b];
+        borderPos[out++] = posArr[b + 1] + 0.08;
+        borderPos[out++] = posArr[b + 2];
       };
 
-      sampleEdge(-half, -half, half, -half);
-      sampleEdge(half, -half, half, half);
-      sampleEdge(half, half, -half, half);
-      sampleEdge(-half, half, -half, -half);
+      for (let i = 0; i < seg; i++) pushSeg(i, i + 1);
+      for (let i = 0; i < seg; i++) pushSeg(i * stride + seg, (i + 1) * stride + seg);
+      for (let i = seg; i > 0; i--) pushSeg(seg * stride + i, seg * stride + i - 1);
+      for (let i = seg; i > 0; i--) pushSeg(i * stride, (i - 1) * stride);
 
-      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      const lineGeo = new THREE.BufferGeometry();
+      lineGeo.setAttribute('position', new THREE.BufferAttribute(borderPos, 3));
       this.borderLine = new THREE.LineSegments(lineGeo, sharedBorderMaterial);
+      this.borderLine.matrixAutoUpdate = false;
       this.mesh.add(this.borderLine);
+      this.borderLine.updateMatrixWorld(true);
     } else if (!visible && this.borderLine) {
       this.mesh.remove(this.borderLine);
       this.borderLine.geometry.dispose();

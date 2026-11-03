@@ -43,6 +43,8 @@ const camera = new THREE.PerspectiveCamera(
 // 4. Lighting (Warm morning/afternoon sunlight + soft sky/ground hemisphere bounce)
 const hemiLight = new THREE.HemisphereLight(0xeaf4ff, 0x6b7f4e, 0.82);
 hemiLight.position.set(0, 120, 0);
+hemiLight.updateMatrix();
+hemiLight.matrixAutoUpdate = false;
 scene.add(hemiLight);
 
 const sunOffset = new THREE.Vector3(85, 110, 65);
@@ -50,14 +52,14 @@ const dirLight = new THREE.DirectionalLight(0xfff5e4, 1.85);
 dirLight.position.copy(sunOffset);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
-dirLight.shadow.camera.near = 10;
-dirLight.shadow.camera.far = 320;
+dirLight.shadow.camera.near = 40;
+dirLight.shadow.camera.far = 230;
 const shadowExtent = 65;
 dirLight.shadow.camera.left = -shadowExtent;
 dirLight.shadow.camera.right = shadowExtent;
 dirLight.shadow.camera.top = shadowExtent;
 dirLight.shadow.camera.bottom = -shadowExtent;
-dirLight.shadow.bias = -0.0005;
+dirLight.shadow.bias = -0.0003;
 scene.add(dirLight);
 scene.add(dirLight.target);
 
@@ -99,15 +101,20 @@ chunkManager.update(
 );
 
 // 7. Live Terrain & Grass Planner GUI + Background Music
-const debugOverlay = new DebugOverlay(config, noise, chunkManager, fog, () => explorer.playerPos);
+const debugOverlay = new DebugOverlay(
+  config,
+  noise,
+  chunkManager,
+  treasureManager,
+  fog,
+  () => explorer.playerPos
+);
 new BackgroundMusic();
 
-// 8. Resize Handler
+// 8. Resize Handler (coalesced into animation loop to avoid mid-frame framebuffer reallocations)
+let resizePending = false;
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  resizePending = true;
 });
 
 // 9. Main Loop
@@ -117,9 +124,19 @@ let lastShadowY = NaN;
 let lastShadowZ = NaN;
 let lastHudUpdate = -1;
 let lastCompassYaw = NaN;
+let lastChestHintText = '';
+let lastCoordsText = '';
 
 function animate(): void {
   requestAnimationFrame(animate);
+
+  if (resizePending) {
+    resizePending = false;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
 
   const dt = Math.min(clock.getDelta(), 0.1);
   const elapsedTime = clock.elapsedTime;
@@ -145,19 +162,24 @@ function animate(): void {
     lastShadowZ = sz;
     dirLight.position.set(sx + sunOffset.x, sy + sunOffset.y, sz + sunOffset.z);
     dirLight.target.position.set(sx, sy, sz);
+    dirLight.updateMatrixWorld();
     dirLight.target.updateMatrixWorld();
   }
 
-  // Throttle HUD DOM text mutations to 5 Hz
+  // Throttle HUD DOM text mutations to 5 Hz and skip DOM writes when text is unchanged
   if (elapsedTime - lastHudUpdate >= 0.2) {
     lastHudUpdate = elapsedTime;
     const nearest = treasureManager.getNearestChest(explorer.playerPos);
-    if (nearest) {
-      nearestChestHint.textContent = `Nearest: ${nearest.dist.toFixed(0)}m`;
-    } else {
-      nearestChestHint.textContent = 'Explore further!';
+    const nextHint = nearest ? `Nearest: ${nearest.dist.toFixed(0)}m` : 'Explore further!';
+    if (nextHint !== lastChestHintText) {
+      lastChestHintText = nextHint;
+      nearestChestHint.textContent = nextHint;
     }
-    coordsReadout.textContent = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
+    const nextCoords = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
+    if (nextCoords !== lastCoordsText) {
+      lastCoordsText = nextCoords;
+      coordsReadout.textContent = nextCoords;
+    }
   }
 
   // Only update compass needle transform when camera yaw changes

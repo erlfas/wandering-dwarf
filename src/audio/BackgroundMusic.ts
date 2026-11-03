@@ -3,6 +3,7 @@ import bgmUrl from '../../music/Wandering_Through_the_Pines.mp3?url';
 export class BackgroundMusic {
   private audio: HTMLAudioElement;
   private isStarted = false;
+  private isPlayPending = false;
   private isMuted = false;
   private targetVolume = 0.45;
   private statusEl: HTMLElement | null;
@@ -46,15 +47,19 @@ export class BackgroundMusic {
   }
 
   private tryPlay(): void {
+    if (this.isStarted || this.isPlayPending) return;
+    this.isPlayPending = true;
     this.audio
       .play()
       .then(() => {
+        this.isPlayPending = false;
         this.isStarted = true;
         window.removeEventListener('keydown', this.unlockHandler);
         window.removeEventListener('pointerdown', this.unlockHandler);
         this.updateUI();
       })
       .catch(() => {
+        this.isPlayPending = false;
         // Waiting for first user key press or click to satisfy browser autoplay policy
         this.updateUI();
       });
@@ -63,8 +68,14 @@ export class BackgroundMusic {
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     this.audio.muted = this.isMuted;
-    if (!this.isMuted && !this.isStarted) {
+    if (this.isMuted) {
+      if (this.isStarted) {
+        this.audio.pause();
+      }
+    } else if (!this.isStarted) {
       this.tryPlay();
+    } else {
+      void this.audio.play();
     }
     this.updateUI();
     return !this.isMuted;

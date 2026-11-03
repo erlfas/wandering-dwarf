@@ -3,22 +3,32 @@ import * as THREE from 'three';
 import { WorldConfig } from '../world/Config';
 import { ChunkManager } from '../world/ChunkManager';
 import { TerrainNoise } from '../world/TerrainNoise';
+import { TreasureManager } from '../world/TreasureManager';
 
 export class DebugOverlay {
   public readonly gui: GUI;
+  private rebuildRafId: number | null = null;
 
   constructor(
     config: WorldConfig,
     noise: TerrainNoise,
     chunkManager: ChunkManager,
+    treasureManager: TreasureManager,
     fog: THREE.FogExp2,
     getPlayerPos: () => THREE.Vector3
   ) {
     this.gui = new GUI({ title: 'World Planner (Phase 3)' });
 
     const rebuild = () => {
-      const p = getPlayerPos();
-      chunkManager.rebuildAll(p.x, p.y, p.z);
+      if (this.rebuildRafId !== null) {
+        cancelAnimationFrame(this.rebuildRafId);
+      }
+      this.rebuildRafId = requestAnimationFrame(() => {
+        this.rebuildRafId = null;
+        const p = getPlayerPos();
+        chunkManager.rebuildAll(p.x, p.y, p.z);
+        treasureManager.rebuildAll();
+      });
     };
 
     // 1. Trees & Open Groves Folder

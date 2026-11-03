@@ -73,7 +73,7 @@ Read [references/integration-patterns.md](./references/integration-patterns.md) 
    - Always accept `sampler?: ChunkSurfaceSampler` from `TerrainChunk` and query `sampler.sampleHeightAndNormal(lx, lz, normal)` and `sampler.sampleColor(lx, lz, color)` instead of calling `noise.getHeight()`, `noise.getNormal()`, or `noise.getSurfaceColor()`.
    - Check cheap early-outs (`normal.y` slope threshold and `wy < config.waterLevel` check) before computing instance matrices or colors.
 4. **Frustum Culling & Shadow Budget:**
-   - Assign an explicit chunk-sized bounding sphere (`new THREE.Sphere(new THREE.Vector3(0, halfH, 0), size * 0.85)`) to every `THREE.InstancedMesh`.
+   - Assign an elevation-aware chunk bounding sphere computed from `sampler?.getElevationBounds?.()` (`centerY = (minH + maxH) * 0.5`, `radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + pad`) to every `THREE.InstancedMesh`, and set `matrixAutoUpdate = false`.
    - Ground clutter (`height < 1.5m`, e.g., grass clumps, grass patches, flowers) MUST have `castShadow = false` and `receiveShadow = false` (or `receiveShadow = true` only on low-poly procedural tufts).
    - Tall foliage (trees) MUST only enable `castShadow = true` when `dist <= 2.2`.
 5. **Zero-Instance Disposal:**

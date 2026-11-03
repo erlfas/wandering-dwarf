@@ -15,6 +15,8 @@ export interface GrassUniforms {
 export interface ChunkSurfaceSampler {
   sampleHeightAndNormal(localX: number, localZ: number, outNormal: THREE.Vector3): number;
   sampleColor(localX: number, localZ: number, outColor: THREE.Color): void;
+  getElevationBounds?(): { minH: number; maxH: number };
+  hasTrack?(): boolean;
 }
 
 /**
@@ -135,6 +137,9 @@ export function applyGrassWindShader(
 ): void {
   const { isFlower = false, isModelClump = false } = options;
 
+  mat.customProgramCacheKey = () =>
+    `grass_wind_${isFlower ? 1 : 0}_${isModelClump ? 1 : 0}`;
+
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWindSpeed = uniforms.uWindSpeed;
@@ -164,9 +169,10 @@ export function applyGrassWindShader(
 
       // World position of this grass instance's root
       vec4 instWorldPos = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+      vec2 toBlade = instWorldPos.xz - uPlayerPos.xz;
+      float distToPlayer = length(toBlade);
 
       // Smoothly taper grass height to 0 near the outer grass radius so chunks never pop
-      float distToPlayer = length(instWorldPos.xz - uPlayerPos.xz);
       float distFade = 1.0 - smoothstep(uMaxDistance * 0.72, uMaxDistance, distToPlayer);
       transformed *= distFade;
 
@@ -178,11 +184,9 @@ export function applyGrassWindShader(
       transformed.z += cos(wavePhase * 0.85) * uWindStrength * 0.65 * bendFactor;
 
       // Subtle dwarf push-away when walking through the grass
-      vec2 toBlade = instWorldPos.xz - uPlayerPos.xz;
-      float playerDist = length(toBlade);
-      if (playerDist < 1.45 && playerDist > 0.001) {
-        float push = (1.0 - playerDist / 1.45) * 0.58 * bendFactor;
-        vec2 pushDir = toBlade / playerDist;
+      if (distToPlayer < 1.45 && distToPlayer > 0.001) {
+        float push = (1.0 - distToPlayer / 1.45) * 0.58 * bendFactor;
+        vec2 pushDir = toBlade / distToPlayer;
         transformed.x += pushDir.x * push;
         transformed.z += pushDir.y * push;
         transformed.y -= push * 0.35;
@@ -336,6 +340,8 @@ export class ChunkGrass {
   private grassInstanced?: THREE.InstancedMesh;
   private clumpInstanced?: THREE.InstancedMesh;
   private flowerInstanced?: THREE.InstancedMesh;
+  private fullGrassCount = 0;
+  private fullFlowerCount = 0;
 
   constructor(
     cx: number,
@@ -348,29 +354,36 @@ export class ChunkGrass {
     flowerMaterial: THREE.Material,
     sampler?: ChunkSurfaceSampler
   ) {
+    this.group.matrixAutoUpdate = false;
     if (!sharedTuftGeo) sharedTuftGeo = createGrassTuftGeometry();
     if (!sharedFlowerGeo) sharedFlowerGeo = createWildflowerClusterGeometry();
 
-    const maxCount = Math.floor(config.grassDensity * densityMultiplier);
+    // Always build at full capacity (1.0) so LOD transitions (1.0 <-> 0.55 <-> 0.0) only scale .count/.visible in O(1)
+    const maxCount = Math.floor(config.grassDensity);
     if (maxCount <= 0) return;
 
     // Deterministic per-chunk PRNG
     const chunkSeed = ((cx * 73856093) ^ (cz * 19349663) ^ config.seed) >>> 0;
     const rng = createSeededRandom(chunkSeed);
 
-    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), size * 0.85);
+    const bounds = sampler?.getElevationBounds?.();
+    const minH = bounds ? bounds.minH : -15;
+    const maxH = bounds ? bounds.maxH + 1.2 : 35;
+    const centerY = (minH + maxH) * 0.5;
+    const halfY = (maxH - minH) * 0.5;
+    const halfSize = size * 0.5;
+    const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 1.0;
+    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
 
     const grassMesh = new THREE.InstancedMesh(sharedTuftGeo, grassMaterial, maxCount);
     grassMesh.castShadow = false;
     grassMesh.receiveShadow = true;
     grassMesh.boundingSphere = chunkBoundSphere;
+    grassMesh.matrixAutoUpdate = false;
 
     // 3D modelled tall grass & seed-head clumps (`3dmodels/grass clump 3d model.glb`)
-    // Spawn only on close-range LOD chunks (dist <= 1.5, where densityMultiplier === 1.0)
-    const maxClumps =
-      densityMultiplier >= 0.9
-        ? Math.min(16, Math.max(4, Math.floor(maxCount * 0.008)))
-        : 0;
+    // Visible only on close-range LOD chunks (dist <= 1.5, where densityMultiplier >= 0.9)
+    const maxClumps = Math.min(16, Math.max(4, Math.floor(maxCount * 0.008)));
     const clumpMesh =
       maxClumps > 0
         ? new THREE.InstancedMesh(
@@ -383,6 +396,7 @@ export class ChunkGrass {
       clumpMesh.castShadow = false;
       clumpMesh.receiveShadow = false;
       clumpMesh.boundingSphere = chunkBoundSphere;
+      clumpMesh.matrixAutoUpdate = false;
     }
 
     const maxFlowers = config.enableFlowers ? Math.floor(maxCount * 0.075) : 0;
@@ -392,10 +406,16 @@ export class ChunkGrass {
         : undefined;
     if (flowerMesh) {
       flowerMesh.boundingSphere = chunkBoundSphere;
+      flowerMesh.matrixAutoUpdate = false;
     }
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
+    const chunkNearTrack =
+      config.enableTracks &&
+      (sampler?.hasTrack
+        ? sampler.hasTrack()
+        : noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85);
 
     let grassIdx = 0;
     let clumpIdx = 0;
@@ -421,7 +441,7 @@ export class ChunkGrass {
       if (config.enableWater && wy < config.waterLevel + 0.52) continue;
 
       // Evaluate forest track weight: keep the worn dirt footpath clear while framing its verges
-      const trackW = config.enableTracks ? noise.getTrackWeight(wx, wz, wy) : 0;
+      const trackW = chunkNearTrack ? noise.getTrackWeight(wx, wz, wy) : 0;
       if (trackW > 0.44) continue;
       const isTrackVerge = trackW >= 0.06 && trackW <= 0.44;
 
@@ -537,10 +557,19 @@ export class ChunkGrass {
       }
     }
 
+    this.fullGrassCount = grassIdx;
+    this.fullFlowerCount = flowerIdx;
+
     if (grassIdx > 0) {
       grassMesh.count = grassIdx;
+      grassMesh.instanceMatrix.clearUpdateRanges();
+      grassMesh.instanceMatrix.addUpdateRange(0, grassIdx * 16);
       grassMesh.instanceMatrix.needsUpdate = true;
-      if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
+      if (grassMesh.instanceColor) {
+        grassMesh.instanceColor.clearUpdateRanges();
+        grassMesh.instanceColor.addUpdateRange(0, grassIdx * 3);
+        grassMesh.instanceColor.needsUpdate = true;
+      }
       this.grassInstanced = grassMesh;
       this.group.add(grassMesh);
     } else {
@@ -550,8 +579,14 @@ export class ChunkGrass {
     if (clumpMesh) {
       if (clumpIdx > 0) {
         clumpMesh.count = clumpIdx;
+        clumpMesh.instanceMatrix.clearUpdateRanges();
+        clumpMesh.instanceMatrix.addUpdateRange(0, clumpIdx * 16);
         clumpMesh.instanceMatrix.needsUpdate = true;
-        if (clumpMesh.instanceColor) clumpMesh.instanceColor.needsUpdate = true;
+        if (clumpMesh.instanceColor) {
+          clumpMesh.instanceColor.clearUpdateRanges();
+          clumpMesh.instanceColor.addUpdateRange(0, clumpIdx * 3);
+          clumpMesh.instanceColor.needsUpdate = true;
+        }
         this.clumpInstanced = clumpMesh;
         activeClumpMeshes.add(clumpMesh);
         this.group.add(clumpMesh);
@@ -563,13 +598,39 @@ export class ChunkGrass {
     if (flowerMesh) {
       if (flowerIdx > 0) {
         flowerMesh.count = flowerIdx;
+        flowerMesh.instanceMatrix.clearUpdateRanges();
+        flowerMesh.instanceMatrix.addUpdateRange(0, flowerIdx * 16);
         flowerMesh.instanceMatrix.needsUpdate = true;
-        if (flowerMesh.instanceColor) flowerMesh.instanceColor.needsUpdate = true;
+        if (flowerMesh.instanceColor) {
+          flowerMesh.instanceColor.clearUpdateRanges();
+          flowerMesh.instanceColor.addUpdateRange(0, flowerIdx * 3);
+          flowerMesh.instanceColor.needsUpdate = true;
+        }
         this.flowerInstanced = flowerMesh;
         this.group.add(flowerMesh);
       } else {
         flowerMesh.dispose();
       }
+    }
+
+    this.setDensityMultiplier(densityMultiplier);
+  }
+
+  public setDensityMultiplier(densityMultiplier: number): void {
+    if (densityMultiplier <= 0) {
+      this.group.visible = false;
+      return;
+    }
+    this.group.visible = true;
+    const ratio = THREE.MathUtils.clamp(densityMultiplier, 0, 1);
+    if (this.grassInstanced) {
+      this.grassInstanced.count = Math.floor(this.fullGrassCount * ratio);
+    }
+    if (this.flowerInstanced) {
+      this.flowerInstanced.count = Math.floor(this.fullFlowerCount * ratio);
+    }
+    if (this.clumpInstanced) {
+      this.clumpInstanced.visible = densityMultiplier >= 0.9;
     }
   }
 

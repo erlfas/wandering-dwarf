@@ -23,6 +23,7 @@ export class ExplorerCamera {
   private lastMouseY = 0;
   private smoothedTarget = new THREE.Vector3();
   private desiredTarget = new THREE.Vector3();
+  private lastGroundY = 0;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -35,7 +36,8 @@ export class ExplorerCamera {
     private onToggleMode?: () => void
   ) {
     this.camera = camera;
-    this.playerPos.y = this.noise.getHeight(0, 0);
+    this.lastGroundY = this.noise.getHeight(0, 0);
+    this.playerPos.y = this.lastGroundY;
     this.smoothedTarget.copy(this.playerPos);
 
     if (this.config.enableTracks) {
@@ -141,12 +143,11 @@ export class ExplorerCamera {
     let actualSpeed = 0;
     let targetHeading: number | null = null;
 
-    // Check terrain depth vs water level to determine if the dwarf is swimming
-    const preGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
-    const isSwimming =
+    // Check terrain depth vs water level using cached ground height to avoid duplicate lookup
+    let isSwimming =
       this.config.enableWater &&
       !this.config.blankClayMode &&
-      preGroundY < this.config.waterLevel - 0.38;
+      this.lastGroundY < this.config.waterLevel - 0.38;
 
     if (moveLen > 0.001) {
       moveX /= moveLen;
@@ -162,10 +163,12 @@ export class ExplorerCamera {
     }
 
     // Clamp player height to the rendered triangle surface (or buoyant swimming elevation in rivers/ponds)
-    const groundY =
-      moveLen > 0.001
-        ? this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z)
-        : preGroundY;
+    const groundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+    this.lastGroundY = groundY;
+    isSwimming =
+      this.config.enableWater &&
+      !this.config.blankClayMode &&
+      groundY < this.config.waterLevel - 0.38;
     const swimSurfaceY = this.config.waterLevel - 0.54;
     this.playerPos.y =
       this.config.enableWater && !this.config.blankClayMode

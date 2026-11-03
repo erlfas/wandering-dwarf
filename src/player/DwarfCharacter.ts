@@ -92,11 +92,13 @@ export class DwarfCharacter {
   private setupAnimations(model: THREE.Object3D, clips: THREE.AnimationClip[]): void {
     this.mixer = new THREE.AnimationMixer(model);
 
-    // Prune redundant scale/position tracks and strip horizontal (X/Z) root motion on Hips
+    // Prune redundant scale, non-root position, and individual finger phalange tracks
+    const FINGER_RE = /(Index|Middle|Ring|Pinky|Thumb)[1-4]/i;
     for (const clip of clips) {
       clip.tracks = clip.tracks.filter((track) => {
         if (track.name.endsWith('.scale')) return false;
         if (track.name.endsWith('.position') && !track.name.includes('Hips')) return false;
+        if (FINGER_RE.test(track.name)) return false;
         return true;
       });
       for (const track of clip.tracks) {
@@ -208,11 +210,34 @@ export class DwarfCharacter {
           }
         }
 
-        const outVals = new Float32Array(12);
-        qA.toArray(outVals, 0);
-        qMid.toArray(outVals, 4);
-        qA.toArray(outVals, 8);
-        idleTracks.push(new THREE.QuaternionKeyframeTrack(track.name, times, outVals));
+        const isAnimatedBreathBone =
+          nodeName.includes('Spine1') ||
+          nodeName.includes('Head') ||
+          (nodeName.includes('LeftArm') && !nodeName.includes('ForeArm')) ||
+          (nodeName.includes('RightArm') && !nodeName.includes('ForeArm'));
+
+        const outVals = isAnimatedBreathBone
+          ? new Float32Array(12)
+          : new Float32Array(8);
+        if (isAnimatedBreathBone) {
+          qA.toArray(outVals, 0);
+          qMid.toArray(outVals, 4);
+          qA.toArray(outVals, 8);
+          idleTracks.push(new THREE.QuaternionKeyframeTrack(track.name, times, outVals));
+        } else if (isArmChain) {
+          // Relaxed arm chain pose needs only 2 endpoints instead of 3
+          const twoTimes = new Float32Array([0, duration]);
+          qA.toArray(outVals, 0);
+          qA.toArray(outVals, 4);
+          idleTracks.push(new THREE.QuaternionKeyframeTrack(track.name, twoTimes, outVals));
+        } else if (node) {
+          // Apply rest pose directly to bone; only add 2-keyframe track so crossFade from walk resets legs
+          node.quaternion.copy(qA);
+          const twoTimes = new Float32Array([0, duration]);
+          qA.toArray(outVals, 0);
+          qA.toArray(outVals, 4);
+          idleTracks.push(new THREE.QuaternionKeyframeTrack(track.name, twoTimes, outVals));
+        }
       } else if (prop === 'position' && nodeName.includes('Hips')) {
         const px = node ? node.position.x : track.values[0];
         const py = node ? node.position.y : track.values[1];
@@ -272,8 +297,8 @@ export class DwarfCharacter {
     const isMoving = moveSpeed > 0.15;
     const isRunning = moveSpeed > 8.8;
 
-    // Select and update skeletal animation state
-    if (this.mixer) {
+    // Select and update skeletal animation state only when visible
+    if (this.mixer && this.root.visible) {
       if (isSwimming) {
         this.transitionTo('swim', 0.3);
         if (this.actions.swim) {

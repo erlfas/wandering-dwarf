@@ -23,7 +23,8 @@ export class ChunkManager {
   private readonly treeMaterial: THREE.MeshStandardMaterial;
   private readonly waterMaterial: THREE.MeshStandardMaterial;
 
-  private chunks = new Map<string, TerrainChunk>();
+  private chunks = new Map<number, TerrainChunk>();
+  private desiredKeys = new Set<number>();
   private buildQueue: PendingChunkRequest[] = [];
   private config: WorldConfig;
   private noise: TerrainNoise;
@@ -33,6 +34,7 @@ export class ChunkManager {
   constructor(config: WorldConfig, noise: TerrainNoise) {
     this.config = config;
     this.noise = noise;
+    this.group.matrixAutoUpdate = false;
 
     this.material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -60,8 +62,8 @@ export class ChunkManager {
     loadGrassClumpModel(this.grassUniforms);
   }
 
-  private getKey(cx: number, cz: number): string {
-    return `${cx},${cz}`;
+  private getKey(cx: number, cz: number): number {
+    return ((cx & 0xffff) << 16) | (cz & 0xffff);
   }
 
   private getSegmentsForDistance(dist: number): number {
@@ -110,7 +112,7 @@ export class ChunkManager {
         break;
       }
 
-      const req = this.buildQueue.shift()!;
+      const req = this.buildQueue.pop()!;
       const key = this.getKey(req.cx, req.cz);
       const existing = this.chunks.get(key);
       const dist = Math.sqrt(req.distSq);
@@ -121,23 +123,25 @@ export class ChunkManager {
           : 0;
 
       if (existing) {
-        if (existing.segments === req.segments) {
-          existing.updateForestLOD(dist);
-          if (Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01) {
-            existing.updateGrass(
-              effectiveGrassMult,
-              this.config,
-              this.noise,
-              this.grassMaterial,
-              this.flowerMaterial
-            );
+        if (existing.segments !== req.segments) {
+          existing.updateSegments(req.segments, this.config, this.noise);
+          built++;
+        }
+        existing.updateForestLOD(dist);
+        if (Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01) {
+          const hadGrassObj = existing.hasGrass;
+          existing.updateGrass(
+            effectiveGrassMult,
+            this.config,
+            this.noise,
+            this.grassMaterial,
+            this.flowerMaterial
+          );
+          if (!hadGrassObj && existing.hasGrass) {
             built++;
           }
-          continue;
         }
-        this.group.remove(existing.mesh);
-        existing.dispose();
-        this.chunks.delete(key);
+        continue;
       }
 
       const chunk = new TerrainChunk(
@@ -163,7 +167,8 @@ export class ChunkManager {
 
   private refreshQueue(centerCx: number, centerCz: number): void {
     const r = this.config.renderRadius;
-    const desiredKeys = new Set<string>();
+    const desiredKeys = this.desiredKeys;
+    desiredKeys.clear();
     const requests: PendingChunkRequest[] = [];
 
     for (let dz = -r; dz <= r; dz++) {
@@ -183,6 +188,21 @@ export class ChunkManager {
 
         if (existing) {
           existing.updateForestLOD(dist);
+          if (
+            existing.segments === segments &&
+            Math.abs(existing.grassDensityMult - grassDensityMult) > 0.01 &&
+            existing.hasGrass
+          ) {
+            // Instant O(1) grass count scaling without queueing
+            existing.updateGrass(
+              grassDensityMult,
+              this.config,
+              this.noise,
+              this.grassMaterial,
+              this.flowerMaterial
+            );
+            continue;
+          }
         }
 
         if (
@@ -203,7 +223,8 @@ export class ChunkManager {
       }
     }
 
-    requests.sort((a, b) => a.distSq - b.distSq);
+    // Sort descending so buildQueue.pop() processes closest chunks first in O(1)
+    requests.sort((a, b) => b.distSq - a.distSq);
     this.buildQueue = requests;
   }
 
@@ -216,12 +237,12 @@ export class ChunkManager {
     this.buildQueue = [];
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
-    this.update(worldX, worldY, worldZ, this.grassUniforms.uTime.value, true);
+    this.update(worldX, worldY, worldZ, this.grassUniforms.uTime.value, false);
   }
 
   public setBordersVisible(visible: boolean): void {
     for (const chunk of this.chunks.values()) {
-      chunk.setBorderVisible(visible, this.noise);
+      chunk.setBorderVisible(visible);
     }
   }
 
@@ -255,14 +276,15 @@ export class ChunkManager {
     const fz = THREE.MathUtils.clamp((localZ - gz * step) / step, 0, 1);
 
     const stride = segments + 1;
-    const posAttr = chunk.mesh.geometry.attributes.position as THREE.BufferAttribute;
+    const posArr = (chunk.mesh.geometry.attributes.position as THREE.BufferAttribute)
+      .array as Float32Array;
     const row0 = gz * stride + gx;
     const row1 = row0 + stride;
 
-    const h00 = posAttr.getY(row0);
-    const h10 = posAttr.getY(row0 + 1);
-    const h01 = posAttr.getY(row1);
-    const h11 = posAttr.getY(row1 + 1);
+    const h00 = posArr[row0 * 3 + 1];
+    const h10 = posArr[(row0 + 1) * 3 + 1];
+    const h01 = posArr[row1 * 3 + 1];
+    const h11 = posArr[(row1 + 1) * 3 + 1];
 
     // PlaneGeometry splits each quad from top-right (1,0) to bottom-left (0,1)
     if (fx + fz <= 1.0) {

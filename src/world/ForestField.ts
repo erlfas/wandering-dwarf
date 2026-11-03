@@ -16,13 +16,13 @@ function colorizeGeometry(
   topColor: THREE.Color,
   swayWeight: number
 ): THREE.BufferGeometry {
-  const nonIndexed = geo.index ? geo.toNonIndexed() : geo.clone();
-  nonIndexed.computeBoundingBox();
-  const minY = nonIndexed.boundingBox!.min.y;
-  const maxY = nonIndexed.boundingBox!.max.y;
+  const cloned = geo.clone();
+  cloned.computeBoundingBox();
+  const minY = cloned.boundingBox!.min.y;
+  const maxY = cloned.boundingBox!.max.y;
   const spanY = Math.max(0.01, maxY - minY);
 
-  const posAttr = nonIndexed.attributes.position as THREE.BufferAttribute;
+  const posAttr = cloned.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(posAttr.count * 3);
   const uvs = new Float32Array(posAttr.count * 2);
   const c = new THREE.Color();
@@ -40,9 +40,9 @@ function colorizeGeometry(
     uvs[i * 2 + 1] = swayWeight * (0.25 + 0.75 * t);
   }
 
-  nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  nonIndexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  return nonIndexed;
+  cloned.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  cloned.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  return cloned;
 }
 
 /**
@@ -413,13 +413,57 @@ export function applyWindShaderToMaterial(
     }
   };
 
+  const injectDepthWind = (shader: THREE.WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.uTime = uniforms.uTime;
+    shader.uniforms.uWindSpeed = uniforms.uWindSpeed;
+    shader.uniforms.uWindStrength = uniforms.uWindStrength;
+
+    shader.vertexShader =
+      `
+      uniform float uTime;
+      uniform float uWindSpeed;
+      uniform float uWindStrength;
+      ` + shader.vertexShader;
+
+    if (useHeightAndRadiusWeights) {
+      // Lightweight trunk-only bend for the shadow depth pass (skips per-needle trig flutter)
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float hNorm = clamp(transformed.y / 8.0, 0.0, 1.0);
+        float trunkBend = hNorm * hNorm;
+        float treePhase = instWorld.x * 0.07 + instWorld.z * 0.06 + uTime * uWindSpeed * 0.75;
+        transformed.x += sin(treePhase) * uWindStrength * 0.85 * trunkBend;
+        transformed.z += cos(treePhase * 0.82) * uWindStrength * 0.6 * trunkBend;
+        `
+      );
+    } else {
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float swayWeight = uv.y;
+        float treePhase = instWorld.x * 0.08 + instWorld.z * 0.07 + uTime * uWindSpeed * 0.65;
+        transformed.x += sin(treePhase) * uWindStrength * 0.45 * swayWeight;
+        transformed.z += cos(treePhase * 0.85) * uWindStrength * 0.35 * swayWeight;
+        `
+      );
+    }
+  };
+
+  const cacheKey = `tree_wind_${useHeightAndRadiusWeights ? 'glb' : 'proc'}`;
+  mat.customProgramCacheKey = () => cacheKey;
   mat.onBeforeCompile = injectWind;
 
   // Custom depth material so dynamic shadows cast on the ground sway in the wind too
   const depthMat = new THREE.MeshDepthMaterial({
     depthPacking: THREE.RGBADepthPacking,
   });
-  depthMat.onBeforeCompile = injectWind;
+  depthMat.customProgramCacheKey = () => `${cacheKey}_depth`;
+  depthMat.onBeforeCompile = injectDepthWind;
   (mat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }).customDepthMaterial =
     depthMat;
   mat.needsUpdate = true;
@@ -617,12 +661,57 @@ let sharedTrackCobbleGeo: THREE.BufferGeometry | null = null;
 let sharedTrackRootsGeo: THREE.BufferGeometry | null = null;
 let sharedFernGeo: THREE.BufferGeometry | null = null;
 let sharedFernMat: THREE.MeshStandardMaterial | null = null;
+let sharedStaticPropMat: THREE.MeshStandardMaterial | null = null;
 
 const forestDummy = new THREE.Object3D();
 const forestNormal = new THREE.Vector3();
 const upVec = new THREE.Vector3(0, 1, 0);
 const alignQuat = new THREE.Quaternion();
 const yawQuat = new THREE.Quaternion();
+const sharedTint = new THREE.Color();
+
+// Pre-allocated scratch buffers for zero-allocation ChunkForest builds
+const MAX_GRID_INST = 25;
+const MAX_TRACK_INST = 96;
+const pineMatBuf = new Float32Array(MAX_GRID_INST * 16);
+const pineColBuf = new Float32Array(MAX_GRID_INST * 3);
+const oakMatBuf = new Float32Array(MAX_GRID_INST * 16);
+const oakColBuf = new Float32Array(MAX_GRID_INST * 3);
+const rockMatBuf = new Float32Array(MAX_GRID_INST * 16);
+const rockColBuf = new Float32Array(MAX_GRID_INST * 3);
+const cobbleMatBuf = new Float32Array(MAX_TRACK_INST * 16);
+const cobbleColBuf = new Float32Array(MAX_TRACK_INST * 3);
+const rootsMatBuf = new Float32Array(MAX_TRACK_INST * 16);
+const rootsColBuf = new Float32Array(MAX_TRACK_INST * 3);
+const fernMatBuf = new Float32Array(MAX_TRACK_INST * 16);
+const fernColBuf = new Float32Array(MAX_TRACK_INST * 3);
+
+function recordInstance(
+  matBuf: Float32Array,
+  colBuf: Float32Array,
+  idx: number,
+  matrix: THREE.Matrix4,
+  color: THREE.Color
+): void {
+  matrix.toArray(matBuf, idx * 16);
+  const cIdx = idx * 3;
+  colBuf[cIdx] = color.r;
+  colBuf[cIdx + 1] = color.g;
+  colBuf[cIdx + 2] = color.b;
+}
+
+function populateInstancedMesh(
+  mesh: THREE.InstancedMesh,
+  matBuf: Float32Array,
+  colBuf: Float32Array,
+  count: number
+): void {
+  (mesh.instanceMatrix.array as Float32Array).set(matBuf.subarray(0, count * 16));
+  mesh.instanceMatrix.needsUpdate = true;
+  const colArray = new Float32Array(count * 3);
+  colArray.set(colBuf.subarray(0, count * 3));
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(colArray, 3);
+}
 
 export class ChunkForest {
   public readonly group = new THREE.Group();
@@ -646,6 +735,7 @@ export class ChunkForest {
     castShadow = false,
     sampler?: ChunkSurfaceSampler
   ) {
+    this.group.matrixAutoUpdate = false;
     this.treeMaterial = treeMaterial;
     this.isNearLOD = isNearLOD;
     if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
@@ -659,6 +749,15 @@ export class ChunkForest {
       sharedFernMat.side = THREE.DoubleSide;
       sharedFernMat.roughness = 0.78;
       sharedFernMat.onBeforeCompile = (treeMaterial as THREE.MeshStandardMaterial).onBeforeCompile;
+      sharedFernMat.customProgramCacheKey = () => 'tree_wind_proc_fern';
+    }
+    if (!sharedStaticPropMat) {
+      sharedStaticPropMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.86,
+        metalness: 0.02,
+      });
     }
 
     // Use a 9.6m jittered grid (5x5 = 25 candidate cells per 48m chunk) so trees NEVER overlap
@@ -670,15 +769,20 @@ export class ChunkForest {
     const chunkSeed = ((cx * 92837111) ^ (cz * 689287499) ^ (config.seed + 71)) >>> 0;
     const rng = createSeededRandom(chunkSeed);
 
-    const pineTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
-    const broadleafTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
-    const rockTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
-    const cobbleTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
-    const rootsTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
-    const fernTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
+    let pineCount = 0;
+    let broadleafCount = 0;
+    let rockCount = 0;
+    let cobbleCount = 0;
+    let rootsCount = 0;
+    let fernCount = 0;
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
+    const chunkHasTrack =
+      config.enableTracks &&
+      (sampler?.hasTrack
+        ? sampler.hasTrack()
+        : noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85);
 
     if (config.enableTrees) {
       for (let gz = 0; gz < gridSteps; gz++) {
@@ -714,8 +818,8 @@ export class ChunkForest {
             const rScale = 0.6 + rng() * 0.95;
             forestDummy.scale.set(rScale, rScale * (0.75 + rng() * 0.4), rScale);
             forestDummy.updateMatrix();
-            const rockTint = new THREE.Color(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
-            rockTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rockTint });
+            sharedTint.setHex(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
+            recordInstance(rockMatBuf, rockColBuf, rockCount++, forestDummy.matrix, sharedTint);
             continue;
           }
 
@@ -724,7 +828,7 @@ export class ChunkForest {
           if (forestNormal.y < 0.78) continue;
 
           // Keep walking tracks completely clear of trees so dwarfs have an open path
-          if (config.enableTracks && noise.getTrackWeight(wx, wz, wy) > 0.16) continue;
+          if (chunkHasTrack && noise.getTrackWeight(wx, wz, wy) > 0.16) continue;
 
           // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
           const groveDensity = noise.getForestDensity(wx, wz);
@@ -747,7 +851,7 @@ export class ChunkForest {
           forestDummy.scale.setScalar(randomScale);
           forestDummy.updateMatrix();
 
-          const tint = new THREE.Color(0xffffff).offsetHSL(
+          sharedTint.setHex(0xffffff).offsetHSL(
             (rng() - 0.5) * 0.035,
             (rng() - 0.5) * 0.08,
             (rng() - 0.5) * 0.08
@@ -756,26 +860,27 @@ export class ChunkForest {
           // Mix conifers and broadleaf trees (more pines on higher slopes, more oaks in warm valleys)
           const pineBias = THREE.MathUtils.clamp(0.48 + (wy - config.waterLevel) * 0.008, 0.3, 0.75);
           if (rng() < pineBias) {
-            pineTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
+            recordInstance(pineMatBuf, pineColBuf, pineCount++, forestDummy.matrix, sharedTint);
           } else {
-            broadleafTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
+            recordInstance(oakMatBuf, oakColBuf, broadleafCount++, forestDummy.matrix, sharedTint);
           }
         }
       }
     }
 
     // Populate 3D Forest Track details (embedded cobble clusters, gnarled bank roots & woodland ferns)
-    // Only evaluate on chunks whose center is within reach of a track corridor
-    if (
-      config.enableTracks &&
-      noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85
-    ) {
+    // Only evaluate on chunks that actually contain a track corridor
+    if (chunkHasTrack) {
       const trackCandidates = 96;
       for (let i = 0; i < trackCandidates; i++) {
         const lx = (rng() - 0.5) * size;
         const lz = (rng() - 0.5) * size;
         const wx = worldOffsetX + lx;
         const wz = worldOffsetZ + lz;
+
+        // Check track weight BEFORE computing surface normal & quaternion (~86% reject rate)
+        const trackW = noise.getTrackWeight(wx, wz);
+        if (trackW <= 0.03) continue;
 
         let wy: number;
         if (sampler) {
@@ -787,9 +892,6 @@ export class ChunkForest {
 
         if (config.enableWater && wy < config.waterLevel + 0.45) continue;
         if (forestNormal.y < 0.72) continue;
-
-        const trackW = noise.getTrackWeight(wx, wz, wy);
-        if (trackW <= 0.03) continue;
 
         alignQuat.setFromUnitVectors(upVec, forestNormal);
 
@@ -804,25 +906,21 @@ export class ChunkForest {
             const cScale = 0.72 + rng() * 0.65;
             forestDummy.scale.set(cScale, cScale * (0.75 + rng() * 0.35), cScale);
             forestDummy.updateMatrix();
-            const cobbleTint = new THREE.Color(0xffffff).offsetHSL(
+            sharedTint.setHex(0xffffff).offsetHSL(
               (rng() - 0.5) * 0.03,
               (rng() - 0.5) * 0.06,
               (rng() - 0.5) * 0.14
             );
-            cobbleTransforms.push({ matrix: forestDummy.matrix.clone(), tint: cobbleTint });
+            recordInstance(cobbleMatBuf, cobbleColBuf, cobbleCount++, forestDummy.matrix, sharedTint);
           }
         }
         // 2. Earthen Embankment / Verge Edge (0.20 <= trackW < 0.48): Gnarled exposed roots & woodland ferns
         else if (trackW >= 0.2) {
           const roll = rng();
           if (roll < 0.38) {
-            // Point gnarled root tendrils inward toward the lower track bed
-            const dPlusX = noise.getTrackDistance(wx + 0.6, wz);
-            const dMinusX = noise.getTrackDistance(wx - 0.6, wz);
-            const dPlusZ = noise.getTrackDistance(wx, wz + 0.6);
-            const dMinusZ = noise.getTrackDistance(wx, wz - 0.6);
+            // Orient gnarled root tendrils down the embankment slope toward the track bed (0 extra noise calls)
             const inwardAngle =
-              Math.atan2(dMinusX - dPlusX, dMinusZ - dPlusZ) + (rng() - 0.5) * 0.55;
+              Math.atan2(forestNormal.x, forestNormal.z) + (rng() - 0.5) * 0.55;
 
             forestDummy.position.set(lx, wy - 0.015, lz);
             yawQuat.setFromAxisAngle(upVec, inwardAngle);
@@ -830,12 +928,12 @@ export class ChunkForest {
             const rScale = 0.82 + rng() * 0.62;
             forestDummy.scale.setScalar(rScale);
             forestDummy.updateMatrix();
-            const rootTint = new THREE.Color(0xffffff).offsetHSL(
+            sharedTint.setHex(0xffffff).offsetHSL(
               (rng() - 0.5) * 0.03,
               (rng() - 0.5) * 0.08,
               (rng() - 0.5) * 0.12
             );
-            rootsTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rootTint });
+            recordInstance(rootsMatBuf, rootsColBuf, rootsCount++, forestDummy.matrix, sharedTint);
           } else if (roll < 0.78) {
             // Lush woodland fern rosette framing the track shoulder
             forestDummy.position.set(lx, wy - 0.02, lz);
@@ -844,12 +942,12 @@ export class ChunkForest {
             const fScale = 0.78 + rng() * 0.58;
             forestDummy.scale.setScalar(fScale);
             forestDummy.updateMatrix();
-            const fernTint = new THREE.Color(0xffffff).offsetHSL(
+            sharedTint.setHex(0xffffff).offsetHSL(
               (rng() - 0.5) * 0.04,
               (rng() - 0.5) * 0.1,
               (rng() - 0.5) * 0.1
             );
-            fernTransforms.push({ matrix: forestDummy.matrix.clone(), tint: fernTint });
+            recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
           }
         }
         // 3. Outer Grassy Shoulder (0.03 < trackW < 0.20): Additional border ferns
@@ -860,149 +958,122 @@ export class ChunkForest {
           const fScale = 0.72 + rng() * 0.62;
           forestDummy.scale.setScalar(fScale);
           forestDummy.updateMatrix();
-          const fernTint = new THREE.Color(0xffffff).offsetHSL(
+          sharedTint.setHex(0xffffff).offsetHSL(
             (rng() - 0.5) * 0.04,
             (rng() - 0.5) * 0.1,
             (rng() - 0.5) * 0.1
           );
-          fernTransforms.push({ matrix: forestDummy.matrix.clone(), tint: fernTint });
+          recordInstance(fernMatBuf, fernColBuf, fernCount++, forestDummy.matrix, sharedTint);
         }
       }
     }
 
-    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, 4, 0), size * 0.85);
+    const bounds = sampler?.getElevationBounds?.();
+    const minH = bounds ? bounds.minH : -15;
+    const maxH = bounds ? bounds.maxH + 9.5 : 45;
+    const centerY = (minH + maxH) * 0.5;
+    const halfY = (maxH - minH) * 0.5;
+    const halfSize = size * 0.5;
+    const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 3.5;
+    const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
 
-    if (pineTransforms.length > 0 && pineTransforms.length <= maxCandidates) {
+    if (pineCount > 0 && pineCount <= maxCandidates) {
       const useHighPoly = isNearLOD && sharedPineGeo && sharedPineMat;
       const activeGeo = useHighPoly ? sharedPineGeo! : fallbackPineGeo;
       const activeMat = useHighPoly ? sharedPineMat! : treeMaterial;
-      this.pineInstanced = new THREE.InstancedMesh(
-        activeGeo,
-        activeMat,
-        pineTransforms.length
-      );
+      this.pineInstanced = new THREE.InstancedMesh(activeGeo, activeMat, pineCount);
       this.pineInstanced.castShadow = castShadow;
       this.pineInstanced.receiveShadow = true;
       this.pineInstanced.boundingSphere = chunkBoundSphere;
+      this.pineInstanced.matrixAutoUpdate = false;
       const customDepth = (
         activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
       if (customDepth) {
         this.pineInstanced.customDepthMaterial = customDepth;
       }
-      pineTransforms.forEach((item, idx) => {
-        this.pineInstanced!.setMatrixAt(idx, item.matrix);
-        this.pineInstanced!.setColorAt(idx, item.tint);
-      });
-      this.pineInstanced.instanceMatrix.needsUpdate = true;
-      if (this.pineInstanced.instanceColor) this.pineInstanced.instanceColor.needsUpdate = true;
+      populateInstancedMesh(this.pineInstanced, pineMatBuf, pineColBuf, pineCount);
       if (isNearLOD) {
         activePineMeshes.add(this.pineInstanced);
       }
       this.group.add(this.pineInstanced);
     }
 
-    if (broadleafTransforms.length > 0 && broadleafTransforms.length <= maxCandidates) {
+    if (broadleafCount > 0 && broadleafCount <= maxCandidates) {
       const useHighPoly = isNearLOD && sharedOakGeo && sharedOakMat;
       const activeGeo = useHighPoly ? sharedOakGeo! : fallbackBroadleafGeo;
       const activeMat = useHighPoly ? sharedOakMat! : treeMaterial;
-      this.broadleafInstanced = new THREE.InstancedMesh(
-        activeGeo,
-        activeMat,
-        broadleafTransforms.length
-      );
+      this.broadleafInstanced = new THREE.InstancedMesh(activeGeo, activeMat, broadleafCount);
       this.broadleafInstanced.castShadow = castShadow;
       this.broadleafInstanced.receiveShadow = true;
       this.broadleafInstanced.boundingSphere = chunkBoundSphere;
+      this.broadleafInstanced.matrixAutoUpdate = false;
       const customDepth = (
         activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
       ).customDepthMaterial;
       if (customDepth) {
         this.broadleafInstanced.customDepthMaterial = customDepth;
       }
-      broadleafTransforms.forEach((item, idx) => {
-        this.broadleafInstanced!.setMatrixAt(idx, item.matrix);
-        this.broadleafInstanced!.setColorAt(idx, item.tint);
-      });
-      this.broadleafInstanced.instanceMatrix.needsUpdate = true;
-      if (this.broadleafInstanced.instanceColor)
-        this.broadleafInstanced.instanceColor.needsUpdate = true;
+      populateInstancedMesh(this.broadleafInstanced, oakMatBuf, oakColBuf, broadleafCount);
       if (isNearLOD) {
         activeBroadleafMeshes.add(this.broadleafInstanced);
       }
       this.group.add(this.broadleafInstanced);
     }
 
-    if (rockTransforms.length > 0) {
+    if (rockCount > 0) {
       this.rockInstanced = new THREE.InstancedMesh(
         sharedRockGeo,
-        treeMaterial,
-        rockTransforms.length
+        sharedStaticPropMat,
+        rockCount
       );
       this.rockInstanced.castShadow = castShadow;
       this.rockInstanced.receiveShadow = true;
       this.rockInstanced.boundingSphere = chunkBoundSphere;
-      rockTransforms.forEach((item, idx) => {
-        this.rockInstanced!.setMatrixAt(idx, item.matrix);
-        this.rockInstanced!.setColorAt(idx, item.tint);
-      });
-      this.rockInstanced.instanceMatrix.needsUpdate = true;
-      if (this.rockInstanced.instanceColor) this.rockInstanced.instanceColor.needsUpdate = true;
+      this.rockInstanced.matrixAutoUpdate = false;
+      populateInstancedMesh(this.rockInstanced, rockMatBuf, rockColBuf, rockCount);
       this.group.add(this.rockInstanced);
     }
 
-    if (cobbleTransforms.length > 0) {
+    if (cobbleCount > 0) {
       this.cobbleInstanced = new THREE.InstancedMesh(
         sharedTrackCobbleGeo,
-        treeMaterial,
-        cobbleTransforms.length
+        sharedStaticPropMat,
+        cobbleCount
       );
       this.cobbleInstanced.castShadow = false;
       this.cobbleInstanced.receiveShadow = true;
       this.cobbleInstanced.boundingSphere = chunkBoundSphere;
-      cobbleTransforms.forEach((item, idx) => {
-        this.cobbleInstanced!.setMatrixAt(idx, item.matrix);
-        this.cobbleInstanced!.setColorAt(idx, item.tint);
-      });
-      this.cobbleInstanced.instanceMatrix.needsUpdate = true;
-      if (this.cobbleInstanced.instanceColor)
-        this.cobbleInstanced.instanceColor.needsUpdate = true;
+      this.cobbleInstanced.matrixAutoUpdate = false;
+      populateInstancedMesh(this.cobbleInstanced, cobbleMatBuf, cobbleColBuf, cobbleCount);
       this.group.add(this.cobbleInstanced);
     }
 
-    if (rootsTransforms.length > 0) {
+    if (rootsCount > 0) {
       this.rootsInstanced = new THREE.InstancedMesh(
         sharedTrackRootsGeo,
-        treeMaterial,
-        rootsTransforms.length
+        sharedStaticPropMat,
+        rootsCount
       );
-      this.rootsInstanced.castShadow = castShadow;
+      this.rootsInstanced.castShadow = false;
       this.rootsInstanced.receiveShadow = true;
       this.rootsInstanced.boundingSphere = chunkBoundSphere;
-      rootsTransforms.forEach((item, idx) => {
-        this.rootsInstanced!.setMatrixAt(idx, item.matrix);
-        this.rootsInstanced!.setColorAt(idx, item.tint);
-      });
-      this.rootsInstanced.instanceMatrix.needsUpdate = true;
-      if (this.rootsInstanced.instanceColor) this.rootsInstanced.instanceColor.needsUpdate = true;
+      this.rootsInstanced.matrixAutoUpdate = false;
+      populateInstancedMesh(this.rootsInstanced, rootsMatBuf, rootsColBuf, rootsCount);
       this.group.add(this.rootsInstanced);
     }
 
-    if (fernTransforms.length > 0) {
+    if (fernCount > 0) {
       this.fernInstanced = new THREE.InstancedMesh(
         sharedFernGeo,
         sharedFernMat ?? treeMaterial,
-        fernTransforms.length
+        fernCount
       );
       this.fernInstanced.castShadow = false;
       this.fernInstanced.receiveShadow = true;
       this.fernInstanced.boundingSphere = chunkBoundSphere;
-      fernTransforms.forEach((item, idx) => {
-        this.fernInstanced!.setMatrixAt(idx, item.matrix);
-        this.fernInstanced!.setColorAt(idx, item.tint);
-      });
-      this.fernInstanced.instanceMatrix.needsUpdate = true;
-      if (this.fernInstanced.instanceColor) this.fernInstanced.instanceColor.needsUpdate = true;
+      this.fernInstanced.matrixAutoUpdate = false;
+      populateInstancedMesh(this.fernInstanced, fernMatBuf, fernColBuf, fernCount);
       this.group.add(this.fernInstanced);
     }
   }
@@ -1073,9 +1144,6 @@ export class ChunkForest {
     }
     if (this.rockInstanced) {
       this.rockInstanced.castShadow = castShadow;
-    }
-    if (this.rootsInstanced) {
-      this.rootsInstanced.castShadow = castShadow;
     }
   }
 

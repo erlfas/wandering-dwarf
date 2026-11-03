@@ -175,7 +175,7 @@ body {
   width: 12px;
   height: 40px;
   position: relative;
-  transition: transform 0.04s linear;
+  will-change: transform;
 }
 
 .needle-north {
