@@ -196,6 +196,10 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     this.chunkForest?.setLOD(dist <= 1.5, dist <= 2.2);
   }
 
+  public getColliders(): Float32Array | undefined {
+    return this.chunkForest?.colliders;
+  }
+
   public sampleHeightAndNormal(
     localX: number,
     localZ: number,

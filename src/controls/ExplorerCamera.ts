@@ -157,9 +157,20 @@ export class ExplorerCamera {
         this.config.cameraMode === 'free' ? 2.5 : isSwimming ? 0.78 : 1.0;
       actualSpeed = baseSpeed * modeSpeedMultiplier;
 
-      this.playerPos.x += moveX * actualSpeed * dt;
-      this.playerPos.z += moveZ * actualSpeed * dt;
+      const prevX = this.playerPos.x;
+      const prevZ = this.playerPos.z;
+      const stepDist = actualSpeed * dt;
+      this.playerPos.x += moveX * stepDist;
+      this.playerPos.z += moveZ * stepDist;
       targetHeading = Math.atan2(moveX, moveZ);
+
+      if (this.config.cameraMode === 'dwarf') {
+        this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
+        const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
+        if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
+          actualSpeed = 0;
+        }
+      }
     }
 
     // Clamp player height to the rendered triangle surface (or buoyant swimming elevation in rivers/ponds)

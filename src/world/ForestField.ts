@@ -812,6 +812,15 @@ const rootsMatBuf = new Float32Array(MAX_TRACK_INST * 16);
 const rootsColBuf = new Float32Array(MAX_TRACK_INST * 3);
 const fernMatBuf = new Float32Array(MAX_TRACK_INST * 16);
 const fernColBuf = new Float32Array(MAX_TRACK_INST * 3);
+const colliderScratchBuf = new Float32Array(MAX_GRID_INST * 3);
+const EMPTY_COLLIDERS = new Float32Array(0);
+
+function recordCollider(idx: number, wx: number, wz: number, radius: number): void {
+  const cIdx = idx * 3;
+  colliderScratchBuf[cIdx] = wx;
+  colliderScratchBuf[cIdx + 1] = wz;
+  colliderScratchBuf[cIdx + 2] = radius;
+}
 
 function recordInstance(
   matBuf: Float32Array,
@@ -842,6 +851,7 @@ function populateInstancedMesh(
 
 export class ChunkForest {
   public readonly group = new THREE.Group();
+  public readonly colliders: Float32Array;
   private pineInstanced?: THREE.InstancedMesh;
   private broadleafInstanced?: THREE.InstancedMesh;
   private hutInstanced?: THREE.InstancedMesh;
@@ -902,6 +912,7 @@ export class ChunkForest {
     let broadleafCount = 0;
     let hutCount = 0;
     let rockCount = 0;
+    let colliderCount = 0;
     let cobbleCount = 0;
     let rootsCount = 0;
     let fernCount = 0;
@@ -950,6 +961,7 @@ export class ChunkForest {
             forestDummy.updateMatrix();
             sharedTint.setHex(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
             recordInstance(rockMatBuf, rockColBuf, rockCount++, forestDummy.matrix, sharedTint);
+            recordCollider(colliderCount++, wx, wz, 0.58 * rScale);
             continue;
           }
 
@@ -994,6 +1006,7 @@ export class ChunkForest {
               (rng() - 0.5) * 0.06
             );
             recordInstance(hutMatBuf, hutColBuf, hutCount++, forestDummy.matrix, sharedTint);
+            recordCollider(colliderCount++, wx, wz, 2.22 * hutScale);
             continue;
           }
 
@@ -1020,12 +1033,17 @@ export class ChunkForest {
           const pineBias = THREE.MathUtils.clamp(0.48 + (wy - config.waterLevel) * 0.008, 0.3, 0.75);
           if (rng() < pineBias) {
             recordInstance(pineMatBuf, pineColBuf, pineCount++, forestDummy.matrix, sharedTint);
+            recordCollider(colliderCount++, wx, wz, 0.45 * randomScale);
           } else {
             recordInstance(oakMatBuf, oakColBuf, broadleafCount++, forestDummy.matrix, sharedTint);
+            recordCollider(colliderCount++, wx, wz, 0.52 * randomScale);
           }
         }
       }
     }
+
+    this.colliders =
+      colliderCount > 0 ? colliderScratchBuf.slice(0, colliderCount * 3) : EMPTY_COLLIDERS;
 
     // Populate 3D Forest Track details (embedded cobble clusters, gnarled bank roots & woodland ferns)
     // Only evaluate on chunks that actually contain a track corridor

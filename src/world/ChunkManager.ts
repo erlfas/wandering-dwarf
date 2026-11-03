@@ -299,4 +299,46 @@ export class ChunkManager {
       return h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
     }
   }
+
+  /**
+   * Resolves 2D circle-circle collisions between the player (radius `playerRadius`) and nearby
+   * trees, dwarven huts, and shoreline boulders in O(1) time with zero heap allocations.
+   */
+  public resolveObstacleCollision(pos: THREE.Vector3, playerRadius = 0.38): void {
+    if (this.config.blankClayMode || !this.config.enableTrees) return;
+
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(pos.x / size);
+    const centerCz = Math.round(pos.z / size);
+
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const chunk = this.chunks.get(this.getKey(centerCx + dx, centerCz + dz));
+        if (!chunk) continue;
+        const colliders = chunk.getColliders();
+        if (!colliders || colliders.length === 0) continue;
+
+        for (let i = 0; i < colliders.length; i += 3) {
+          const ox = colliders[i];
+          const oz = colliders[i + 1];
+          const minDist = colliders[i + 2] + playerRadius;
+
+          const diffX = pos.x - ox;
+          const diffZ = pos.z - oz;
+          const distSq = diffX * diffX + diffZ * diffZ;
+
+          if (distSq < minDist * minDist) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 0.0001) {
+              const push = (minDist - dist) / dist;
+              pos.x += diffX * push;
+              pos.z += diffZ * push;
+            } else {
+              pos.x += minDist;
+            }
+          }
+        }
+      }
+    }
+  }
 }
