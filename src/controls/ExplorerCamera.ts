@@ -26,6 +26,11 @@ export class ExplorerCamera {
   private isDragging = false;
   private lastMouseX = 0;
   private lastMouseY = 0;
+  private moveBasisYaw = 0.35;
+  private prevForward = 0;
+  private prevRight = 0;
+  private followActive = false;
+  private mouseOverrideTimer = 0;
   private smoothedTarget = new THREE.Vector3();
   private desiredTarget = new THREE.Vector3();
   private lastGroundY = 0;
@@ -132,6 +137,11 @@ export class ExplorerCamera {
     this.dwarf.root.rotation.y = heading;
 
     this.yaw = yaw;
+    this.moveBasisYaw = yaw;
+    this.prevForward = 0;
+    this.prevRight = 0;
+    this.followActive = false;
+    this.mouseOverrideTimer = 0;
     this.pitch = THREE.MathUtils.clamp(pitch, 0.08, Math.PI * 0.44);
     this.distance = THREE.MathUtils.clamp(distance, 4.0, 45.0);
 
@@ -141,7 +151,7 @@ export class ExplorerCamera {
 
   public resetToOrigin(): void {
     const trackHeading = this.config.enableTracks ? this.noise.getTrackHeading(0, 0) : 0;
-    const defaultYaw = this.config.enableTracks ? trackHeading + Math.PI : 0.35;
+    const defaultYaw = trackHeading + Math.PI;
     this.setPose(0, 0, trackHeading, defaultYaw, 0.46, 11.5);
   }
 
@@ -199,6 +209,10 @@ export class ExplorerCamera {
       { passive: true }
     );
 
+    domElement.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
     window.addEventListener(
       'mouseup',
       () => {
@@ -215,6 +229,11 @@ export class ExplorerCamera {
         const dy = e.clientY - this.lastMouseY;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
+        if (dx === 0 && dy === 0) return;
+
+        // Manual mouse orbit overrides the behind-the-dwarf auto-follow camera
+        this.followActive = false;
+        this.mouseOverrideTimer = 1.25;
 
         const sensitivity = 0.0045;
         this.yaw -= dx * sensitivity;
@@ -326,13 +345,47 @@ export class ExplorerCamera {
       baseSpeed *= 1.2;
     }
 
-    // Compute camera-relative horizontal basis vectors once per frame
-    const sinYaw = Math.sin(this.yaw);
-    const cosYaw = Math.cos(this.yaw);
-    const camForwardX = -sinYaw;
-    const camForwardZ = -cosYaw;
-    const camRightX = cosYaw;
-    const camRightZ = -sinYaw;
+    if (this.mouseOverrideTimer > 0 && !this.isDragging) {
+      this.mouseOverrideTimer = Math.max(0, this.mouseOverrideTimer - dt);
+    }
+
+    // Update movement reference yaw so the camera can swing behind the dwarf without
+    // spinning him in circles when holding A, D, or S, while still allowing mouse override
+    const inputChanged = forward !== this.prevForward || right !== this.prevRight;
+    const hasMoveInput = forward !== 0 || right !== 0;
+    const wasMoving = this.prevForward !== 0 || this.prevRight !== 0;
+
+    if (hasMoveInput) {
+      if (inputChanged) {
+        if (!this.isDragging) {
+          this.mouseOverrideTimer = 0;
+          this.followActive = true;
+        }
+        if (wasMoving && forward > 0 && right === 0 && !this.isDragging && this.followActive) {
+          // Smoothly continue along current heading when transitioning back to straight W
+          this.moveBasisYaw = this.dwarf.heading + Math.PI;
+        } else {
+          this.moveBasisYaw = this.yaw;
+        }
+      } else if (!this.isDragging && this.mouseOverrideTimer <= 0) {
+        if (forward > 0 && right !== 0) {
+          // Holding W+A or W+D smoothly steers around curves as the camera follows behind
+          this.moveBasisYaw = this.yaw;
+        } else if (forward > 0 && right === 0 && !this.followActive) {
+          this.moveBasisYaw = this.yaw;
+        }
+      }
+    }
+    this.prevForward = forward;
+    this.prevRight = right;
+
+    // Compute horizontal movement basis vectors from moveBasisYaw
+    const sinBasis = Math.sin(this.moveBasisYaw);
+    const cosBasis = Math.cos(this.moveBasisYaw);
+    const camForwardX = -sinBasis;
+    const camForwardZ = -cosBasis;
+    const camRightX = cosBasis;
+    const camRightZ = -sinBasis;
 
     let moveX = camForwardX * forward + camRightX * right;
     let moveZ = camForwardZ * forward + camRightZ * right;
@@ -528,7 +581,35 @@ export class ExplorerCamera {
       this.smoothedTarget.copy(this.desiredTarget);
     }
 
+    // Automatically swing camera behind the dwarf when walking/running unless overridden by mouse
+    if (this.config.cameraMode === 'dwarf') {
+      if (this.isDragging) {
+        this.followActive = false;
+      } else if (targetHeading !== null && this.mouseOverrideTimer <= 0) {
+        this.followActive = true;
+      }
+
+      if (this.followActive && !this.isDragging && this.mouseOverrideTimer <= 0) {
+        const desiredYaw = this.dwarf.heading + Math.PI;
+        const yawDiff =
+          THREE.MathUtils.euclideanModulo(desiredYaw - this.yaw + Math.PI, Math.PI * 2) - Math.PI;
+        if (Math.abs(yawDiff) > 0.001) {
+          const followSpeed = isSprinting || this.isSliding ? 4.2 : 3.2;
+          this.yaw += yawDiff * Math.min(1, dt * followSpeed);
+        } else {
+          this.yaw = desiredYaw;
+          if (targetHeading === null) {
+            this.followActive = false;
+          }
+        }
+      }
+    } else {
+      this.followActive = false;
+    }
+
     // Position camera on spherical orbit behind target
+    const sinYaw = Math.sin(this.yaw);
+    const cosYaw = Math.cos(this.yaw);
     const effDist = this.config.cameraMode === 'dwarf' ? this.distance : this.distance * 1.8;
     const horizDist = effDist * Math.cos(this.pitch);
     const vertDist = effDist * Math.sin(this.pitch);
