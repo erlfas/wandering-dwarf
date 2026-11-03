@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import stoneCircleModelUrl from '../../3dmodels/ancient stone circle asset.glb?url';
 import { WorldConfig } from './Config';
 import { SavedBeaconWaypoint } from './ProgressStorage';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
@@ -18,8 +21,11 @@ interface CampfireInstance {
   id: string;
   worldPos: THREE.Vector3;
   root: THREE.Group;
+  stoneCircleMesh: THREE.Mesh;
+  benchesMesh: THREE.Mesh;
   flameMesh: THREE.Mesh;
   glowRing: THREE.Mesh;
+  isNearLOD: boolean;
   lastBuffTime: number;
 }
 
@@ -56,13 +62,112 @@ interface SharedLandmarkAssets {
   flameGeo: THREE.BufferGeometry;
   skyBeamGeo: THREE.BufferGeometry;
   ringGeo: THREE.BufferGeometry;
-  megalithGeo: THREE.BufferGeometry;
-  logBenchGeo: THREE.BufferGeometry;
+  stoneCircleSimpleGeo: THREE.BufferGeometry;
+  logBenchesGeo: THREE.BufferGeometry;
   bridgeDeckGeo: THREE.BufferGeometry;
   bridgeRailGeo: THREE.BufferGeometry;
 }
 
 let sharedLandmarkAssets: SharedLandmarkAssets | null = null;
+let sharedStoneCircleGeo: THREE.BufferGeometry | null = null;
+let sharedStoneCircleMat: THREE.MeshStandardMaterial | null = null;
+let stoneCircleLoadStarted = false;
+const activeNearStoneCircles = new Set<CampfireInstance>();
+
+/**
+ * Asynchronously loads `3dmodels/ancient stone circle asset.glb`, normalizes its transform
+ * and scale (~7.4m outer diameter with central floor at Y=0 and outer foundation skirt embedded),
+ * optimizes its PBR material, and hot-swaps all active close-range (dist <= 1.5 chunks) stone circles.
+ */
+export function loadStoneCircleModel(): void {
+  if (stoneCircleLoadStarted) return;
+  stoneCircleLoadStarted = true;
+
+  const loader = new GLTFLoader();
+  loader.load(
+    stoneCircleModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      const geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+
+      // 1. Strip unused skinning attributes if present
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      // 2. Normalize bounding box: center X/Z at 0, align inner stone circle floor to Y=0
+      // (so the outer foundation skirt embeds into sloped terrain), and scale to ~7.4m diameter
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanX = box.max.x - box.min.x;
+      const spanZ = box.max.z - box.min.z;
+      const spanY = Math.max(0.01, box.max.y - box.min.y);
+      const diameter = Math.max(0.01, Math.max(spanX, spanZ));
+      const targetDiameter = 7.4;
+      const scaleFactor = targetDiameter / diameter;
+      const innerFloorY = box.min.y + spanY * 0.285;
+
+      geo.translate(-centerX, -innerFloorY, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      // 3. Guard computeVertexNormals() — never recompute on 22k+ vert mesh when normals exist
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const mat = (origMat as THREE.MeshStandardMaterial).clone();
+      mat.color.setHex(0xffffff);
+      mat.roughness = 0.88;
+      mat.metalness = 0.05;
+      if (mat.normalMap) {
+        mat.normalMap.dispose();
+        mat.normalMap = null;
+      }
+      if (mat.roughnessMap) {
+        mat.roughnessMap.dispose();
+        mat.roughnessMap = null;
+      }
+      if (mat.metalnessMap) {
+        mat.metalnessMap.dispose();
+        mat.metalnessMap = null;
+      }
+      if (mat.aoMap) {
+        mat.aoMap.dispose();
+        mat.aoMap = null;
+      }
+      origMat.dispose();
+
+      sharedStoneCircleGeo = geo;
+      sharedStoneCircleMat = mat;
+
+      // 4. Hot-swap all currently active close-range LOD stone circles
+      for (const cf of activeNearStoneCircles) {
+        cf.stoneCircleMesh.geometry = sharedStoneCircleGeo;
+        cf.stoneCircleMesh.material = sharedStoneCircleMat;
+        cf.benchesMesh.visible = false;
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load ancient stone circle 3D model:', err);
+    }
+  );
+}
 
 const WATCHTOWER_NAMES = [
   'Highpeak Beacon',
@@ -157,12 +262,47 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
   const ringGeo = new THREE.RingGeometry(2.8, 3.3, 24);
   ringGeo.rotateX(-Math.PI / 2);
 
-  const megalithGeo = new THREE.BoxGeometry(0.75, 2.35, 0.48);
-  megalithGeo.translate(0, 1.15, 0);
+  // Merge the 5 standing mossy megaliths into a single low-poly fallback geometry (< 60 tris)
+  const megalithBase = new THREE.BoxGeometry(0.75, 2.35, 0.48);
+  megalithBase.translate(0, 1.15, 0);
+  const megalithParts: THREE.BufferGeometry[] = [];
+  const stoneCount = 5;
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < stoneCount; i++) {
+    const angle = (i / stoneCount) * Math.PI * 2;
+    const part = megalithBase.clone();
+    dummy.position.set(Math.cos(angle) * 3.1, -0.1, Math.sin(angle) * 3.1);
+    dummy.rotation.set(0, -angle + 0.15, (i % 2 === 0 ? 1 : -1) * 0.08);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    part.applyMatrix4(dummy.matrix);
+    megalithParts.push(part);
+  }
+  megalithBase.dispose();
+  const stoneCircleSimpleGeo = mergeGeometries(megalithParts, false);
+  for (const p of megalithParts) p.dispose();
+  stoneCircleSimpleGeo.computeBoundingBox();
+  stoneCircleSimpleGeo.computeBoundingSphere();
 
-  const logBenchGeo = new THREE.CylinderGeometry(0.18, 0.18, 1.6, 7);
-  logBenchGeo.rotateZ(Math.PI / 2);
-  logBenchGeo.translate(0, 0.2, 0);
+  // Merge the 2 wooden log benches beside the fire into a single geometry
+  const logBenchBase = new THREE.CylinderGeometry(0.18, 0.18, 1.6, 7);
+  logBenchBase.rotateZ(Math.PI / 2);
+  logBenchBase.translate(0, 0.2, 0);
+  const benchParts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < 2; i++) {
+    const part = logBenchBase.clone();
+    dummy.position.set(i === 0 ? -1.45 : 1.45, 0, 0);
+    dummy.rotation.set(0, Math.PI / 2, 0);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    part.applyMatrix4(dummy.matrix);
+    benchParts.push(part);
+  }
+  logBenchBase.dispose();
+  const logBenchesGeo = mergeGeometries(benchParts, false);
+  for (const p of benchParts) p.dispose();
+  logBenchesGeo.computeBoundingBox();
+  logBenchesGeo.computeBoundingSphere();
 
   const bridgeDeckGeo = new THREE.BoxGeometry(3.6, 0.28, 14.0);
   const bridgeRailGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
@@ -184,8 +324,8 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
     flameGeo,
     skyBeamGeo,
     ringGeo,
-    megalithGeo,
-    logBenchGeo,
+    stoneCircleSimpleGeo,
+    logBenchesGeo,
     bridgeDeckGeo,
     bridgeRailGeo,
   };
@@ -225,6 +365,7 @@ export class LandmarkManager {
     this.toastContainer = document.getElementById('pickup-toasts');
     this.waypointBarEl = document.getElementById('waypoint-bar');
     this.waypointListEl = document.getElementById('waypoint-list');
+    loadStoneCircleModel();
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
@@ -412,12 +553,20 @@ export class LandmarkManager {
       for (const [key, lm] of this.activeLandmarks.entries()) {
         if (!desiredKeys.has(key)) {
           if (lm.watchtower) this.group.remove(lm.watchtower.root);
-          if (lm.campfire) this.group.remove(lm.campfire.root);
+          if (lm.campfire) {
+            activeNearStoneCircles.delete(lm.campfire);
+            this.group.remove(lm.campfire.root);
+          }
           for (const b of lm.bridges) this.group.remove(b.root);
           this.activeLandmarks.delete(key);
         }
       }
     }
+
+    const nearLodDist = 1.5 * size;
+    const nearLodDistSq = nearLodDist * nearLodDist;
+    const shadowDist = 2.2 * size;
+    const shadowDistSq = shadowDist * shadowDist;
 
     // Animate & check proximity to Watchtowers and Wayside Campfires
     for (const lm of this.activeLandmarks.values()) {
@@ -450,6 +599,32 @@ export class LandmarkManager {
         const dx = playerPos.x - cf.worldPos.x;
         const dz = playerPos.z - cf.worldPos.z;
         const dSq = dx * dx + dz * dz;
+
+        // Swap in-place between high-poly Ancient Stone Circle GLB (dist <= 1.5 chunks)
+        // and simple low-poly procedural stone circle when at a distance (dist > 1.5 chunks)
+        const wantNearLOD = dSq <= nearLodDistSq;
+        const castShadow = dSq <= shadowDistSq;
+        if (cf.stoneCircleMesh.castShadow !== castShadow) {
+          cf.stoneCircleMesh.castShadow = castShadow;
+          cf.benchesMesh.castShadow = castShadow;
+        }
+        if (cf.isNearLOD !== wantNearLOD) {
+          cf.isNearLOD = wantNearLOD;
+          if (wantNearLOD) {
+            activeNearStoneCircles.add(cf);
+            if (sharedStoneCircleGeo && sharedStoneCircleMat) {
+              cf.stoneCircleMesh.geometry = sharedStoneCircleGeo;
+              cf.stoneCircleMesh.material = sharedStoneCircleMat;
+              cf.benchesMesh.visible = false;
+            }
+          } else {
+            activeNearStoneCircles.delete(cf);
+            const assets = getSharedLandmarkAssets();
+            cf.stoneCircleMesh.geometry = assets.stoneCircleSimpleGeo;
+            cf.stoneCircleMesh.material = assets.matMossStone;
+            cf.benchesMesh.visible = true;
+          }
+        }
 
         if (dSq < 50 * 50) {
           const flicker = 0.9 + Math.sin(elapsedTime * 9.0 + cf.worldPos.z) * 0.16;
@@ -654,31 +829,17 @@ export class LandmarkManager {
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
-    // 5 Standing mossy megaliths in a circle
-    const stoneCount = 5;
-    for (let i = 0; i < stoneCount; i++) {
-      const angle = (i / stoneCount) * Math.PI * 2;
-      const stone = new THREE.Mesh(assets.megalithGeo, assets.matMossStone);
-      stone.position.set(Math.cos(angle) * 3.1, -0.1, Math.sin(angle) * 3.1);
-      stone.rotation.y = -angle + 0.15;
-      stone.rotation.z = (i % 2 === 0 ? 1 : -1) * 0.08;
-      stone.castShadow = true;
-      stone.receiveShadow = true;
-      stone.updateMatrix();
-      stone.matrixAutoUpdate = false;
-      root.add(stone);
-    }
+    const stoneCircleMesh = new THREE.Mesh(assets.stoneCircleSimpleGeo, assets.matMossStone);
+    stoneCircleMesh.castShadow = false;
+    stoneCircleMesh.receiveShadow = true;
+    stoneCircleMesh.matrixAutoUpdate = false;
+    root.add(stoneCircleMesh);
 
-    // 2 Wooden log benches beside the fire
-    for (let i = 0; i < 2; i++) {
-      const bench = new THREE.Mesh(assets.logBenchGeo, assets.matTimber);
-      bench.position.set(i === 0 ? -1.45 : 1.45, 0, 0);
-      bench.rotation.y = Math.PI / 2;
-      bench.castShadow = true;
-      bench.updateMatrix();
-      bench.matrixAutoUpdate = false;
-      root.add(bench);
-    }
+    const benchesMesh = new THREE.Mesh(assets.logBenchesGeo, assets.matTimber);
+    benchesMesh.castShadow = false;
+    benchesMesh.receiveShadow = true;
+    benchesMesh.matrixAutoUpdate = false;
+    root.add(benchesMesh);
 
     const flameMesh = new THREE.Mesh(assets.flameGeo, assets.matFlame);
     flameMesh.position.set(0, -0.35, 0);
@@ -701,8 +862,11 @@ export class LandmarkManager {
       id,
       worldPos: new THREE.Vector3(wx, wy, wz),
       root,
+      stoneCircleMesh,
+      benchesMesh,
       flameMesh,
       glowRing,
+      isNearLOD: false,
       lastBuffTime: -999,
     };
   }
@@ -751,6 +915,7 @@ export class LandmarkManager {
   }
 
   public rebuildAll(): void {
+    activeNearStoneCircles.clear();
     for (const lm of this.activeLandmarks.values()) {
       if (lm.watchtower) this.group.remove(lm.watchtower.root);
       if (lm.campfire) this.group.remove(lm.campfire.root);
