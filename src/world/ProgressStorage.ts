@@ -11,6 +11,7 @@ export interface SavedProgress {
   score: number;
   chestsCollected: number;
   collectedIds: string[];
+  unlockedRelics?: string[];
 }
 
 export function loadProgress(): SavedProgress | null {
@@ -45,6 +46,9 @@ export function loadProgress(): SavedProgress | null {
       score: data.score,
       chestsCollected: data.chestsCollected,
       collectedIds: data.collectedIds.filter((id): id is string => typeof id === 'string'),
+      unlockedRelics: Array.isArray(data.unlockedRelics)
+        ? data.unlockedRelics.filter((id): id is string => typeof id === 'string')
+        : [],
     };
   } catch {
     return null;

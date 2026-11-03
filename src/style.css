@@ -202,6 +202,216 @@ body {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
 
+/* Golden Chest Pointer on Compass Ring */
+#compass-chest-pointer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+#compass-chest-pointer::after {
+  content: '▲';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: #ffdf4f;
+  text-shadow: 0 0 6px rgba(255, 196, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+#relic-shop-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-left: 8px;
+  background: rgba(255, 212, 82, 0.16);
+  border: 1px solid rgba(255, 212, 82, 0.45);
+  color: #ffe89e;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+#relic-shop-toggle:hover {
+  background: rgba(255, 212, 82, 0.3);
+  transform: translateY(-1px);
+}
+
+/* Active Traversal Status Pill */
+#movement-status-pill {
+  position: absolute;
+  top: 32px;
+  left: 365px;
+  background: rgba(22, 34, 24, 0.82);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(134, 239, 172, 0.5);
+  color: #bbf7d0;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 13px;
+  border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+#movement-status-pill.hidden {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+/* Dwarven Relic Forge Drawer */
+#relic-shop {
+  position: absolute;
+  top: 94px;
+  left: 112px;
+  width: 286px;
+  background: rgba(22, 18, 14, 0.82);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 212, 82, 0.32);
+  border-radius: 12px;
+  padding: 10px;
+  color: #f8f1e5;
+  pointer-events: auto;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.35);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#relic-shop.collapsed {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.97);
+  pointer-events: none;
+}
+
+.relic-shop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  color: #f3c65f;
+  margin-bottom: 7px;
+  padding: 0 2px;
+}
+
+.relic-shop-sub {
+  font-size: 9px;
+  font-weight: 600;
+  color: #b8afa3;
+}
+
+#relic-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.relic-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #f5efe6;
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.relic-card.affordable {
+  border-color: rgba(255, 215, 70, 0.55);
+  background: rgba(255, 205, 56, 0.1);
+}
+
+.relic-card.affordable:hover {
+  background: rgba(255, 205, 56, 0.2);
+  transform: translateX(2px);
+}
+
+.relic-card.owned {
+  border-color: rgba(111, 207, 124, 0.5);
+  background: rgba(64, 145, 78, 0.16);
+  cursor: default;
+}
+
+.relic-card.locked {
+  opacity: 0.68;
+}
+
+.relic-card.locked:hover {
+  opacity: 0.9;
+}
+
+.relic-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+
+.relic-icon {
+  font-size: 17px;
+}
+
+.relic-key {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  font-size: 8px;
+  padding: 0 3px;
+  background: rgba(28, 24, 18, 0.92);
+}
+
+.relic-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.relic-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.relic-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff6e0;
+}
+
+.relic-cost {
+  font-size: 10px;
+  font-weight: 800;
+  color: #ffde59;
+  white-space: nowrap;
+}
+
+.relic-cost.owned-badge {
+  color: #8ce99a;
+  font-size: 9px;
+}
+
+.relic-desc {
+  font-size: 9.5px;
+  color: #cfc6b8;
+  line-height: 1.25;
+  margin-top: 2px;
+}
+
 /* Bottom-left status & controls badge */
 #stats-badge {
   position: absolute;

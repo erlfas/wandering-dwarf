@@ -3,6 +3,7 @@ import { defaultWorldConfig } from './world/Config';
 import { TerrainNoise } from './world/TerrainNoise';
 import { ChunkManager } from './world/ChunkManager';
 import { DwarfCharacter } from './player/DwarfCharacter';
+import { RelicStore } from './player/RelicStore';
 import { ExplorerCamera } from './controls/ExplorerCamera';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { BackgroundMusic } from './audio/BackgroundMusic';
@@ -12,7 +13,9 @@ import { clearProgress, loadProgress, SavedProgress, saveProgress } from './worl
 const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
 const compassNeedle = document.getElementById('compass-needle')!;
+const compassChestPointer = document.getElementById('compass-chest-pointer')!;
 const nearestChestHint = document.getElementById('nearest-chest-hint')!;
+const movementStatusPill = document.getElementById('movement-status-pill')!;
 
 // 1. Scene & Atmospheric Mist (matching distant misty hills in the concept art)
 const scene = new THREE.Scene();
@@ -86,6 +89,12 @@ scene.add(treasureManager.group);
 // 6. Dwarf Proxy & Third-Person / Free-Fly Camera Controller
 const dwarf = new DwarfCharacter();
 scene.add(dwarf.root);
+scene.add(dwarf.trailPoints);
+
+const relicStore = new RelicStore(
+  () => treasureManager.score,
+  (amt) => treasureManager.spendGold(amt)
+);
 
 const explorer = new ExplorerCamera(
   camera,
@@ -102,6 +111,7 @@ const explorer = new ExplorerCamera(
     debugOverlay.syncDisplay();
   }
 );
+explorer.setRelicStore(relicStore);
 
 if (savedProgress) {
   treasureManager.restoreProgress(
@@ -109,6 +119,7 @@ if (savedProgress) {
     savedProgress.chestsCollected,
     savedProgress.collectedIds
   );
+  relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   explorer.setPose(
     savedProgress.playerPos.x,
     savedProgress.playerPos.z,
@@ -136,6 +147,7 @@ const reusableSaveState: SavedProgress = {
   score: 0,
   chestsCollected: 0,
   collectedIds: [],
+  unlockedRelics: [],
 };
 
 function populateSaveState(): SavedProgress {
@@ -150,6 +162,7 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.score = treasureManager.score;
   reusableSaveState.chestsCollected = treasureManager.chestsCollected;
   reusableSaveState.collectedIds = treasureManager.getCollectedIds();
+  reusableSaveState.unlockedRelics = relicStore.getUnlockedIds();
   return reusableSaveState;
 }
 
@@ -170,7 +183,13 @@ function persistCurrentProgress(sync = false): void {
   });
 }
 
-treasureManager.onChestCollected = () => persistCurrentProgress(false);
+treasureManager.onChestCollected = () => {
+  relicStore.renderShop();
+  persistCurrentProgress(false);
+};
+relicStore.onRelicUnlocked = () => {
+  persistCurrentProgress(false);
+};
 window.addEventListener('beforeunload', () => persistCurrentProgress(true));
 
 // Build initial chunks around player position immediately so first frame has full terrain + grass
@@ -196,6 +215,7 @@ const debugOverlay = new DebugOverlay(
     config.seed = defaultWorldConfig.seed;
     noise.reseed(config.seed);
     treasureManager.resetProgress();
+    relicStore.reset();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
       explorer.playerPos.x,
@@ -225,6 +245,7 @@ let lastHudUpdate = -1;
 let lastCompassYaw = NaN;
 let lastChestHintText = '';
 let lastCoordsText = '';
+let lastMoveStatusText = '';
 
 function animate(): void {
   requestAnimationFrame(animate);
@@ -247,8 +268,9 @@ function animate(): void {
   const px = explorer.playerPos.x;
   const py = explorer.playerPos.y;
   const pz = explorer.playerPos.z;
+  const hasLodestone = relicStore.has('lodestone_amulet');
   chunkManager.update(px, py, pz, elapsedTime, false);
-  treasureManager.update(dt, elapsedTime, explorer.playerPos);
+  treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   const snap = 2.0;
@@ -276,6 +298,29 @@ function animate(): void {
       lastChestHintText = nextHint;
       nearestChestHint.textContent = nextHint;
     }
+
+    // Update compass chest pointer arrow (always visible with Lodestone Runes or when within 42m)
+    const pointerRange = hasLodestone ? 240 : 42;
+    if (nearest && nearest.dist <= pointerRange) {
+      const worldAngle = Math.atan2(nearest.pos.x - px, -(nearest.pos.z - pz));
+      const relDeg = ((worldAngle + explorer.yaw) * 180) / Math.PI;
+      compassChestPointer.style.opacity = '1';
+      compassChestPointer.style.transform = `rotate(${relDeg.toFixed(1)}deg)`;
+    } else {
+      compassChestPointer.style.opacity = '0';
+    }
+
+    const moveStatus = explorer.getMovementStatus();
+    if (moveStatus !== lastMoveStatusText) {
+      lastMoveStatusText = moveStatus;
+      if (moveStatus) {
+        movementStatusPill.textContent = moveStatus;
+        movementStatusPill.classList.remove('hidden');
+      } else {
+        movementStatusPill.classList.add('hidden');
+      }
+    }
+
     const nextCoords = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
     if (nextCoords !== lastCoordsText) {
       lastCoordsText = nextCoords;

@@ -20,6 +20,7 @@
           <div class="needle-north"></div>
           <div class="needle-south"></div>
         </div>
+        <div id="compass-chest-pointer" title="Nearest Chest Direction"></div>
       </div>
 
       <!-- Treasure Score & Nearest Chest Tracker -->
@@ -29,6 +30,9 @@
           <div class="score-row">
             <span id="score-value">0</span>
             <span class="score-unit">GOLD</span>
+            <button id="relic-shop-toggle" type="button" title="Toggle Dwarven Relics (B)">
+              ⚒️ Relics (B)
+            </button>
           </div>
           <div class="sub-row">
             <span id="chests-value">0 Chests</span>
@@ -36,6 +40,18 @@
             <span id="nearest-chest-hint">Scanning...</span>
           </div>
         </div>
+      </div>
+
+      <!-- Active Traversal Status Pill (Trailblazer / Gliding / Slope Surfing) -->
+      <div id="movement-status-pill" class="hidden"></div>
+
+      <!-- Dwarven Relic Upgrades Shop -->
+      <div id="relic-shop">
+        <div class="relic-shop-header">
+          <span>⚒️ DWARVEN RELIC FORGE</span>
+          <span class="relic-shop-sub">Press 1–4 or Click</span>
+        </div>
+        <div id="relic-list"></div>
       </div>
 
       <!-- Floating Pickup Toasts -->
@@ -50,12 +66,13 @@
         </div>
         <div id="coords-readout">Pos: (0, 0) | Elev: 0.0m | Chunks: 0</div>
         <div class="controls-hint">
-          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>Arrows</kbd> Move</span>
+          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
           <span><kbd>Shift</kbd> Sprint</span>
-          <span><kbd>Drag Mouse</kbd> Orbit Camera</span>
-          <span><kbd>Scroll</kbd> Zoom</span>
-          <span><kbd>V</kbd> Camera View</span>
-          <span><kbd>M</kbd> Wireframe</span>
+          <span><kbd>Space</kbd> Jump / Glide</span>
+          <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
+          <span><kbd>1</kbd>-<kbd>4</kbd> Buy Relic</span>
+          <span><kbd>B</kbd> Forge</span>
+          <span><kbd>V</kbd> View</span>
           <span><kbd>P</kbd> Music</span>
         </div>
       </div>

@@ -341,7 +341,8 @@ export class TreasureManager {
   public update(
     dt: number,
     elapsedTime: number,
-    playerPos: THREE.Vector3
+    playerPos: THREE.Vector3,
+    hasLodestone = false
   ): void {
     const size = this.config.chunkSize;
     const r = this.config.renderRadius;
@@ -383,7 +384,9 @@ export class TreasureManager {
     }
 
     // Check proximity & animate idle glow / collection
-    const pickupRadiusSq = 1.95 * 1.95;
+    const pickupRadius = hasLodestone ? 2.6 : 1.95;
+    const pickupRadiusSq = pickupRadius * pickupRadius;
+    const magnetRadiusSq = hasLodestone ? 8.5 * 8.5 : 0;
     const glowAnimRadiusSq = 45 * 45;
     const maxVisibleRadiusSq = 120 * 120;
 
@@ -401,6 +404,18 @@ export class TreasureManager {
         }
         if (!isVisible) continue;
 
+        if (hasLodestone && dSq < magnetRadiusSq && dSq > pickupRadiusSq) {
+          // Magnetically pull nearby chest toward the dwarf when Lodestone Runes are equipped
+          const dist = Math.sqrt(dSq);
+          const pullStep = Math.min(dist, dt * 11.5);
+          chest.worldPos.x += (dx / dist) * pullStep;
+          chest.worldPos.z += (dz / dist) * pullStep;
+          chest.worldPos.y = this.noise.getHeight(chest.worldPos.x, chest.worldPos.z);
+          chest.root.position.copy(chest.worldPos);
+          chest.root.updateMatrix();
+          chest.root.updateMatrixWorld(true);
+        }
+
         const showGlow = dSq < glowAnimRadiusSq;
         if (chest.glowRing.visible !== showGlow) {
           chest.glowRing.visible = showGlow;
@@ -417,7 +432,7 @@ export class TreasureManager {
         }
 
         if (dSq <= pickupRadiusSq) {
-          this.collectChest(chest);
+          this.collectChest(chest, hasLodestone);
         }
       }
     }
@@ -550,12 +565,13 @@ export class TreasureManager {
     this.activeChests.set(chunkKey, list);
   }
 
-  private collectChest(chest: ChestInstance): void {
+  private collectChest(chest: ChestInstance, hasLodestone = false): void {
     chest.state = 'opening';
     chest.goldMound.visible = true;
     this.collectedIds.add(chest.id);
     this.collectedIdsDirty = true;
-    this.score += chest.points;
+    const earnedPoints = hasLodestone ? Math.round(chest.points * 1.5) : chest.points;
+    this.score += earnedPoints;
     this.chestsCollected += 1;
 
     // Clone glowRing material so fading opacity doesn't affect idle chests
@@ -569,9 +585,16 @@ export class TreasureManager {
     chest.sparkles = sparkles;
 
     this.openingChests.push(chest);
-    this.updateHUD(chest.points, chest.isRare);
+    this.updateHUD(earnedPoints, chest.isRare);
     this.playPickupChime(chest.isRare);
     this.onChestCollected?.();
+  }
+
+  public spendGold(amount: number): boolean {
+    if (this.score < amount) return false;
+    this.score -= amount;
+    this.syncHUDTotals();
+    return true;
   }
 
   private syncHUDTotals(): void {

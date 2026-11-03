@@ -11,7 +11,10 @@ type AnimState = 'idle' | 'walk' | 'run' | 'swim';
  */
 export class DwarfCharacter {
   public readonly root = new THREE.Group();
+  public readonly trailPoints: THREE.Points;
   private modelContainer = new THREE.Group();
+  private gliderGroup = new THREE.Group();
+  private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
 
@@ -21,9 +24,21 @@ export class DwarfCharacter {
 
   private swimTime = 0;
   private swimBlend = 0; // Smooth 0..1 transition between land stance and swimming posture
+  private gliderBlend = 0;
+  private slideTiltX = 0;
+  private slideTiltZ = 0;
   private idleStateTime = 0;
   private idleMixerAccum = 0;
   public heading = 0;    // Radians around Y axis
+
+  // Ring-buffered world-space particle emitter (dust puffs & golden slide/jump sparks)
+  private readonly maxParticles = 48;
+  private particlePosAttr!: THREE.BufferAttribute;
+  private particleVel = new Float32Array(48 * 3);
+  private particleAge = new Float32Array(48);
+  private particleMaxLife = new Float32Array(48);
+  private particleHead = 0;
+  private emitAccum = 0;
 
   // Scale factor so the ~0.85m native GLB mesh stands ~1.40m tall in the world
   private readonly modelScale = 1.65;
@@ -33,7 +48,101 @@ export class DwarfCharacter {
   constructor() {
     this.root.add(this.modelContainer);
     this.buildSwimRings();
+    this.buildMovementProps();
+    this.trailPoints = this.buildTrailParticles();
     this.loadModel();
+  }
+
+  private buildMovementProps(): void {
+    // 1. Dwarven Wind-Glider (wooden spar + warm canvas wings above shoulders)
+    this.gliderGroup.position.set(0, 1.52, -0.05);
+    this.gliderGroup.scale.setScalar(0.001);
+    this.gliderGroup.visible = false;
+
+    const wingMat = new THREE.MeshStandardMaterial({
+      color: 0xf4dcb5,
+      roughness: 0.7,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    });
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: 0xc8963e,
+      roughness: 0.35,
+      metalness: 0.75,
+    });
+
+    const sparGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.2, 8);
+    sparGeo.rotateZ(Math.PI / 2);
+    const spar = new THREE.Mesh(sparGeo, frameMat);
+    spar.castShadow = true;
+    this.gliderGroup.add(spar);
+
+    const wingGeo = new THREE.ConeGeometry(1.15, 0.95, 3);
+    wingGeo.rotateX(Math.PI / 2);
+    wingGeo.scale(1.15, 0.12, 0.85);
+    const canopy = new THREE.Mesh(wingGeo, wingMat);
+    canopy.position.set(0, 0.04, -0.15);
+    canopy.castShadow = true;
+    this.gliderGroup.add(canopy);
+
+    this.modelContainer.add(this.gliderGroup);
+
+    // 2. Ironbelly Surf-Shield under boots when slope-surfing or dodge-dashing
+    const shieldGeo = new THREE.CylinderGeometry(0.48, 0.42, 0.07, 16);
+    const shieldMat = new THREE.MeshStandardMaterial({
+      color: 0xd49b35,
+      roughness: 0.28,
+      metalness: 0.85,
+      emissive: 0x3a2400,
+      emissiveIntensity: 0.35,
+    });
+    this.surfShieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
+    this.surfShieldMesh.position.set(0, 0.04, 0);
+    this.surfShieldMesh.visible = false;
+    this.surfShieldMesh.castShadow = true;
+    this.modelContainer.add(this.surfShieldMesh);
+  }
+
+  private buildTrailParticles(): THREE.Points {
+    const positions = new Float32Array(this.maxParticles * 3);
+    for (let i = 0; i < this.maxParticles; i++) {
+      positions[i * 3 + 1] = -9999;
+      this.particleAge[i] = 999;
+      this.particleMaxLife[i] = 0.5;
+    }
+    const geo = new THREE.BufferGeometry();
+    this.particlePosAttr = new THREE.BufferAttribute(positions, 3);
+    this.particlePosAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', this.particlePosAttr);
+    const mat = new THREE.PointsMaterial({
+      color: 0xffe484,
+      size: 0.24,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.frustumCulled = false;
+    return points;
+  }
+
+  public spawnBurst(worldX: number, worldY: number, worldZ: number, count = 10): void {
+    const arr = this.particlePosAttr.array as Float32Array;
+    for (let i = 0; i < count; i++) {
+      const idx = this.particleHead;
+      this.particleHead = (this.particleHead + 1) % this.maxParticles;
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const speed = 1.4 + Math.random() * 2.2;
+      arr[idx * 3] = worldX + Math.cos(angle) * 0.25;
+      arr[idx * 3 + 1] = worldY + 0.18;
+      arr[idx * 3 + 2] = worldZ + Math.sin(angle) * 0.25;
+      this.particleVel[idx * 3] = Math.cos(angle) * speed;
+      this.particleVel[idx * 3 + 1] = 1.2 + Math.random() * 1.8;
+      this.particleVel[idx * 3 + 2] = Math.sin(angle) * speed;
+      this.particleAge[idx] = 0;
+      this.particleMaxLife[idx] = 0.38 + Math.random() * 0.22;
+    }
+    this.particlePosAttr.needsUpdate = true;
   }
 
   private buildSwimRings(): void {
@@ -285,7 +394,11 @@ export class DwarfCharacter {
     worldZ: number,
     moveSpeed: number,
     targetHeading: number | null,
-    isSwimming = false
+    isSwimming = false,
+    isGliding = false,
+    isSliding = false,
+    isTrailblazing = false,
+    slopePitch = 0
   ): void {
     this.root.position.set(worldX, worldY, worldZ);
 
@@ -301,6 +414,72 @@ export class DwarfCharacter {
     }
 
     this.root.rotation.y = this.heading;
+
+    // Smoothly tilt dwarf model forward/downhill when sliding or gliding
+    const desiredTiltX = isSliding ? slopePitch + 0.18 : isGliding ? 0.24 : 0;
+    const desiredTiltZ = isGliding ? Math.sin(performance.now() * 0.004) * 0.08 : 0;
+    this.slideTiltX = THREE.MathUtils.lerp(this.slideTiltX, desiredTiltX, Math.min(1, dt * 10));
+    this.slideTiltZ = THREE.MathUtils.lerp(this.slideTiltZ, desiredTiltZ, Math.min(1, dt * 8));
+    this.modelContainer.rotation.set(this.slideTiltX, 0, this.slideTiltZ);
+
+    // Unfold or stow the Dwarven Wind-Glider
+    const targetGlider = isGliding ? 1 : 0;
+    if (Math.abs(this.gliderBlend - targetGlider) > 0.005) {
+      this.gliderBlend = THREE.MathUtils.lerp(this.gliderBlend, targetGlider, Math.min(1, dt * 12));
+    } else {
+      this.gliderBlend = targetGlider;
+    }
+    this.gliderGroup.visible = this.gliderBlend > 0.02;
+    if (this.gliderGroup.visible) {
+      this.gliderGroup.scale.setScalar(this.gliderBlend);
+    }
+
+    // Show Ironbelly Surf-Shield underneath boots when slope-sliding or dashing
+    this.surfShieldMesh.visible = isSliding && !isSwimming;
+
+    // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)
+    const shouldEmitTrail = (isSliding || (isTrailblazing && moveSpeed > 9.0)) && !isSwimming;
+    if (shouldEmitTrail) {
+      const rate = isSliding ? 28 : 14;
+      this.emitAccum += dt * rate;
+      const arr = this.particlePosAttr.array as Float32Array;
+      while (this.emitAccum >= 1) {
+        this.emitAccum -= 1;
+        const idx = this.particleHead;
+        this.particleHead = (this.particleHead + 1) % this.maxParticles;
+        const backX = -Math.sin(this.heading) * 0.35 + (Math.random() - 0.5) * 0.35;
+        const backZ = -Math.cos(this.heading) * 0.35 + (Math.random() - 0.5) * 0.35;
+        arr[idx * 3] = worldX + backX;
+        arr[idx * 3 + 1] = worldY + 0.14;
+        arr[idx * 3 + 2] = worldZ + backZ;
+        this.particleVel[idx * 3] = (Math.random() - 0.5) * 1.6;
+        this.particleVel[idx * 3 + 1] = (isSliding ? 1.5 : 0.75) + Math.random() * 1.1;
+        this.particleVel[idx * 3 + 2] = (Math.random() - 0.5) * 1.6;
+        this.particleAge[idx] = 0;
+        this.particleMaxLife[idx] = isSliding ? 0.42 : 0.34;
+      }
+    }
+
+    // Advance active particles
+    let anyActiveParticles = false;
+    const posArr = this.particlePosAttr.array as Float32Array;
+    for (let i = 0; i < this.maxParticles; i++) {
+      if (this.particleAge[i] < this.particleMaxLife[i]) {
+        this.particleAge[i] += dt;
+        if (this.particleAge[i] >= this.particleMaxLife[i]) {
+          posArr[i * 3 + 1] = -9999;
+        } else {
+          posArr[i * 3] += this.particleVel[i * 3] * dt;
+          posArr[i * 3 + 1] += this.particleVel[i * 3 + 1] * dt;
+          posArr[i * 3 + 2] += this.particleVel[i * 3 + 2] * dt;
+          this.particleVel[i * 3 + 1] -= 3.8 * dt;
+        }
+        anyActiveParticles = true;
+      }
+    }
+    if (anyActiveParticles) {
+      this.particlePosAttr.needsUpdate = true;
+    }
 
     // Smoothly blend in/out of swimming state (snap at epsilon to avoid IEEE-754 subnormal floats)
     const targetBlend = isSwimming ? 1 : 0;
