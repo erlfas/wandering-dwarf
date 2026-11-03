@@ -1,6 +1,6 @@
 # Endless Procedural World
 
-An endless, deterministic 3D procedural world explorer built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a stylized traveling dwarf collecting hidden dwarven treasure chests.
+An endless, deterministic 3D procedural world adventure built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, winding forest footpaths, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a traveling dwarf—complete with expressive traversal (jumping, valley wind-gliding, downhill shield-surfing), diegetic firefly treasure tracking, rune-sealed mythic chests, buried map hoards, and a **Dwarven Relic Forge**.
 
 ---
 
@@ -36,41 +36,48 @@ npm run preview
 | Input | Action |
 | :--- | :--- |
 | **`W` `A` `S` `D`** or **Arrow Keys** | Move dwarf / camera relative to view direction |
-| **`Shift`** (Hold) | Sprint |
+| **`Shift`** (Hold) | Sprint (**+25% Trailblazer speed boost** on dirt footpaths, **+45%** with *Boots of the Strider*) |
+| **`Space`** (Press / Hold in air) | **Jump** / **Double-Jump** (*Skyforge Greaves*) / Hold while descending to **Wind-Glide** across valleys |
+| **`C`** or **`Ctrl`** (Press / Hold) | **Dodge-Dash** on flat ground or **Surf Downhill Slopes** on the *Ironbelly Surf-Shield* |
+| **`1` `2` `3` `4`** | Unlock Dwarven Relics in the **Relic Forge** using collected Gold |
+| **`B`** | Show / collapse the **Dwarven Relic Forge** HUD drawer |
 | **Left / Right Mouse Drag** | Orbit camera around the dwarf |
 | **Mouse Wheel** | Zoom camera in / out (`4m` – `45m`) |
 | **`V`** | Toggle Camera Mode (`dwarf` third-person follow vs. `free` high-speed overview) |
 | **`M`** | Toggle terrain wireframe rendering |
 | **`P`** | Mute / unmute background music (*Wandering Through the Pines*) |
-| **Top-Right GUI (`lil-gui`)** | Live-tune terrain noise, water, forest groves, grass, wind, and debug settings |
+| **Top-Right GUI (`lil-gui`)** | Live-tune terrain noise, footpaths, water, forest groves, grass, wind, and reset saved progress |
 
 ---
 
 ## Architecture
 
-The project is organized into modular subsystems under `src/` with zero external runtime asset dependencies required for 3D geometry (all terrain, flora, character parts, and chests are procedurally constructed on the fly):
+The project is organized into modular subsystems under `src/`:
 
 ```text
 procedural-world/
-├── index.html                  # App shell & HUD overlay (Compass, Gold Score, Coords, Controls)
+├── index.html                  # App shell & HUD overlay (Compass + Chest Pointer, Gold & Streak HUD, Relic Forge, Controls)
+├── 3dmodels/                   # Close-range GLB assets (dwarf, pine, oak, dwarven hut, grass clump)
 ├── art/                        # Concept art & visual reference sheets
 ├── music/                      # Background soundtrack MP3
 └── src/
-    ├── main.ts                 # Entrypoint: Scene, renderer, lighting, shadow frustum tracking, main loop
-    ├── style.css               # HUD, compass, pickup toast, and responsive overlay styling
+    ├── main.ts                 # Entrypoint: Scene, renderer, lighting, shadow frustum tracking, HUD & main loop
+    ├── style.css               # HUD, compass pointer, streak pill, Relic Forge drawer, and pickup toast styling
     ├── world/
     │   ├── Config.ts           # WorldConfig interface & default tuning parameters
-    │   ├── TerrainNoise.ts     # Mulberry32 PRNG, multi-octave fBm noise, river/pond carving, surface coloring
-    │   ├── ChunkManager.ts     # Endless grid streaming, distance LODs, frame-budgeted build queue, triangle height queries
+    │   ├── TerrainNoise.ts     # Mulberry32 PRNG, multi-octave fBm noise, winding footpaths, river/pond carving, surface coloring
+    │   ├── ChunkManager.ts     # Endless grid streaming, distance LODs, frame-budgeted build queue, O(1) collision & height queries
     │   ├── TerrainChunk.ts     # Individual chunk mesh builder, vertex coloring, seamless normals, child attachments
-    │   ├── GrassField.ts       # GPU-instanced 5-blade grass tufts & wildflowers with custom wind/push vertex shaders
-    │   ├── ForestField.ts      # GPU-instanced pine trees, broadleaf oaks, and mossy shoreline boulders
+    │   ├── GrassField.ts       # GPU-instanced grass tufts & wildflowers with custom wind/push vertex shaders
+    │   ├── ForestField.ts      # GPU-instanced pines, oaks, dwarven huts & shoreline boulders (close GLB + distant procedural LOD)
     │   ├── WaterMesh.ts        # Translucent animated ripple & caustic shader material for rivers and ponds
-    │   └── TreasureManager.ts  # Deterministic per-chunk chest spawning, proximity pickup, particle bursts & Web Audio chime
+    │   ├── TreasureManager.ts  # Standard/Rare/Mythic chests, Standing Runestones, Buried Map Hoards, Guiding Fireflies & Streak Multiplier
+    │   └── ProgressStorage.ts  # LocalStorage persistence for seed, player pose, gold, collected chests & unlocked relics
     ├── player/
-    │   └── DwarfCharacter.ts   # Procedural 3D dwarf rig with walking/hiking stride and buoyant swimming animations
+    │   ├── DwarfCharacter.ts   # Animated 3D dwarf rig with deployable Wind-Glider, Surf-Shield, water wake rings & world-space trail particles
+    │   └── RelicStore.ts       # Dwarven Relic Forge catalog, upgrade state, HUD shop & synthesized Web Audio SFX
     ├── controls/
-    │   └── ExplorerCamera.ts   # Input handling, spherical orbit camera, terrain anti-clipping & land/water transitions
+    │   └── ExplorerCamera.ts   # Input handling, jump/glide/slope-surf physics, footpath speed boost & spherical orbit camera
     ├── ui/
     │   └── DebugOverlay.ts     # Live "World Planner" lil-gui panel for real-time world regeneration
     └── audio/
@@ -83,15 +90,17 @@ procedural-world/
 flowchart TD
     Main["main.ts (Animation Loop)"]
     Config["Config.ts (WorldConfig)"]
-    Noise["TerrainNoise.ts (Seeded Simplex fBm)"]
-    Explorer["ExplorerCamera.ts (Input & Orbit)"]
-    Dwarf["DwarfCharacter.ts (Procedural Rig)"]
-    ChunkMgr["ChunkManager.ts (Streaming & LODs)"]
+    Noise["TerrainNoise.ts (Seeded Simplex fBm & Footpaths)"]
+    Explorer["ExplorerCamera.ts (Jump, Glide, Surf & Orbit)"]
+    Dwarf["DwarfCharacter.ts (Rig, Glider, Shield & Trail Particles)"]
+    Relics["RelicStore.ts (Dwarven Relic Forge & SFX)"]
+    ChunkMgr["ChunkManager.ts (Streaming, LODs & Colliders)"]
     Chunk["TerrainChunk.ts (Terrain Mesh)"]
     Grass["GrassField.ts (Instanced Grass & Flowers)"]
-    Forest["ForestField.ts (Instanced Pines, Oaks & Rocks)"]
+    Forest["ForestField.ts (Pines, Oaks, Huts & Rocks)"]
     Water["WaterMesh.ts (Animated Water Plane)"]
-    Treasure["TreasureManager.ts (Chests, HUD & Audio)"]
+    Treasure["TreasureManager.ts (Chests, Runestones, Maps & Fireflies)"]
+    Storage["ProgressStorage.ts (LocalStorage Save State)"]
     GUI["DebugOverlay.ts (lil-gui Planner)"]
 
     Config --> Noise
@@ -101,8 +110,10 @@ flowchart TD
     GUI --> ChunkMgr
 
     Main --> Explorer
-    Explorer -->|Queries Triangle Height| ChunkMgr
-    Explorer -->|Updates Pose & Swim State| Dwarf
+    Explorer -->|Queries Triangle Height & Colliders| ChunkMgr
+    Explorer -->|Samples Track Weight & Slope Normal| Noise
+    Explorer -->|Reads Equipped Upgrades| Relics
+    Explorer -->|Updates Pose, Glider, Shield & Particles| Dwarf
 
     Main --> ChunkMgr
     ChunkMgr -->|Frame-Budgeted Queue| Chunk
@@ -112,49 +123,51 @@ flowchart TD
     Chunk --> Water
 
     Main --> Treasure
-    Treasure -->|Samples Height & Slope| Noise
+    Treasure -->|Samples Height, Slope & Tracks| Noise
+    Treasure <-->|Spends Gold /Unlocks Relics| Relics
+    Main --> Storage
 ```
 
 ---
 
 ## Core Subsystems
 
-### 1. Deterministic Multi-Scale Terrain (`TerrainNoise.ts`)
-- **Seeded PRNG (`createSeededRandom`)**: Uses **Mulberry32** so any integer seed produces the exact same world layout.
-- **Multi-Layered Simplex Noise**:
-  - **Domain Warping**: Offsets $(x, z)$ coordinates organically before sampling so ridges and rivers never align to a grid.
-  - **Macro Layer (2 octaves)**: Broad sweeping hills and valleys, with configurable valley-floor flattening (`valleyFlatten`) for natural meadow basins.
-  - **Meso Layer (3 octaves)**: Blended ridged and smooth noise for local knolls and rolling ridges.
-  - **Micro Layer (2 octaves)**: Subtle ground contours.
-- **Hydrology Carving**:
-  - **Meandering Rivers**: Uses the zero-crossing of domain-warped Simplex noise (`|riverNoise|`) with variable width modulation to grade surrounding hills into a gentle river valley and carve a wet channel below `waterLevel`.
-  - **Natural Pond Basins**: Depresses low-to-mid elevation valleys into calm ponds where `pondNoise` exceeds a threshold.
-- **Seamless Normals & Vertex Palette**: Computes central finite-difference surface normals (`getNormal`) in world space so adjacent chunks have zero lighting seams, even across different LOD resolutions. Colors vertices dynamically based on meadow patches, forest shade, elevation, slope steepness (earthy dirt on cliffs), sandy shore banks, and wet riverbeds.
+### 1. Expressive Movement & Traversal (`ExplorerCamera.ts` & `DwarfCharacter.ts`)
+- **Jump, Double-Jump & Wind Gliding (`Space`)**:
+  - Full vertical velocity and gravity integration above the triangle-interpolated ground or water surface.
+  - Holding `Space` while descending unfolds a 3D wooden-and-canvas **Dwarven Wind-Glider** above the dwarf's shoulders, reducing fall speed and boosting horizontal air speed to soar across valleys.
+- **Downhill Slope Surfing & Dodge-Dash (`C` / `Ctrl`)**:
+  - Pressing `C` or `Ctrl` triggers a snappy forward **Dodge-Dash** burst on flat ground.
+  - Holding `C` or `Ctrl` on hillsides deploys the bronze **Ironbelly Surf-Shield** underfoot, aligning velocity with the terrain's steepest descent normal (`TerrainNoise.getNormal`) to accelerate down slopes up to `28.5 m/s` while kicking up golden sparks.
+- **Trailblazer Footpath Boost**:
+  - Walking or sprinting along the infinite winding dirt footpaths (`getTrackWeight > 0.35`) grants an automatic **+25% Trailblazer speed boost** (**+45%** with *Boots of the Strider*), emits world-space dust puffs from a zero-allocation ring buffer, and displays a live traversal status pill in the HUD (`⚡ Trailblazer Path`, `🪂 Wind Gliding`, `🛡️ Slope Surfing`).
 
-### 2. Endless Chunk Streaming & LODs (`ChunkManager.ts` & `TerrainChunk.ts`)
-- **Circular Grid Streaming**: Maintains active chunks within `renderRadius` (default `6` chunks = `13×13` grid of `48m × 48m` chunks) around the player.
-- **Frame-Budgeted Queue**: Sorts pending chunk requests nearest-first and builds at most `maxChunksPerFrame` (default `3`) per animation frame to prevent frame drops while moving.
-- **Distance-Based Geometry & Grass LOD**:
-  - **Inner Ring (`dist <= 2.2` chunks)**: `64×64` terrain grid segments, `100%` 3D grass density (`2,600` tufts/chunk).
-  - **Mid Ring (`dist <= 4.2` chunks)**: `32×32` terrain grid segments, `55%` 3D grass density within `grassRadiusChunks`.
-  - **Outer Ring (`dist > 4.2` chunks)**: `20×20` terrain grid segments, vertex-colored terrain + instanced trees.
-- **Exact Triangle Surface Interpolation (`getSurfaceHeight`)**: Matches `THREE.PlaneGeometry`'s diagonal quad split to interpolate the exact rendered triangle height beneath the player and camera, preventing boots from sinking into concave slopes.
+### 2. Dwarven Relic Forge (`RelicStore.ts` & `ProgressStorage.ts`)
+Players spend Gold earned from chests directly in the HUD **Dwarven Relic Forge** (via mouse click or hotkeys `1`–`4`, toggled with `B`). All unlocked relics persist automatically in `localStorage`:
+- **`1` Boots of the Strider (`100 Gold`)**: +25% Sprint speed and +45% Trailblazer footpath speed boost.
+- **`2` Skyforge Greaves & Glider (`150 Gold`)**: Higher jump, mid-air **Double-Jump**, and high-lift valley gliding.
+- **`3` Ironbelly Surf-Shield (`200 Gold`)**: Turbo downhill slope-surfing acceleration/top speed (`28.5 m/s`) and extended dodge-dash.
+- **`4` Lodestone Runes (`250 Gold`)**: Magnetically pulls nearby chests toward the dwarf (`8.5m` radius), grants **+50% bonus Gold** on all treasures, and unlocks a long-range golden **Compass Chest Pointer** (`▲`) on the HUD compass ring.
 
-### 3. GPU-Instanced Flora & Custom Shaders (`GrassField.ts`, `ForestField.ts`, `WaterMesh.ts`)
-- **3D Grass & Wildflowers (`GrassField.ts`)**:
-  - Shares a single 5-blade curved ribbon tuft `BufferGeometry` and a wildflower cluster geometry across all chunks via `THREE.InstancedMesh`.
-  - Injects custom GLSL into `MeshStandardMaterial.onBeforeCompile` for rolling wind waves, root-to-tip ambient occlusion / sunlit tinting, smooth distance fade-out at the outer grass radius, and interactive radial blade push-away around the dwarf.
-- **Forest Groves & Shoreline Rocks (`ForestField.ts`)**:
-  - Procedurally merges vertex-colored geometries for 5-tier **Pine/Spruce conifers**, multi-lobe **Broadleaf/Oak trees**, and **mossy shoreline boulders**.
-  - Uses a jittered `5×5` cell grid per chunk (`9.6m` cells) modulated by `getForestDensity` so trees form airy groves with natural open meadow clearings and never overlap.
-- **Water Surface (`WaterMesh.ts`)**:
-  - Adds a shared water plane only to chunks whose minimum elevation dips below `waterLevel`, animated in GLSL with dual sine/cosine surface waves and caustic color shimmer.
+### 3. Treasure Hunting, Runestones, Buried Maps & Streaks (`TreasureManager.ts`)
+- **Diegetic Firefly Guide Stream & Spatial Harmonic Hum**:
+  - Instead of relying only on raw numbers, a stream of 26 glowing golden fireflies spawns near the player and swirls along the terrain toward the nearest active objective (up to `58m`, or `115m` with *Lodestone Runes*).
+  - Approaching within `20m` of a treasure triggers a gentle, pitch-rising crystalline Web Audio resonance chime, while the HUD reports cardinal bearings and active puzzle states (`✨ 28m NE`, `🪨 Runes (1/3) • 16m NW`, `🗺️ Map Hoard: 54m SE`, `💎 Mythic: 31m E`).
+- **Rune-Sealed Mythic Chests & Standing Runestones**:
+  - Chunks can spawn **Mythic Runic Chests** (`+500 Gold` base) encased in a cyan runic barrier dome and surrounded by **3 Standing Dwarven Runestones** (`13m–20m` away).
+  - Walking within `2.5m` of each Runestone awakens its floating crystal obelisk with a rising harmonic chord (`🪨 Runestone Awakened! (1/3)`). Awakening all 3 shatters the barrier dome so the Mythic Chest can be claimed.
+- **Ancient Map Fragments & Buried Relic Hoards**:
+  - Opening chests can reveal an **Ancient Treasure Map** (`🗺️ Map Found! Buried Hoard 64m NE!`), spawning a **Buried Dwarven Hoard** (`+400 Gold` base) marked by a pulsing crimson-gold dig circle and a vertical sky light beam.
+- **Gold Streak Combo Multiplier**:
+  - Chaining chest pickups or buried hoards within a **45-second window** builds a **Gold Streak Multiplier** (`1.25x` → `1.5x` → `2.0x` → `2.5x`) shown in the `#streak-badge` HUD pill (`🔥 2.0x Streak`), multiplying all gold earned.
 
-### 4. Player Rig, Swimming & Camera (`DwarfCharacter.ts` & `ExplorerCamera.ts`)
-- **Procedural Dwarf Proxy**: Built from hierarchical `THREE.Group` nodes (boots, tunic, belt, backpack with bedroll, bearded head with pointed traveler hat, arms, and walking staff).
-- **Land & Water Locomotion**: Automatically transitions between a rhythmic hiking stride on land and a buoyant breaststroke/flutter-kick swimming posture (complete with expanding water wake rings and a stowed walking staff) when entering rivers or ponds deeper than `0.38m`.
-- **Shadow Frustum Tracking**: In `main.ts`, the directional sunlight's orthographic shadow camera follows the player every frame so high-resolution `2048×2048` soft shadows remain crisp regardless of how far you travel from `(0, 0)`.
+### 4. Deterministic Multi-Scale Terrain & Footpaths (`TerrainNoise.ts`)
+- **Seeded PRNG (`createSeededRandom`)**: Uses **Mulberry32** so any integer seed produces a repeatable world.
+- **Multi-Layered Simplex Noise**: Combines domain warping, 2-octave macro hills with valley flattening, 3-octave ridged/smooth meso knolls, and 2-octave micro contours.
+- **Infinite Winding Forest Tracks**: Evaluates phase-steered primary and secondary footpaths (`getTrackDistance`, `getTrackWeight`) that gently grade the terrain trough, raise mossy root shoulders, clear trees from the walking bed, and color the soil with mottled sandy loam and gravel patches.
+- **Hydrology Carving**: Carves meandering river valleys and calm pond basins below `waterLevel`, with seamless central finite-difference normals across chunk borders.
 
-### 5. Treasure Hunt & Audio (`TreasureManager.ts` & `BackgroundMusic.ts`)
-- **Deterministic Chest Spawning**: Spawns standard (`+100 Gold`) and rare crimson-gold (`+250 Gold`) dwarven chests on dry, gentle slopes using per-chunk seeded RNG, remembering collected chest IDs across chunk unloads.
-- **Interactive Feedback**: Walking within `1.95m` of a chest swings its hinged lid open, triggers a 3D gold particle burst, updates the HUD score and nearest-chest distance tracker, and synthesizes a multi-note pickup chime via the browser's **Web Audio API**.
+### 5. Endless Chunk Streaming & GPU-Instanced Flora (`ChunkManager.ts`, `GrassField.ts`, `ForestField.ts`, `WaterMesh.ts`)
+- **Circular Grid Streaming & Frame-Budgeted Queue**: Streams chunks within `renderRadius` around the player and builds at most `maxChunksPerFrame` per frame with distance-tiered terrain segment and grass density LODs.
+- **Close-Range GLB + Distant Procedural LODs**: Renders detailed GLB models for nearby pines, oaks, dwarven huts, and grass clumps while seamlessly switching distant chunks to lightweight procedural instanced meshes.
+- **Exact Triangle Surface Interpolation & O(1) Colliders**: Interpolates exact rendered triangle heights beneath the dwarf's boots and resolves 2D circle-circle collisions against nearby trees, huts, and boulders with zero heap allocations.
