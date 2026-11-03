@@ -9,6 +9,7 @@ import { DebugOverlay } from './ui/DebugOverlay';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
 import { LandmarkManager } from './world/LandmarkManager';
+import { LivingWorldManager } from './world/LivingWorldManager';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
@@ -137,6 +138,26 @@ const landmarkManager = new LandmarkManager(
 scene.add(landmarkManager.group);
 explorer.setLandmarkManager(landmarkManager);
 
+const livingWorldManager = new LivingWorldManager(
+  config,
+  noise,
+  scene,
+  dirLight,
+  hemiLight,
+  fog,
+  dwarf,
+  (deltaGold, msg, isPositive) => {
+    if (!isPositive) {
+      explorer.applyHazardBump();
+    }
+    treasureManager.grantBonusGold(deltaGold, msg);
+  },
+  () => {
+    debugOverlay.syncDisplay();
+  }
+);
+scene.add(livingWorldManager.group);
+
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
   // Lighting Watchtower Beacons clears up to 40% of distant horizon mist!
@@ -257,6 +278,7 @@ const debugOverlay = new DebugOverlay(
     treasureManager.resetProgress();
     relicStore.reset();
     landmarkManager.reset();
+    livingWorldManager.rebuildAll();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -283,6 +305,7 @@ const clock = new THREE.Clock();
 let lastShadowX = NaN;
 let lastShadowY = NaN;
 let lastShadowZ = NaN;
+let lastSunSnapX = NaN;
 let lastHudUpdate = -1;
 let lastCompassYaw = NaN;
 let lastChestHintText = '';
@@ -314,16 +337,25 @@ function animate(): void {
   chunkManager.update(px, py, pz, elapsedTime, false);
   treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
   landmarkManager.update(dt, elapsedTime, explorer.playerPos);
+  livingWorldManager.update(
+    dt,
+    elapsedTime,
+    explorer.playerPos,
+    explorer.isAttackingOrAirborne(),
+    sunOffset
+  );
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   const snap = 2.0;
   const sx = Math.round(px / snap) * snap;
   const sy = Math.round(py / snap) * snap;
   const sz = Math.round(pz / snap) * snap;
-  if (sx !== lastShadowX || sy !== lastShadowY || sz !== lastShadowZ) {
+  const sunSnapX = Math.round(sunOffset.x);
+  if (sx !== lastShadowX || sy !== lastShadowY || sz !== lastShadowZ || sunSnapX !== lastSunSnapX) {
     lastShadowX = sx;
     lastShadowY = sy;
     lastShadowZ = sz;
+    lastSunSnapX = sunSnapX;
     dirLight.position.set(sx + sunOffset.x, sy + sunOffset.y, sz + sunOffset.z);
     dirLight.target.position.set(sx, sy, sz);
     dirLight.updateMatrix();
@@ -364,7 +396,11 @@ function animate(): void {
       }
     }
 
-    const nextCoords = `Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
+    const hrs = Math.floor(config.timeOfDay) % 24;
+    const mins = Math.floor((config.timeOfDay % 1) * 60);
+    const timeIcon = hrs >= 6 && hrs < 19 ? '☀️' : '🌙';
+    const timeStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${timeIcon}`;
+    const nextCoords = `${timeStr} | Pos: (${px.toFixed(1)}, ${pz.toFixed(1)}) | Elev: ${py.toFixed(1)}m | Chunks: ${chunkManager.getActiveChunkCount()}`;
     if (nextCoords !== lastCoordsText) {
       lastCoordsText = nextCoords;
       coordsReadout.textContent = nextCoords;

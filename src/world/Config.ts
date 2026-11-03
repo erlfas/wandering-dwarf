@@ -51,6 +51,8 @@ export interface WorldConfig {
   wireframe: boolean;
   showChunkBorders: boolean;
   fogDensity: number;
+  enableDayNightCycle: boolean;
+  timeOfDay: number;          // 0..24 hours (6 = dawn, 12 = noon, 18.5 = sunset, 24 = midnight)
 
   // Player / Camera settings
   cameraMode: 'dwarf' | 'free';
@@ -111,6 +113,8 @@ export const defaultWorldConfig: WorldConfig = {
   wireframe: false,
   showChunkBorders: false,
   fogDensity: 0.0025,
+  enableDayNightCycle: true,
+  timeOfDay: 10.5,
 
   cameraMode: 'dwarf',
   showDwarfProxy: true,

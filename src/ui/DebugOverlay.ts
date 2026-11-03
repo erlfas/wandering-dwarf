@@ -189,8 +189,16 @@ export class DebugOverlay {
       .onFinishChange(rebuild);
     terrainFolder.close();
 
-    // 5. Debug & Camera
-    const debugFolder = this.gui.addFolder('Camera & Debug');
+    // 5. Atmosphere, Camera & Debug
+    const debugFolder = this.gui.addFolder('Atmosphere, Camera & Debug');
+    debugFolder
+      .add(config, 'enableDayNightCycle')
+      .name('Auto Day/Night Cycle');
+
+    debugFolder
+      .add(config, 'timeOfDay', 0, 24, 0.1)
+      .name('Time of Day (h) [N]');
+
     debugFolder
       .add(config, 'cameraMode', ['dwarf', 'free'])
       .name('Camera Mode (V)');

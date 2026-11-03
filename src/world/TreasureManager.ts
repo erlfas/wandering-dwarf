@@ -1069,14 +1069,16 @@ export class TreasureManager {
   }
 
   public grantBonusGold(amount: number, toastMessage: string): void {
-    this.score += amount;
-    if (this.streakCount > 0) {
+    this.score = Math.max(0, this.score + amount);
+    if (amount > 0 && this.streakCount > 0) {
       this.streakTimer = this.streakDuration;
     }
     this.syncHUDTotals();
     this.syncStreakHUD();
-    this.showToast(toastMessage, true);
-    this.onChestCollected?.();
+    this.showToast(toastMessage, amount >= 0);
+    if (amount !== 0) {
+      this.onChestCollected?.();
+    }
   }
 
   private syncHUDTotals(): void {

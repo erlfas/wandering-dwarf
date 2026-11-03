@@ -69,6 +69,16 @@ export class ExplorerCamera {
     this.landmarkManager = lm;
   }
 
+  public isAttackingOrAirborne(): boolean {
+    return this.isSliding || this.heightAboveGround > 0.25;
+  }
+
+  public applyHazardBump(): void {
+    this.velY = 6.2;
+    this.heightAboveGround = Math.max(this.heightAboveGround, 0.08);
+    this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y, this.playerPos.z, 10);
+  }
+
   public getMovementStatus(): string {
     if (this.isGliding) return '🪂 Wind Gliding';
     if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;

@@ -55,7 +55,7 @@ export const RELIC_CATALOG: readonly RelicDefinition[] = [
 export class RelicStore {
   private unlocked = new Set<RelicId>();
   private audioCtx: AudioContext | null = null;
-  private isOpen = true;
+  private isOpen = false;
 
   private shopContainer: HTMLElement | null;
   private shopListEl: HTMLElement | null;
@@ -161,19 +161,11 @@ export class RelicStore {
       item.title = `${def.name}: ${def.shortDesc} (Press ${def.keyHint})`;
 
       item.innerHTML = `
-        <div class="relic-icon-wrap">
-          <span class="relic-icon">${def.icon}</span>
-          <kbd class="relic-key">${def.keyHint}</kbd>
-        </div>
-        <div class="relic-info">
-          <div class="relic-header-row">
-            <span class="relic-name">${def.name}</span>
-            <span class="relic-cost ${owned ? 'owned-badge' : ''}">
-              ${owned ? '✓ EQUIPPED' : `${def.cost} 🪙`}
-            </span>
-          </div>
-          <div class="relic-desc">${def.shortDesc}</div>
-        </div>
+        <span class="relic-icon">${def.icon}</span>
+        <span class="relic-name"><kbd class="relic-key">${def.keyHint}</kbd> ${def.name}</span>
+        <span class="relic-cost ${owned ? 'owned-badge' : ''}">
+          ${owned ? '✓' : `${def.cost}g`}
+        </span>
       `;
 
       if (!owned) {
