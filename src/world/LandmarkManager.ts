@@ -203,6 +203,43 @@ const WATCHTOWER_NAMES = [
   'Starfall Lookout',
 ];
 
+/**
+ * Precomputed local XZ collision circles `[localX, localZ, radius, ...]` extracted from
+ * `3dmodels/ancient stone circle asset.glb` (normalized to 12.5m diameter) covering all
+ * 7 outer standing monoliths, the 3 inner rocks, and the central firepit/brazier.
+ */
+const STONE_CIRCLE_GLB_COLLIDERS = new Float32Array([
+  // 7 outer standing stone monoliths (using overlapping pairs for wide slabs)
+  0.13, -3.96, 0.88,   // North monolith
+  -3.25, -3.31, 0.78,  // North-West monolith
+  3.79, -2.90, 0.78,   // North-East monolith
+  -4.98, -0.08, 0.58,  // West monolith (south half)
+  -4.98, 0.58, 0.58,   // West monolith (north half)
+  5.37, -0.12, 0.58,   // East monolith (south half)
+  5.37, 0.54, 0.58,    // East monolith (north half)
+  -3.82, 4.10, 0.88,   // South-West monolith (outer slab)
+  -2.95, 4.05, 0.82,   // South-West monolith (inner slab)
+  4.18, 4.08, 0.94,    // South-East monolith
+  // 3 smaller inner stones + central brazier/campfire pit
+  0.82, 0.97, 0.42,
+  -1.25, -1.99, 0.28,
+  4.16, 0.21, 0.34,
+  0.0, 0.0, 0.52,
+]);
+
+/**
+ * Fallback collision circles `[localX, localZ, radius, ...]` for the 5-stone procedural circle
+ * before `ancient stone circle asset.glb` finishes loading.
+ */
+const STONE_CIRCLE_FALLBACK_COLLIDERS = new Float32Array([
+  3.1, 0.0, 0.48,
+  0.96, 2.95, 0.48,
+  -2.51, 1.82, 0.48,
+  -2.51, -1.82, 0.48,
+  0.96, -2.95, 0.48,
+  0.0, 0.0, 0.52,
+]);
+
 function getSharedLandmarkAssets(): SharedLandmarkAssets {
   if (sharedLandmarkAssets) return sharedLandmarkAssets;
 
@@ -540,6 +577,86 @@ export class LandmarkManager {
       }
     }
     return groundY;
+  }
+
+  /**
+   * Resolves 2D circle-circle collisions between the player and the standing stone monoliths
+   * of nearby Stone Circle Campfires and Hilltop Watchtower Beacons in O(1) time with zero allocations.
+   */
+  public resolveObstacleCollision(
+    pos: THREE.Vector3,
+    playerRadius = 0.38,
+    heightAboveGround = 0
+  ): void {
+    // Allow high wind-gliding over the ~3.5m tall monoliths
+    if (heightAboveGround > 3.4) return;
+
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(pos.x / size);
+    const centerCz = Math.round(pos.z / size);
+    const colliders = sharedStoneCircleGeo
+      ? STONE_CIRCLE_GLB_COLLIDERS
+      : STONE_CIRCLE_FALLBACK_COLLIDERS;
+
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const lm = this.activeLandmarks.get(this.getKey(centerCx + dx, centerCz + dz));
+        if (!lm) continue;
+
+        if (lm.campfire) {
+          this.resolveCircleSiteCollision(
+            pos,
+            lm.campfire.worldPos.x,
+            lm.campfire.worldPos.z,
+            playerRadius,
+            colliders
+          );
+        }
+        if (lm.watchtower) {
+          this.resolveCircleSiteCollision(
+            pos,
+            lm.watchtower.worldPos.x,
+            lm.watchtower.worldPos.z,
+            playerRadius,
+            colliders
+          );
+        }
+      }
+    }
+  }
+
+  private resolveCircleSiteCollision(
+    pos: THREE.Vector3,
+    siteX: number,
+    siteZ: number,
+    playerRadius: number,
+    colliders: Float32Array
+  ): void {
+    const relX = pos.x - siteX;
+    const relZ = pos.z - siteZ;
+    // Fast bounding-radius early-out (~7.5m outer radius around stone circle center)
+    if (relX * relX + relZ * relZ > 56.25) return;
+
+    for (let i = 0; i < colliders.length; i += 3) {
+      const ox = siteX + colliders[i];
+      const oz = siteZ + colliders[i + 1];
+      const minDist = colliders[i + 2] + playerRadius;
+
+      const diffX = pos.x - ox;
+      const diffZ = pos.z - oz;
+      const distSq = diffX * diffX + diffZ * diffZ;
+
+      if (distSq < minDist * minDist) {
+        const dist = Math.sqrt(distSq);
+        if (dist > 0.0001) {
+          const push = (minDist - dist) / dist;
+          pos.x += diffX * push;
+          pos.z += diffZ * push;
+        } else {
+          pos.x += minDist;
+        }
+      }
+    }
   }
 
   /**

@@ -392,6 +392,11 @@ export class ExplorerCamera {
       targetHeading = Math.atan2(dirX, dirZ);
 
       this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
+      this.landmarkManager?.resolveObstacleCollision(
+        this.playerPos,
+        0.38,
+        this.heightAboveGround
+      );
       const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
       if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
         actualSpeed = 0;
@@ -418,6 +423,11 @@ export class ExplorerCamera {
 
         if (this.config.cameraMode === 'dwarf') {
           this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
+          this.landmarkManager?.resolveObstacleCollision(
+            this.playerPos,
+            0.38,
+            this.heightAboveGround
+          );
           const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
           if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
             actualSpeed = 0;
