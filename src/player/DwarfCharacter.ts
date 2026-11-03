@@ -187,24 +187,6 @@ export class DwarfCharacter {
 
   private loadModel(): void {
     const loader = new GLTFLoader();
-    loader.register((parser) => ({
-      name: 'strip-unused-pbr-maps',
-      beforeRoot: async () => {
-        const json = parser.json;
-        if (Array.isArray(json.materials)) {
-          for (const matDef of json.materials) {
-            if (matDef.extensions) {
-              delete matDef.extensions.KHR_materials_specular;
-            }
-            if (matDef.pbrMetallicRoughness) {
-              delete matDef.pbrMetallicRoughness.metallicRoughnessTexture;
-            }
-            delete matDef.normalTexture;
-            delete matDef.occlusionTexture;
-          }
-        }
-      },
-    }));
     loader.load(
       dwarfModelUrl,
       (gltf) => {

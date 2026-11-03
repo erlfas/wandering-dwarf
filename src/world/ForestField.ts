@@ -588,6 +588,8 @@ export function createOptimizedGlbLoader(): GLTFLoader {
       for (const matDef of materials) {
         if (matDef.pbrMetallicRoughness) {
           delete matDef.pbrMetallicRoughness.metallicRoughnessTexture;
+          matDef.pbrMetallicRoughness.metallicFactor = 0.04;
+          matDef.pbrMetallicRoughness.roughnessFactor = 0.85;
         }
         delete matDef.normalTexture;
         delete matDef.occlusionTexture;

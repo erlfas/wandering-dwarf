@@ -96,6 +96,8 @@ export function loadStoneCircleModel(): void {
         for (const m of mats) {
           if (m.pbrMetallicRoughness) {
             delete m.pbrMetallicRoughness.metallicRoughnessTexture;
+            m.pbrMetallicRoughness.metallicFactor = 0.05;
+            m.pbrMetallicRoughness.roughnessFactor = 0.88;
           }
           delete m.normalTexture;
           delete m.occlusionTexture;
