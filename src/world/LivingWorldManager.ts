@@ -27,17 +27,6 @@ interface SpiritRabbitInstance {
   mesh: THREE.Group;
 }
 
-interface BoulderHazardInstance {
-  startPos: THREE.Vector3;
-  pos: THREE.Vector3;
-  dirX: number;
-  dirZ: number;
-  speed: number;
-  travelDist: number;
-  maxDist: number;
-  mesh: THREE.Mesh;
-}
-
 interface GoblinHazardInstance {
   centerPos: THREE.Vector3;
   pos: THREE.Vector3;
@@ -52,7 +41,6 @@ interface ChunkLivingEntities {
   starFragment?: StarFragmentInstance;
   birdFlock?: BirdFlockInstance;
   spiritRabbit?: SpiritRabbitInstance;
-  boulder?: BoulderHazardInstance;
   goblin?: GoblinHazardInstance;
 }
 
@@ -61,7 +49,6 @@ interface SharedLivingAssets {
   matStarRing: THREE.MeshBasicMaterial;
   matBird: THREE.MeshStandardMaterial;
   matSpirit: THREE.MeshStandardMaterial;
-  matBoulder: THREE.MeshStandardMaterial;
   matGoblinSkin: THREE.MeshStandardMaterial;
   matGoblinTunic: THREE.MeshStandardMaterial;
   matGoldSack: THREE.MeshStandardMaterial;
@@ -70,13 +57,11 @@ interface SharedLivingAssets {
   birdGeo: THREE.BufferGeometry;
   spiritBodyGeo: THREE.BufferGeometry;
   spiritEarGeo: THREE.BufferGeometry;
-  boulderGeo: THREE.BufferGeometry;
   goblinBodyGeo: THREE.BufferGeometry;
   goblinHeadGeo: THREE.BufferGeometry;
 }
 
 let sharedLivingAssets: SharedLivingAssets | null = null;
-const tempNormal = new THREE.Vector3();
 
 // Sky & Lighting keyframe colors
 const SKY_DAWN = new THREE.Color(0xf2b89b);
@@ -126,12 +111,6 @@ function getSharedLivingAssets(): SharedLivingAssets {
     emissiveIntensity: 0.75,
   });
 
-  const matBoulder = new THREE.MeshStandardMaterial({
-    color: 0x6c655c,
-    roughness: 0.9,
-    metalness: 0.08,
-  });
-
   const matGoblinSkin = new THREE.MeshStandardMaterial({
     color: 0x6a994e,
     roughness: 0.75,
@@ -169,8 +148,6 @@ function getSharedLivingAssets(): SharedLivingAssets {
   const spiritEarGeo = new THREE.BoxGeometry(0.08, 0.32, 0.08);
   spiritEarGeo.translate(0, 0.52, 0.08);
 
-  const boulderGeo = new THREE.DodecahedronGeometry(0.95, 1);
-
   const goblinBodyGeo = new THREE.ConeGeometry(0.36, 0.72, 7);
   goblinBodyGeo.translate(0, 0.36, 0);
 
@@ -182,7 +159,6 @@ function getSharedLivingAssets(): SharedLivingAssets {
     matStarRing,
     matBird,
     matSpirit,
-    matBoulder,
     matGoblinSkin,
     matGoblinTunic,
     matGoldSack,
@@ -191,7 +167,6 @@ function getSharedLivingAssets(): SharedLivingAssets {
     birdGeo,
     spiritBodyGeo,
     spiritEarGeo,
-    boulderGeo,
     goblinBodyGeo,
     goblinHeadGeo,
   };
@@ -473,41 +448,7 @@ export class LivingWorldManager {
         }
       }
 
-      // D) Rolling Hillside Boulders
-      if (ent.boulder) {
-        const b = ent.boulder;
-        const step = b.speed * dt;
-        b.travelDist += step;
-        if (b.travelDist >= b.maxDist) {
-          b.travelDist = 0;
-          b.pos.copy(b.startPos);
-        } else {
-          b.pos.x += b.dirX * step;
-          b.pos.z += b.dirZ * step;
-          b.pos.y = this.noise.getHeight(b.pos.x, b.pos.z) + 0.85;
-        }
-        b.mesh.position.copy(b.pos);
-        b.mesh.rotation.x += step * 1.1;
-        b.mesh.rotation.z += step * 0.7;
-        b.mesh.updateMatrix();
-        b.mesh.updateMatrixWorld(true);
-
-        const dx = playerPos.x - b.pos.x;
-        const dz = playerPos.z - b.pos.z;
-        if (dx * dx + dz * dz < 1.55 * 1.55 && this.hazardHitCooldown <= 0) {
-          if (!isPlayerAttackingOrAirborne) {
-            this.hazardHitCooldown = 2.2;
-            this.playHazardBumpSound();
-            this.onGrantOrDeductGold(
-              -25,
-              '🪨 Grazed by Rolling Boulder! -25 Gold (Jump with Space!)',
-              false
-            );
-          }
-        }
-      }
-
-      // E) Mischievous Goblin Cutpurses (Smash with C-Dash or Jump for +120 Gold!)
+      // D) Mischievous Goblin Cutpurses (Smash with C-Dash or Jump for +125 Gold!)
       if (ent.goblin && ent.goblin.mesh.visible) {
         const g = ent.goblin;
         if (!g.defeated) {
@@ -739,36 +680,13 @@ export class LivingWorldManager {
       }
     }
 
-    // 4. Rolling Hillside Boulder or Goblin Cutpurse in outer chunks
-    if (!isStartChunk && rng() < 0.26) {
+    // 4. Mischievous Goblin Cutpurse in outer chunks
+    if (!isStartChunk && rng() < 0.22) {
       const wx = cx * size + (rng() - 0.5) * (size * 0.6);
       const wz = cz * size + (rng() - 0.5) * (size * 0.6);
       const wy = this.noise.getHeight(wx, wz);
-      this.noise.getNormal(wx, wz, tempNormal);
-      const horizLen = Math.hypot(tempNormal.x, tempNormal.z);
 
-      if (horizLen > 0.14 && wy > this.config.waterLevel + 4.0) {
-        // Steep hillside -> Spawn a Rolling Boulder!
-        const mesh = new THREE.Mesh(assets.boulderGeo, assets.matBoulder);
-        mesh.position.set(wx, wy + 0.85, wz);
-        mesh.castShadow = true;
-        mesh.updateMatrix();
-        mesh.matrixAutoUpdate = false;
-        this.group.add(mesh);
-        mesh.updateMatrixWorld(true);
-
-        ent.boulder = {
-          startPos: new THREE.Vector3(wx, wy + 0.85, wz),
-          pos: new THREE.Vector3(wx, wy + 0.85, wz),
-          dirX: tempNormal.x / horizLen,
-          dirZ: tempNormal.z / horizLen,
-          speed: 5.5 + rng() * 2.5,
-          travelDist: 0,
-          maxDist: 22.0,
-          mesh,
-        };
-      } else if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
-        // Flat clearing -> Spawn a Mischievous Goblin Cutpurse!
+      if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
         const mesh = new THREE.Group();
         mesh.position.set(wx, wy, wz);
         mesh.updateMatrix();
@@ -812,7 +730,6 @@ export class LivingWorldManager {
     if (ent.starFragment) this.group.remove(ent.starFragment.mesh);
     if (ent.birdFlock) this.group.remove(ent.birdFlock.group);
     if (ent.spiritRabbit) this.group.remove(ent.spiritRabbit.mesh);
-    if (ent.boulder) this.group.remove(ent.boulder.mesh);
     if (ent.goblin) this.group.remove(ent.goblin.mesh);
   }
 
