@@ -43,6 +43,16 @@ export class DebugOverlay {
       .name('Tree Size')
       .onFinishChange(rebuild);
 
+    forestFolder
+      .add(config, 'windSpeed', 0, 5, 0.1)
+      .name('Wind Speed')
+      .listen();
+
+    forestFolder
+      .add(config, 'windStrength', 0, 0.8, 0.02)
+      .name('Wind Gust Strength')
+      .listen();
+
     // 2. Rivers & Ponds Folder
     const waterFolder = this.gui.addFolder('Rivers & Ponds');
     waterFolder
@@ -94,11 +104,13 @@ export class DebugOverlay {
 
     grassFolder
       .add(config, 'windSpeed', 0, 5, 0.1)
-      .name('Wind Speed');
+      .name('Wind Speed')
+      .listen();
 
     grassFolder
       .add(config, 'windStrength', 0, 0.8, 0.02)
-      .name('Wind Gust Strength');
+      .name('Wind Gust Strength')
+      .listen();
 
     grassFolder
       .add(config, 'blankClayMode')

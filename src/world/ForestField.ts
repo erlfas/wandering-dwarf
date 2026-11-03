@@ -1,5 +1,7 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
 import { WorldConfig } from './Config';
 import { GrassUniforms } from './GrassField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
@@ -161,17 +163,15 @@ function createShorelineRockGeometry(): THREE.BufferGeometry {
 }
 
 /**
- * Shared tree material with gentle canopy wind sway.
+ * Enhances any MeshStandardMaterial (either textured GLB pine material or vertex-colored tree material)
+ * with realistic multi-layered wind sway & branch flutter shaders, plus depth shadow support.
  */
-export function createTreeMaterial(uniforms: GrassUniforms): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    roughness: 0.84,
-    metalness: 0.02,
-  });
-
-  mat.onBeforeCompile = (shader) => {
+export function applyWindShaderToMaterial(
+  mat: THREE.MeshStandardMaterial,
+  uniforms: GrassUniforms,
+  useHeightAndRadiusWeights = false
+): void {
+  const injectWind = (shader: THREE.WebGLProgramParametersWithUniforms) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uWindSpeed = uniforms.uWindSpeed;
     shader.uniforms.uWindStrength = uniforms.uWindStrength;
@@ -183,23 +183,166 @@ export function createTreeMaterial(uniforms: GrassUniforms): THREE.MeshStandardM
       uniform float uWindStrength;
       ` + shader.vertexShader;
 
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <begin_vertex>',
-      `
-      #include <begin_vertex>
-      vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-      float swayWeight = uv.y;
-      float treePhase = instWorld.x * 0.08 + instWorld.z * 0.07 + uTime * uWindSpeed * 0.65;
-      transformed.x += sin(treePhase) * uWindStrength * 0.45 * swayWeight;
-      transformed.z += cos(treePhase * 0.85) * uWindStrength * 0.35 * swayWeight;
-      `
-    );
+    if (useHeightAndRadiusWeights) {
+      // 3D Modelled Pine Tree: organic trunk bending + sweeping wind gusts + branch-tip needle flutter
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+
+        // Normalized height (0 at roots -> 1 at 8m treetop) and radial distance from trunk center
+        float hNorm = clamp(transformed.y / 8.0, 0.0, 1.0);
+        float radialDist = length(transformed.xz);
+        float branchFactor = smoothstep(0.18, 1.6, radialDist) * smoothstep(0.08, 0.35, hNorm);
+
+        // Primary rolling wind wave across the forest + secondary gust harmonic
+        float windTime = uTime * uWindSpeed;
+        float treePhase = instWorld.x * 0.07 + instWorld.z * 0.06 + windTime * 0.75;
+        float primaryGust = sin(treePhase) + 0.45 * cos(treePhase * 0.65 - 0.8);
+
+        // Smooth non-linear trunk & canopy bend (anchored solidly at the base)
+        float trunkBend = pow(hNorm, 1.65);
+        float swayX = primaryGust * uWindStrength * 0.85 * trunkBend;
+        float swayZ = cos(treePhase * 0.82) * uWindStrength * 0.6 * trunkBend;
+
+        // High-frequency branch bough & pine needle flutter on outer foliage
+        float branchPhase = windTime * 2.3 + transformed.y * 2.1 + (transformed.x + transformed.z) * 2.4 + instWorld.x * 0.25;
+        float flutterX = sin(branchPhase) * uWindStrength * 0.26 * branchFactor;
+        float flutterY = cos(branchPhase * 1.15) * uWindStrength * 0.16 * branchFactor;
+        float flutterZ = sin(branchPhase * 0.9 + 1.2) * uWindStrength * 0.26 * branchFactor;
+
+        transformed.x += swayX + flutterX;
+        transformed.y += flutterY - (abs(swayX) + abs(swayZ)) * 0.08 * trunkBend;
+        transformed.z += swayZ + flutterZ;
+        `
+      );
+    } else {
+      // Procedural broadleaf / rock geometry using uv.y sway weight
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec4 instWorld = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        float swayWeight = uv.y;
+        float treePhase = instWorld.x * 0.08 + instWorld.z * 0.07 + uTime * uWindSpeed * 0.65;
+        transformed.x += sin(treePhase) * uWindStrength * 0.45 * swayWeight;
+        transformed.z += cos(treePhase * 0.85) * uWindStrength * 0.35 * swayWeight;
+        `
+      );
+    }
   };
 
+  mat.onBeforeCompile = injectWind;
+
+  // Custom depth material so dynamic shadows cast on the ground sway in the wind too
+  const depthMat = new THREE.MeshDepthMaterial({
+    depthPacking: THREE.RGBADepthPacking,
+  });
+  depthMat.onBeforeCompile = injectWind;
+  (mat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }).customDepthMaterial =
+    depthMat;
+  mat.needsUpdate = true;
+}
+
+/**
+ * Shared tree material with gentle canopy wind sway (used for broadleaf trees & shoreline boulders).
+ */
+export function createTreeMaterial(uniforms: GrassUniforms): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    vertexColors: true,
+    roughness: 0.84,
+    metalness: 0.02,
+  });
+
+  applyWindShaderToMaterial(mat, uniforms, false);
   return mat;
 }
 
 let sharedPineGeo: THREE.BufferGeometry | null = null;
+let sharedPineMat: THREE.MeshStandardMaterial | null = null;
+let pineLoadStarted = false;
+const activePineMeshes = new Set<THREE.InstancedMesh>();
+
+/**
+ * Asynchronously loads `3dmodels/pine tree 3d model.glb`, normalizes its transform and scale
+ * to ~8.0m tall with roots at Y=0, applies the wind shader to its PBR material, and upgrades
+ * all active pine InstancedMeshes across the world.
+ */
+export function loadPineTreeModel(uniforms: GrassUniforms): void {
+  if (pineLoadStarted) return;
+  pineLoadStarted = true;
+
+  const loader = new GLTFLoader();
+  loader.load(
+    pineModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      // Clone geometry and bake the GLTF node hierarchy transform so it stands upright (Y-up)
+      const geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+
+      // Strip skinning attributes from the static instanced mesh so Three.js renders it directly
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      // Normalize bounding box: center X/Z at 0, place root base at Y=0, and scale to 8.0m height
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const height = Math.max(0.01, box.max.y - box.min.y);
+      const targetHeight = 8.2;
+      const scaleFactor = targetHeight / height;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+      geo.computeVertexNormals();
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      const pineMat = (origMat as THREE.MeshStandardMaterial).clone();
+      pineMat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
+      pineMat.roughness = 0.85;
+      pineMat.metalness = 0.02;
+      applyWindShaderToMaterial(pineMat, uniforms, true);
+
+      sharedPineGeo = geo;
+      sharedPineMat = pineMat;
+
+      const customDepth = (
+        pineMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
+      ).customDepthMaterial;
+
+      // Hot-swap all currently active pine InstancedMeshes to the loaded 3D GLB model & material
+      for (const inst of activePineMeshes) {
+        inst.geometry = sharedPineGeo;
+        inst.material = sharedPineMat;
+        if (customDepth) {
+          inst.customDepthMaterial = customDepth;
+        }
+      }
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load pine tree 3D model:', err);
+    }
+  );
+}
+
 let sharedBroadleafGeo: THREE.BufferGeometry | null = null;
 let sharedRockGeo: THREE.BufferGeometry | null = null;
 
@@ -314,19 +457,27 @@ export class ChunkForest {
     }
 
     if (pineTransforms.length > 0 && pineTransforms.length <= maxCandidates) {
+      const activeMat = sharedPineMat ?? treeMaterial;
       this.pineInstanced = new THREE.InstancedMesh(
         sharedPineGeo,
-        treeMaterial,
+        activeMat,
         pineTransforms.length
       );
       this.pineInstanced.castShadow = true;
       this.pineInstanced.receiveShadow = true;
+      const customDepth = (
+        activeMat as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
+      ).customDepthMaterial;
+      if (customDepth) {
+        this.pineInstanced.customDepthMaterial = customDepth;
+      }
       pineTransforms.forEach((item, idx) => {
         this.pineInstanced!.setMatrixAt(idx, item.matrix);
         this.pineInstanced!.setColorAt(idx, item.tint);
       });
       this.pineInstanced.instanceMatrix.needsUpdate = true;
       if (this.pineInstanced.instanceColor) this.pineInstanced.instanceColor.needsUpdate = true;
+      activePineMeshes.add(this.pineInstanced);
       this.group.add(this.pineInstanced);
     }
 
@@ -338,6 +489,12 @@ export class ChunkForest {
       );
       this.broadleafInstanced.castShadow = true;
       this.broadleafInstanced.receiveShadow = true;
+      const customDepth = (
+        treeMaterial as THREE.MeshStandardMaterial & { customDepthMaterial?: THREE.MeshDepthMaterial }
+      ).customDepthMaterial;
+      if (customDepth) {
+        this.broadleafInstanced.customDepthMaterial = customDepth;
+      }
       broadleafTransforms.forEach((item, idx) => {
         this.broadleafInstanced!.setMatrixAt(idx, item.matrix);
         this.broadleafInstanced!.setColorAt(idx, item.tint);
@@ -367,7 +524,10 @@ export class ChunkForest {
   }
 
   public dispose(): void {
-    this.pineInstanced?.dispose();
+    if (this.pineInstanced) {
+      activePineMeshes.delete(this.pineInstanced);
+      this.pineInstanced.dispose();
+    }
     this.broadleafInstanced?.dispose();
     this.rockInstanced?.dispose();
   }
