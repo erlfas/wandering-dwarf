@@ -10,6 +10,7 @@ import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
 import { LandmarkManager } from './world/LandmarkManager';
 import { LivingWorldManager } from './world/LivingWorldManager';
+import { ChallengeManager } from './world/ChallengeManager';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
@@ -158,6 +159,9 @@ const livingWorldManager = new LivingWorldManager(
 );
 scene.add(livingWorldManager.group);
 
+const challengeManager = new ChallengeManager(config, noise, treasureManager);
+scene.add(challengeManager.group);
+
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
   // Lighting Watchtower Beacons clears up to 40% of distant horizon mist!
@@ -279,6 +283,7 @@ const debugOverlay = new DebugOverlay(
     relicStore.reset();
     landmarkManager.reset();
     livingWorldManager.rebuildAll();
+    challengeManager.reset();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -337,6 +342,7 @@ function animate(): void {
   chunkManager.update(px, py, pz, elapsedTime, false);
   treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
   landmarkManager.update(dt, elapsedTime, explorer.playerPos);
+  challengeManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
   livingWorldManager.update(
     dt,
     elapsedTime,

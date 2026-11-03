@@ -520,3 +520,24 @@ kbd {
   font-weight: 600;
   color: #fff;
 }
+
+#challenge-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: linear-gradient(135deg, rgba(16, 42, 48, 0.9), rgba(20, 30, 38, 0.88));
+  border: 1px solid rgba(56, 255, 156, 0.72);
+  color: #80ffdb;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35), 0 0 14px rgba(56, 255, 156, 0.28);
+  white-space: nowrap;
+}
+
+#challenge-banner.hidden {
+  display: none;
+}

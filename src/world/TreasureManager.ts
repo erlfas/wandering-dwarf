@@ -364,10 +364,11 @@ export class TreasureManager {
   public chestsCollected = 0;
   public onChestCollected?: () => void;
 
-  // Gold Combo Streak state
+  // Gold Combo Streak state (30s chain window for 2x / 3x / 5x multiplier)
   public streakCount = 0;
   public streakTimer = 0;
-  private readonly streakDuration = 45.0;
+  public coinComboStep = 0;
+  private readonly streakDuration = 30.0;
 
   private activeChests = new Map<number, ChestInstance[]>();
   private desiredKeys = new Set<number>();
@@ -438,10 +439,9 @@ export class TreasureManager {
 
   public getStreakMultiplier(): number {
     if (this.streakCount <= 1 || this.streakTimer <= 0) return 1.0;
-    if (this.streakCount === 2) return 1.25;
-    if (this.streakCount === 3) return 1.5;
-    if (this.streakCount === 4) return 2.0;
-    return 2.5;
+    if (this.streakCount === 2) return 2.0;
+    if (this.streakCount === 3) return 3.0;
+    return 5.0;
   }
 
   /**
@@ -578,6 +578,7 @@ export class TreasureManager {
       this.streakTimer = Math.max(0, this.streakTimer - dt);
       if (this.streakTimer <= 0) {
         this.streakCount = 0;
+        this.coinComboStep = 0;
       }
       this.syncStreakHUD();
     }
@@ -1079,6 +1080,59 @@ export class TreasureManager {
     if (amount !== 0) {
       this.onChestCollected?.();
     }
+  }
+
+  /**
+   * Called when picking up a glowing footpath trail coin.
+   * Refreshes the 30s streak timer and steps up the 2x / 3x / 5x multiplier every 3 coins.
+   */
+  public collectTrailCoin(baseGold: number, hasLodestone: boolean): number {
+    this.coinComboStep += 1;
+    if (this.streakCount === 0) {
+      this.streakCount = 1;
+    } else if (this.coinComboStep % 3 === 0) {
+      this.streakCount = Math.min(4, this.streakCount + 1);
+    }
+    this.streakTimer = this.streakDuration;
+
+    const mult = this.getStreakMultiplier();
+    const lodestoneMult = hasLodestone ? 1.5 : 1.0;
+    const earned = Math.max(1, Math.round(baseGold * lodestoneMult * mult));
+    this.score += earned;
+    this.syncHUDTotals();
+    this.syncStreakHUD();
+    this.onChestCollected?.();
+    return earned;
+  }
+
+  /**
+   * Called when passing a Timed Waypoint Ring or completing a Ring Sprint Challenge.
+   */
+  public grantChallengeReward(
+    baseGold: number,
+    hasLodestone: boolean,
+    toastPrefix: string,
+    advanceStreak: boolean,
+    isFinalBonus: boolean
+  ): number {
+    if (advanceStreak) {
+      this.streakCount = Math.min(4, Math.max(2, this.streakCount + 1));
+    } else if (this.streakCount === 0) {
+      this.streakCount = 1;
+    }
+    this.streakTimer = this.streakDuration;
+
+    const mult = this.getStreakMultiplier();
+    const lodestoneMult = hasLodestone ? 1.5 : 1.0;
+    const earned = Math.round(baseGold * lodestoneMult * mult);
+    this.score += earned;
+    if (isFinalBonus) {
+      this.chestsCollected += 1;
+    }
+    this.updateHUD(earned, isFinalBonus, toastPrefix);
+    this.syncStreakHUD();
+    this.onChestCollected?.();
+    return earned;
   }
 
   private syncHUDTotals(): void {
