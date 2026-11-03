@@ -234,6 +234,8 @@ export class TreasureManager {
   private activeChests = new Map<number, ChestInstance[]>();
   private desiredKeys = new Set<number>();
   private collectedIds = new Set<string>();
+  private cachedCollectedIds: string[] = [];
+  private collectedIdsDirty = true;
   private openingChests: ChestInstance[] = [];
   private audioCtx: AudioContext | null = null;
 
@@ -383,6 +385,7 @@ export class TreasureManager {
     // Check proximity & animate idle glow / collection
     const pickupRadiusSq = 1.95 * 1.95;
     const glowAnimRadiusSq = 45 * 45;
+    const maxVisibleRadiusSq = 120 * 120;
 
     for (const list of this.activeChests.values()) {
       for (const chest of list) {
@@ -392,7 +395,17 @@ export class TreasureManager {
         const dz = playerPos.z - chest.worldPos.z;
         const dSq = dx * dx + dz * dz;
 
-        if (dSq < glowAnimRadiusSq) {
+        const isVisible = dSq < maxVisibleRadiusSq;
+        if (chest.root.visible !== isVisible) {
+          chest.root.visible = isVisible;
+        }
+        if (!isVisible) continue;
+
+        const showGlow = dSq < glowAnimRadiusSq;
+        if (chest.glowRing.visible !== showGlow) {
+          chest.glowRing.visible = showGlow;
+        }
+        if (showGlow) {
           // Pulse ground aura gently only for nearby chests
           const pulse = 1.0 + Math.sin(elapsedTime * 3.5 + chest.worldPos.x) * 0.08;
           chest.glowRing.scale.setScalar(pulse);
@@ -494,9 +507,6 @@ export class TreasureManager {
           continue;
         }
 
-        this.noise.getNormal(wx, wz, tempChestNormal);
-        if (tempChestNormal.y < 0.82) continue;
-
         // Avoid blocking the center of a walking track; place chests beside the trail or in meadows
         if (
           !isStartChunk &&
@@ -505,6 +515,9 @@ export class TreasureManager {
         ) {
           continue;
         }
+
+        this.noise.getNormal(wx, wz, tempChestNormal);
+        if (tempChestNormal.y < 0.82) continue;
 
         const isRare = !isStartChunk && rng() < 0.22;
         const points = isRare ? 250 : 100;
@@ -541,6 +554,7 @@ export class TreasureManager {
     chest.state = 'opening';
     chest.goldMound.visible = true;
     this.collectedIds.add(chest.id);
+    this.collectedIdsDirty = true;
     this.score += chest.points;
     this.chestsCollected += 1;
 
@@ -674,7 +688,11 @@ export class TreasureManager {
   }
 
   public getCollectedIds(): string[] {
-    return Array.from(this.collectedIds);
+    if (this.collectedIdsDirty) {
+      this.cachedCollectedIds = Array.from(this.collectedIds);
+      this.collectedIdsDirty = false;
+    }
+    return this.cachedCollectedIds;
   }
 
   public restoreProgress(
@@ -685,6 +703,7 @@ export class TreasureManager {
     this.score = Math.max(0, Math.floor(score));
     this.chestsCollected = Math.max(0, Math.floor(chestsCollected));
     this.collectedIds = new Set(collectedIds);
+    this.collectedIdsDirty = true;
     this.syncHUDTotals();
     this.rebuildAll();
   }
@@ -693,6 +712,7 @@ export class TreasureManager {
     this.score = 0;
     this.chestsCollected = 0;
     this.collectedIds.clear();
+    this.collectedIdsDirty = true;
     this.syncHUDTotals();
     this.rebuildAll();
   }

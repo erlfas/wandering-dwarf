@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import oakModelUrl from '../../3dmodels/oak tree 3d model.glb?url';
 import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
 import hutModelUrl from '../../3dmodels/simple dwarven hut 3d model.glb?url';
@@ -17,13 +17,17 @@ function colorizeGeometry(
   topColor: THREE.Color,
   swayWeight: number
 ): THREE.BufferGeometry {
-  const nonIndexed = geo.index ? geo.toNonIndexed() : geo.clone();
-  nonIndexed.computeBoundingBox();
-  const minY = nonIndexed.boundingBox!.min.y;
-  const maxY = nonIndexed.boundingBox!.max.y;
+  const wasIndexed = Boolean(geo.index);
+  const indexed = wasIndexed ? geo.clone() : mergeVertices(geo);
+  if (!wasIndexed) {
+    indexed.computeVertexNormals();
+  }
+  indexed.computeBoundingBox();
+  const minY = indexed.boundingBox!.min.y;
+  const maxY = indexed.boundingBox!.max.y;
   const spanY = Math.max(0.01, maxY - minY);
 
-  const posAttr = nonIndexed.attributes.position as THREE.BufferAttribute;
+  const posAttr = indexed.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(posAttr.count * 3);
   const uvs = new Float32Array(posAttr.count * 2);
   const c = new THREE.Color();
@@ -41,9 +45,9 @@ function colorizeGeometry(
     uvs[i * 2 + 1] = swayWeight * (0.25 + 0.75 * t);
   }
 
-  nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  nonIndexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  return nonIndexed;
+  indexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  indexed.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  return indexed;
 }
 
 /**
@@ -314,11 +318,13 @@ function createWoodlandFernGeometry(): THREE.BufferGeometry {
   const normals: number[] = [];
   const colors: number[] = [];
   const uvs: number[] = [];
+  const indices: number[] = [];
 
   const colBase = new THREE.Color(0x294a1c);
   const colMid = new THREE.Color(0x4f802d);
   const colTip = new THREE.Color(0x74a842);
   const c = new THREE.Color();
+  let vertOffset = 0;
 
   for (let f = 0; f < frondCount; f++) {
     const isInner = f % 2 === 1;
@@ -355,21 +361,19 @@ function createWoodlandFernGeometry(): THREE.BufferGeometry {
       const rx1 = r1 * cosA + w1 * sinA;
       const rz1 = r1 * sinA - w1 * cosA;
 
-      // Two triangles per frond segment
+      // Indexed quad (4 vertices + 6 indices) per frond segment
       positions.push(
         lx0, y0, lz0,
         rx0, y0, rz0,
         lx1, y1, lz1,
-        rx0, y0, rz0,
-        rx1, y1, rz1,
-        lx1, y1, lz1
+        rx1, y1, rz1
       );
 
-      for (let v = 0; v < 6; v++) {
+      for (let v = 0; v < 4; v++) {
         normals.push(cosA * 0.25, 0.94, sinA * 0.25);
       }
 
-      const ts = [t0, t0, t1, t0, t1, t1];
+      const ts = [t0, t0, t1, t1];
       for (const tv of ts) {
         if (tv < 0.5) {
           c.copy(colBase).lerp(colMid, tv * 2.0);
@@ -379,6 +383,12 @@ function createWoodlandFernGeometry(): THREE.BufferGeometry {
         colors.push(c.r, c.g, c.b);
         uvs.push(0, tv * 0.55); // Gentle wind rustle on fern frond tips
       }
+
+      indices.push(
+        vertOffset, vertOffset + 1, vertOffset + 2,
+        vertOffset + 1, vertOffset + 3, vertOffset + 2
+      );
+      vertOffset += 4;
     }
   }
 
@@ -387,6 +397,7 @@ function createWoodlandFernGeometry(): THREE.BufferGeometry {
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
   geo.computeBoundingSphere();
   return geo;
 }
@@ -540,6 +551,39 @@ let pineLoadStarted = false;
 const activePineMeshes = new Set<THREE.InstancedMesh>();
 
 /**
+ * Clones a GLB MeshStandardMaterial, sets scalar roughness/metalness, and disposes
+ * unused 2K normal/ORM textures so instanced foliage only samples baseColorTexture.
+ */
+function optimizeGlbMaterial(
+  origMat: THREE.Material,
+  roughness: number,
+  metalness: number
+): THREE.MeshStandardMaterial {
+  const mat = (origMat as THREE.MeshStandardMaterial).clone();
+  mat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
+  mat.roughness = roughness;
+  mat.metalness = metalness;
+  if (mat.normalMap) {
+    mat.normalMap.dispose();
+    mat.normalMap = null;
+  }
+  if (mat.roughnessMap) {
+    mat.roughnessMap.dispose();
+    mat.roughnessMap = null;
+  }
+  if (mat.metalnessMap) {
+    mat.metalnessMap.dispose();
+    mat.metalnessMap = null;
+  }
+  if (mat.aoMap) {
+    mat.aoMap.dispose();
+    mat.aoMap = null;
+  }
+  origMat.dispose();
+  return mat;
+}
+
+/**
  * Asynchronously loads `3dmodels/pine tree 3d model.glb`, normalizes its transform and scale
  * to ~8.0m tall with roots at Y=0, applies the wind shader to its PBR material, and upgrades
  * all active near-LOD pine InstancedMeshes across the world.
@@ -590,10 +634,7 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
 
       // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-      const pineMat = (origMat as THREE.MeshStandardMaterial).clone();
-      pineMat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
-      pineMat.roughness = 0.85;
-      pineMat.metalness = 0.02;
+      const pineMat = optimizeGlbMaterial(origMat, 0.85, 0.02);
       applyWindShaderToMaterial(pineMat, uniforms, true);
 
       sharedPineGeo = geo;
@@ -607,6 +648,7 @@ export function loadPineTreeModel(uniforms: GrassUniforms): void {
       for (const inst of activePineMeshes) {
         inst.geometry = sharedPineGeo;
         inst.material = sharedPineMat;
+        inst.receiveShadow = false;
         if (customDepth) {
           inst.customDepthMaterial = customDepth;
         }
@@ -676,10 +718,7 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
 
       // Extract the GLB's textured MeshStandardMaterial and enhance it with wind sway & shadow sway
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-      const oakMat = (origMat as THREE.MeshStandardMaterial).clone();
-      oakMat.color.setHex(0xffffff); // Full brightness so baseColorTexture & instanceColor shine
-      oakMat.roughness = 0.85;
-      oakMat.metalness = 0.02;
+      const oakMat = optimizeGlbMaterial(origMat, 0.85, 0.02);
       applyWindShaderToMaterial(oakMat, uniforms, true);
 
       sharedOakGeo = geo;
@@ -693,6 +732,7 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
       for (const inst of activeBroadleafMeshes) {
         inst.geometry = sharedOakGeo;
         inst.material = sharedOakMat;
+        inst.receiveShadow = false;
         if (customDepth) {
           inst.customDepthMaterial = customDepth;
         }
@@ -759,10 +799,7 @@ export function loadDwarvenHutModel(): void {
       geo.computeBoundingSphere();
 
       const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-      const hutMat = (origMat as THREE.MeshStandardMaterial).clone();
-      hutMat.color.setHex(0xffffff);
-      hutMat.roughness = 0.85;
-      hutMat.metalness = 0.04;
+      const hutMat = optimizeGlbMaterial(origMat, 0.85, 0.04);
 
       sharedHutGeo = geo;
       sharedHutMat = hutMat;
@@ -871,7 +908,8 @@ export class ChunkForest {
     treeMaterial: THREE.Material,
     isNearLOD = false,
     castShadow = false,
-    sampler?: ChunkSurfaceSampler
+    sampler?: ChunkSurfaceSampler,
+    dist = 0
   ) {
     this.group.matrixAutoUpdate = false;
     this.treeMaterial = treeMaterial;
@@ -970,7 +1008,12 @@ export class ChunkForest {
           if (forestNormal.y < 0.78) continue;
 
           // Keep walking tracks completely clear of trees so dwarfs have an open path
-          if (chunkHasTrack && noise.getTrackWeight(wx, wz, wy) > 0.16) continue;
+          const treeTrackW = chunkHasTrack
+            ? sampler?.sampleTrackWeight
+              ? sampler.sampleTrackWeight(lx, lz)
+              : noise.getTrackWeight(wx, wz, wy)
+            : 0;
+          if (treeTrackW > 0.16) continue;
 
           // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
           const groveDensity = noise.getForestDensity(wx, wz);
@@ -987,7 +1030,7 @@ export class ChunkForest {
             groveDensity >= 0.68 &&
             forestNormal.y >= 0.88 &&
             (!config.enableWater || distAboveWater >= 1.8) &&
-            (!chunkHasTrack || noise.getTrackWeight(wx, wz, wy) <= 0.08) &&
+            treeTrackW <= 0.08 &&
             rng() < 0.055
           ) {
             const hutScale = (0.92 + rng() * 0.16) * config.treeScale;
@@ -1056,7 +1099,9 @@ export class ChunkForest {
         const wz = worldOffsetZ + lz;
 
         // Check track weight BEFORE computing surface normal & quaternion (~86% reject rate)
-        const trackW = noise.getTrackWeight(wx, wz);
+        const trackW = sampler?.sampleTrackWeight
+          ? sampler.sampleTrackWeight(lx, lz)
+          : noise.getTrackWeight(wx, wz);
         if (trackW <= 0.03) continue;
 
         let wy: number;
@@ -1155,12 +1200,12 @@ export class ChunkForest {
     const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
 
     if (pineCount > 0 && pineCount <= maxCandidates) {
-      const useHighPoly = isNearLOD && sharedPineGeo && sharedPineMat;
+      const useHighPoly = Boolean(isNearLOD && sharedPineGeo && sharedPineMat);
       const activeGeo = useHighPoly ? sharedPineGeo! : fallbackPineGeo;
       const activeMat = useHighPoly ? sharedPineMat! : treeMaterial;
       this.pineInstanced = new THREE.InstancedMesh(activeGeo, activeMat, pineCount);
       this.pineInstanced.castShadow = castShadow;
-      this.pineInstanced.receiveShadow = true;
+      this.pineInstanced.receiveShadow = !useHighPoly;
       this.pineInstanced.boundingSphere = chunkBoundSphere;
       this.pineInstanced.matrixAutoUpdate = false;
       const customDepth = (
@@ -1177,12 +1222,12 @@ export class ChunkForest {
     }
 
     if (broadleafCount > 0 && broadleafCount <= maxCandidates) {
-      const useHighPoly = isNearLOD && sharedOakGeo && sharedOakMat;
+      const useHighPoly = Boolean(isNearLOD && sharedOakGeo && sharedOakMat);
       const activeGeo = useHighPoly ? sharedOakGeo! : fallbackBroadleafGeo;
       const activeMat = useHighPoly ? sharedOakMat! : treeMaterial;
       this.broadleafInstanced = new THREE.InstancedMesh(activeGeo, activeMat, broadleafCount);
       this.broadleafInstanced.castShadow = castShadow;
-      this.broadleafInstanced.receiveShadow = true;
+      this.broadleafInstanced.receiveShadow = !useHighPoly;
       this.broadleafInstanced.boundingSphere = chunkBoundSphere;
       this.broadleafInstanced.matrixAutoUpdate = false;
       const customDepth = (
@@ -1214,14 +1259,18 @@ export class ChunkForest {
       this.group.add(this.hutInstanced);
     }
 
+    const showTrackProps = dist <= 2.6;
+    const showRocks = dist <= 4.2;
+
     if (rockCount > 0) {
       this.rockInstanced = new THREE.InstancedMesh(
         sharedRockGeo,
         sharedStaticPropMat,
         rockCount
       );
-      this.rockInstanced.castShadow = castShadow;
+      this.rockInstanced.castShadow = false;
       this.rockInstanced.receiveShadow = true;
+      this.rockInstanced.visible = showRocks;
       this.rockInstanced.boundingSphere = chunkBoundSphere;
       this.rockInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.rockInstanced, rockMatBuf, rockColBuf, rockCount);
@@ -1236,6 +1285,7 @@ export class ChunkForest {
       );
       this.cobbleInstanced.castShadow = false;
       this.cobbleInstanced.receiveShadow = true;
+      this.cobbleInstanced.visible = showTrackProps;
       this.cobbleInstanced.boundingSphere = chunkBoundSphere;
       this.cobbleInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.cobbleInstanced, cobbleMatBuf, cobbleColBuf, cobbleCount);
@@ -1250,6 +1300,7 @@ export class ChunkForest {
       );
       this.rootsInstanced.castShadow = false;
       this.rootsInstanced.receiveShadow = true;
+      this.rootsInstanced.visible = showTrackProps;
       this.rootsInstanced.boundingSphere = chunkBoundSphere;
       this.rootsInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.rootsInstanced, rootsMatBuf, rootsColBuf, rootsCount);
@@ -1264,6 +1315,7 @@ export class ChunkForest {
       );
       this.fernInstanced.castShadow = false;
       this.fernInstanced.receiveShadow = true;
+      this.fernInstanced.visible = showTrackProps;
       this.fernInstanced.boundingSphere = chunkBoundSphere;
       this.fernInstanced.matrixAutoUpdate = false;
       populateInstancedMesh(this.fernInstanced, fernMatBuf, fernColBuf, fernCount);
@@ -1271,7 +1323,7 @@ export class ChunkForest {
     }
   }
 
-  public setLOD(isNearLOD: boolean, castShadow: boolean): void {
+  public setLOD(isNearLOD: boolean, castShadow: boolean, dist = 0): void {
     const lodChanged = this.isNearLOD !== isNearLOD;
     this.isNearLOD = isNearLOD;
 
@@ -1283,6 +1335,7 @@ export class ChunkForest {
           if (sharedPineGeo && sharedPineMat) {
             this.pineInstanced.geometry = sharedPineGeo;
             this.pineInstanced.material = sharedPineMat;
+            this.pineInstanced.receiveShadow = false;
             const customDepth = (
               sharedPineMat as THREE.MeshStandardMaterial & {
                 customDepthMaterial?: THREE.MeshDepthMaterial;
@@ -1292,6 +1345,7 @@ export class ChunkForest {
           }
         } else {
           activePineMeshes.delete(this.pineInstanced);
+          this.pineInstanced.receiveShadow = true;
           if (fallbackPineGeo) {
             this.pineInstanced.geometry = fallbackPineGeo;
             this.pineInstanced.material = this.treeMaterial;
@@ -1313,6 +1367,7 @@ export class ChunkForest {
           if (sharedOakGeo && sharedOakMat) {
             this.broadleafInstanced.geometry = sharedOakGeo;
             this.broadleafInstanced.material = sharedOakMat;
+            this.broadleafInstanced.receiveShadow = false;
             const customDepth = (
               sharedOakMat as THREE.MeshStandardMaterial & {
                 customDepthMaterial?: THREE.MeshDepthMaterial;
@@ -1322,6 +1377,7 @@ export class ChunkForest {
           }
         } else {
           activeBroadleafMeshes.delete(this.broadleafInstanced);
+          this.broadleafInstanced.receiveShadow = true;
           if (fallbackBroadleafGeo) {
             this.broadleafInstanced.geometry = fallbackBroadleafGeo;
             this.broadleafInstanced.material = this.treeMaterial;
@@ -1353,8 +1409,18 @@ export class ChunkForest {
         }
       }
     }
+    const showTrackProps = dist <= 2.6;
     if (this.rockInstanced) {
-      this.rockInstanced.castShadow = castShadow;
+      this.rockInstanced.visible = dist <= 4.2;
+    }
+    if (this.cobbleInstanced) {
+      this.cobbleInstanced.visible = showTrackProps;
+    }
+    if (this.rootsInstanced) {
+      this.rootsInstanced.visible = showTrackProps;
+    }
+    if (this.fernInstanced) {
+      this.fernInstanced.visible = showTrackProps;
     }
   }
 

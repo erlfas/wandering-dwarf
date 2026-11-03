@@ -15,6 +15,7 @@ export class BackgroundMusic {
 
   constructor(statusElementId = 'music-toggle') {
     this.audio = new Audio(bgmUrl);
+    this.audio.preload = 'metadata';
     this.audio.loop = true;
     this.audio.volume = this.targetVolume;
     this.statusEl = document.getElementById(statusElementId);
@@ -28,11 +29,15 @@ export class BackgroundMusic {
     window.addEventListener('keydown', this.unlockHandler, { passive: true });
     window.addEventListener('pointerdown', this.unlockHandler, { passive: true });
 
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyP' && !e.repeat) {
-        this.toggleMute();
-      }
-    });
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.code === 'KeyP' && !e.repeat) {
+          this.toggleMute();
+        }
+      },
+      { passive: true }
+    );
 
     if (this.statusEl) {
       this.statusEl.addEventListener('click', (e) => {

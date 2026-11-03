@@ -474,7 +474,14 @@ export class TerrainNoise {
     precomputedTrackW?: number
   ): THREE.Color {
     const patch = this.getMeadowPatch(x, z);
-    const grove = this.getForestDensity(x, z);
+    const isUnderwater =
+      this.config.enableWater && y < this.config.waterLevel - 0.5;
+    const grove =
+      this.config.forestCoverage > 0.001 &&
+      !isUnderwater &&
+      (precomputedTrackW === undefined || precomputedTrackW < 0.65)
+        ? this.getForestDensity(x, z)
+        : 0;
 
     // Blend between lush green and warm sunlit yellow-green based on meadow patch noise
     tempColorA.copy(COL_LUSH_GRASS).lerp(COL_SUNLIT_GRASS, patch);

@@ -80,57 +80,82 @@ export class ExplorerCamera {
   }
 
   private bindEvents(domElement: HTMLElement): void {
-    window.addEventListener('keydown', (e) => {
-      const code = e.code;
-      this.keys.add(code);
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.repeat) return;
+        const code = e.code;
+        this.keys.add(code);
 
-      // Use V (instead of C, which is easy to hit accidentally next to D/S) to toggle camera mode
-      if (code === 'KeyV' && !e.repeat) {
-        this.config.cameraMode = this.config.cameraMode === 'dwarf' ? 'free' : 'dwarf';
-        this.onToggleMode?.();
-      } else if (code === 'KeyM' && !e.repeat) {
-        this.config.wireframe = !this.config.wireframe;
-        this.onToggleWireframe?.();
-      }
-    });
+        // Use V (instead of C, which is easy to hit accidentally next to D/S) to toggle camera mode
+        if (code === 'KeyV') {
+          this.config.cameraMode = this.config.cameraMode === 'dwarf' ? 'free' : 'dwarf';
+          this.onToggleMode?.();
+        } else if (code === 'KeyM') {
+          this.config.wireframe = !this.config.wireframe;
+          this.onToggleWireframe?.();
+        }
+      },
+      { passive: true }
+    );
 
-    window.addEventListener('keyup', (e) => {
-      this.keys.delete(e.code);
-    });
+    window.addEventListener(
+      'keyup',
+      (e) => {
+        this.keys.delete(e.code);
+      },
+      { passive: true }
+    );
 
     // Clear held keys if window loses focus so character doesn't keep running off screen
-    window.addEventListener('blur', () => {
-      this.keys.clear();
-      this.isDragging = false;
-    });
+    window.addEventListener(
+      'blur',
+      () => {
+        this.keys.clear();
+        this.isDragging = false;
+      },
+      { passive: true }
+    );
 
-    domElement.addEventListener('mousedown', (e) => {
-      if (e.button === 0 || e.button === 2) {
-        this.isDragging = true;
+    domElement.addEventListener(
+      'mousedown',
+      (e) => {
+        if (e.button === 0 || e.button === 2) {
+          this.isDragging = true;
+          this.lastMouseX = e.clientX;
+          this.lastMouseY = e.clientY;
+        }
+      },
+      { passive: true }
+    );
+
+    window.addEventListener(
+      'mouseup',
+      () => {
+        this.isDragging = false;
+      },
+      { passive: true }
+    );
+
+    window.addEventListener(
+      'mousemove',
+      (e) => {
+        if (!this.isDragging) return;
+        const dx = e.clientX - this.lastMouseX;
+        const dy = e.clientY - this.lastMouseY;
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
-      }
-    });
 
-    window.addEventListener('mouseup', () => {
-      this.isDragging = false;
-    });
-
-    window.addEventListener('mousemove', (e) => {
-      if (!this.isDragging) return;
-      const dx = e.clientX - this.lastMouseX;
-      const dy = e.clientY - this.lastMouseY;
-      this.lastMouseX = e.clientX;
-      this.lastMouseY = e.clientY;
-
-      const sensitivity = 0.0045;
-      this.yaw -= dx * sensitivity;
-      this.pitch = THREE.MathUtils.clamp(
-        this.pitch + dy * sensitivity,
-        0.08,
-        Math.PI * 0.44
-      );
-    });
+        const sensitivity = 0.0045;
+        this.yaw -= dx * sensitivity;
+        this.pitch = THREE.MathUtils.clamp(
+          this.pitch + dy * sensitivity,
+          0.08,
+          Math.PI * 0.44
+        );
+      },
+      { passive: true }
+    );
 
     domElement.addEventListener(
       'wheel',
@@ -158,11 +183,13 @@ export class ExplorerCamera {
     const isSprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     const baseSpeed = this.config.walkSpeed * (isSprinting ? this.config.sprintMultiplier : 1.0);
 
-    // Compute camera-relative horizontal basis vectors
-    const camForwardX = -Math.sin(this.yaw);
-    const camForwardZ = -Math.cos(this.yaw);
-    const camRightX = Math.cos(this.yaw);
-    const camRightZ = -Math.sin(this.yaw);
+    // Compute camera-relative horizontal basis vectors once per frame
+    const sinYaw = Math.sin(this.yaw);
+    const cosYaw = Math.cos(this.yaw);
+    const camForwardX = -sinYaw;
+    const camForwardZ = -cosYaw;
+    const camRightX = cosYaw;
+    const camRightZ = -sinYaw;
 
     let moveX = camForwardX * forward + camRightX * right;
     let moveZ = camForwardZ * forward + camRightZ * right;
@@ -226,22 +253,26 @@ export class ExplorerCamera {
       isSwimming
     );
 
-    // Smooth camera target follow
+    // Smooth camera target follow (snap at epsilon to avoid subnormal float decay)
     const lookHeightOffset = this.config.cameraMode === 'dwarf' ? 1.55 : 4.0;
     this.desiredTarget.set(
       this.playerPos.x,
       this.playerPos.y + lookHeightOffset,
       this.playerPos.z
     );
-    this.smoothedTarget.lerp(this.desiredTarget, Math.min(1, dt * 12));
+    if (this.smoothedTarget.distanceToSquared(this.desiredTarget) > 1e-6) {
+      this.smoothedTarget.lerp(this.desiredTarget, Math.min(1, dt * 12));
+    } else {
+      this.smoothedTarget.copy(this.desiredTarget);
+    }
 
     // Position camera on spherical orbit behind target
     const effDist = this.config.cameraMode === 'dwarf' ? this.distance : this.distance * 1.8;
     const horizDist = effDist * Math.cos(this.pitch);
     const vertDist = effDist * Math.sin(this.pitch);
 
-    const desiredCamX = this.smoothedTarget.x + Math.sin(this.yaw) * horizDist;
-    const desiredCamZ = this.smoothedTarget.z + Math.cos(this.yaw) * horizDist;
+    const desiredCamX = this.smoothedTarget.x + sinYaw * horizDist;
+    const desiredCamZ = this.smoothedTarget.z + cosYaw * horizDist;
     let desiredCamY = this.smoothedTarget.y + vertDist;
 
     // Prevent camera from clipping below terrain surface

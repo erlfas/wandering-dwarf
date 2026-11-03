@@ -7,7 +7,7 @@ import { ExplorerCamera } from './controls/ExplorerCamera';
 import { DebugOverlay } from './ui/DebugOverlay';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { TreasureManager } from './world/TreasureManager';
-import { clearProgress, loadProgress, saveProgress } from './world/ProgressStorage';
+import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
@@ -54,13 +54,19 @@ dirLight.position.copy(sunOffset);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.near = 40;
-dirLight.shadow.camera.far = 230;
-const shadowExtent = 65;
+dirLight.shadow.camera.far = 220;
+const shadowExtent = 48;
 dirLight.shadow.camera.left = -shadowExtent;
 dirLight.shadow.camera.right = shadowExtent;
 dirLight.shadow.camera.top = shadowExtent;
 dirLight.shadow.camera.bottom = -shadowExtent;
 dirLight.shadow.bias = -0.0003;
+dirLight.matrixAutoUpdate = false;
+dirLight.target.matrixAutoUpdate = false;
+dirLight.updateMatrix();
+dirLight.updateMatrixWorld();
+dirLight.target.updateMatrix();
+dirLight.target.updateMatrixWorld();
 scene.add(dirLight);
 scene.add(dirLight.target);
 
@@ -117,31 +123,55 @@ let lastSavedX = explorer.playerPos.x;
 let lastSavedZ = explorer.playerPos.z;
 let lastSavedYaw = explorer.yaw;
 let lastSaveTime = 0;
+let saveIdleHandle: number | null = null;
 
-function persistCurrentProgress(): void {
+const reusableSaveState: SavedProgress = {
+  version: 1,
+  seed: config.seed,
+  playerPos: { x: 0, y: 0, z: 0 },
+  heading: 0,
+  yaw: 0,
+  pitch: 0,
+  distance: 11.5,
+  score: 0,
+  chestsCollected: 0,
+  collectedIds: [],
+};
+
+function populateSaveState(): SavedProgress {
+  reusableSaveState.seed = config.seed;
+  reusableSaveState.playerPos.x = Math.round(explorer.playerPos.x * 100) / 100;
+  reusableSaveState.playerPos.y = Math.round(explorer.playerPos.y * 100) / 100;
+  reusableSaveState.playerPos.z = Math.round(explorer.playerPos.z * 100) / 100;
+  reusableSaveState.heading = Math.round(explorer.getHeading() * 1000) / 1000;
+  reusableSaveState.yaw = Math.round(explorer.yaw * 1000) / 1000;
+  reusableSaveState.pitch = Math.round(explorer.pitch * 1000) / 1000;
+  reusableSaveState.distance = Math.round(explorer.distance * 100) / 100;
+  reusableSaveState.score = treasureManager.score;
+  reusableSaveState.chestsCollected = treasureManager.chestsCollected;
+  reusableSaveState.collectedIds = treasureManager.getCollectedIds();
+  return reusableSaveState;
+}
+
+function persistCurrentProgress(sync = false): void {
   lastSavedX = explorer.playerPos.x;
   lastSavedZ = explorer.playerPos.z;
   lastSavedYaw = explorer.yaw;
-  saveProgress({
-    version: 1,
-    seed: config.seed,
-    playerPos: {
-      x: explorer.playerPos.x,
-      y: explorer.playerPos.y,
-      z: explorer.playerPos.z,
-    },
-    heading: explorer.getHeading(),
-    yaw: explorer.yaw,
-    pitch: explorer.pitch,
-    distance: explorer.distance,
-    score: treasureManager.score,
-    chestsCollected: treasureManager.chestsCollected,
-    collectedIds: treasureManager.getCollectedIds(),
+  if (sync) {
+    saveProgress(populateSaveState());
+    return;
+  }
+  if (saveIdleHandle !== null) return;
+  const schedule =
+    window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 0));
+  saveIdleHandle = schedule(() => {
+    saveIdleHandle = null;
+    saveProgress(populateSaveState());
   });
 }
 
-treasureManager.onChestCollected = persistCurrentProgress;
-window.addEventListener('beforeunload', persistCurrentProgress);
+treasureManager.onChestCollected = () => persistCurrentProgress(false);
+window.addEventListener('beforeunload', () => persistCurrentProgress(true));
 
 // Build initial chunks around player position immediately so first frame has full terrain + grass
 chunkManager.update(
@@ -231,7 +261,9 @@ function animate(): void {
     lastShadowZ = sz;
     dirLight.position.set(sx + sunOffset.x, sy + sunOffset.y, sz + sunOffset.z);
     dirLight.target.position.set(sx, sy, sz);
+    dirLight.updateMatrix();
     dirLight.updateMatrixWorld();
+    dirLight.target.updateMatrix();
     dirLight.target.updateMatrixWorld();
   }
 
@@ -260,10 +292,11 @@ function animate(): void {
     }
   }
 
-  // Only update compass needle transform when camera yaw changes
-  if (Math.abs(explorer.yaw - lastCompassYaw) > 0.001) {
-    lastCompassYaw = explorer.yaw;
-    compassNeedle.style.transform = `rotate(${(explorer.yaw * 180) / Math.PI}deg)`;
+  // Only update compass needle transform when camera yaw changes by >= 0.1 deg
+  const compassDeg = Math.round((explorer.yaw * 1800) / Math.PI) * 0.1;
+  if (compassDeg !== lastCompassYaw) {
+    lastCompassYaw = compassDeg;
+    compassNeedle.style.transform = `rotate(${compassDeg.toFixed(1)}deg)`;
   }
 
   renderer.render(scene, camera);

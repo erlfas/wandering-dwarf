@@ -35,8 +35,7 @@ body {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(25, 32, 38, 0.35) 0%, rgba(25, 32, 38, 0.08) 70%, transparent 100%);
-  backdrop-filter: blur(3px);
+  background: radial-gradient(circle, rgba(25, 32, 38, 0.48) 0%, rgba(25, 32, 38, 0.14) 70%, transparent 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -50,8 +49,7 @@ body {
   display: flex;
   align-items: center;
   gap: 11px;
-  background: rgba(24, 20, 15, 0.76);
-  backdrop-filter: blur(8px);
+  background: rgba(24, 20, 15, 0.88);
   border: 1px solid rgba(255, 212, 82, 0.38);
   border-radius: 12px;
   padding: 8px 14px;
@@ -209,8 +207,7 @@ body {
   position: absolute;
   bottom: 20px;
   left: 22px;
-  background: rgba(20, 25, 31, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(20, 25, 31, 0.86);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 10px;
   padding: 10px 14px;

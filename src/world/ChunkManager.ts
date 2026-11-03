@@ -75,7 +75,7 @@ export class ChunkManager {
   private getSegmentsForDistance(dist: number): number {
     if (dist <= 2.2) return 64;
     if (dist <= 4.2) return 32;
-    return 20;
+    return 16;
   }
 
   private getGrassDensityForDistance(dist: number): number {
@@ -114,7 +114,14 @@ export class ChunkManager {
     let built = 0;
 
     while (this.buildQueue.length > 0 && built < budget) {
-      if (!immediate && built > 0 && performance.now() - frameStart > 4.5) {
+      if (immediate) {
+        const nextReq = this.buildQueue[this.buildQueue.length - 1];
+        // On immediate startup/rebuild, synchronously build the inner ring (dist <= 2.2)
+        // so the player's surroundings are ready immediately, and stream outer rings smoothly
+        if (nextReq.distSq > 2.25 * 2.25 && built > 0) {
+          break;
+        }
+      } else if (built > 0 && performance.now() - frameStart > 4.5) {
         break;
       }
 
@@ -130,8 +137,24 @@ export class ChunkManager {
 
       if (existing) {
         if (existing.segments !== req.segments) {
-          existing.updateSegments(req.segments, this.config, this.noise);
+          existing.updateSegments(
+            req.segments,
+            this.config,
+            this.noise,
+            this.waterMaterial
+          );
           built++;
+          if (
+            !immediate &&
+            Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01 &&
+            !existing.hasGrass &&
+            effectiveGrassMult > 0 &&
+            performance.now() - frameStart > 3.0
+          ) {
+            existing.updateForestLOD(dist);
+            this.buildQueue.push(req);
+            break;
+          }
         }
         existing.updateForestLOD(dist);
         if (Math.abs(existing.grassDensityMult - effectiveGrassMult) > 0.01) {
@@ -175,7 +198,8 @@ export class ChunkManager {
     const r = this.config.renderRadius;
     const desiredKeys = this.desiredKeys;
     desiredKeys.clear();
-    const requests: PendingChunkRequest[] = [];
+    const requests = this.buildQueue;
+    requests.length = 0;
 
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
@@ -231,7 +255,6 @@ export class ChunkManager {
 
     // Sort descending so buildQueue.pop() processes closest chunks first in O(1)
     requests.sort((a, b) => b.distSq - a.distSq);
-    this.buildQueue = requests;
   }
 
   public rebuildAll(worldX: number, worldY: number, worldZ: number): void {
@@ -240,10 +263,41 @@ export class ChunkManager {
       chunk.dispose();
     }
     this.chunks.clear();
-    this.buildQueue = [];
+    this.buildQueue.length = 0;
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
-    this.update(worldX, worldY, worldZ, this.grassUniforms.uTime.value, false);
+    this.update(worldX, worldY, worldZ, this.grassUniforms.uTime.value, true);
+  }
+
+  public rebuildGrassOnly(worldX: number, worldZ: number): void {
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(worldX / size);
+    const centerCz = Math.round(worldZ / size);
+    for (const chunk of this.chunks.values()) {
+      const dx = chunk.cx - centerCx;
+      const dz = chunk.cz - centerCz;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const mult = this.getGrassDensityForDistance(dist);
+      chunk.rebuildGrass(
+        mult,
+        this.config,
+        this.noise,
+        this.grassMaterial,
+        this.flowerMaterial
+      );
+    }
+  }
+
+  public rebuildForestOnly(worldX: number, worldZ: number): void {
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(worldX / size);
+    const centerCz = Math.round(worldZ / size);
+    for (const chunk of this.chunks.values()) {
+      const dx = chunk.cx - centerCx;
+      const dz = chunk.cz - centerCz;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      chunk.rebuildForest(this.config, this.noise, this.treeMaterial, dist);
+    }
   }
 
   public setBordersVisible(visible: boolean): void {

@@ -33,12 +33,34 @@ export class DebugOverlay {
       });
     };
 
+    const rebuildGrass = () => {
+      if (this.rebuildRafId !== null) {
+        cancelAnimationFrame(this.rebuildRafId);
+      }
+      this.rebuildRafId = requestAnimationFrame(() => {
+        this.rebuildRafId = null;
+        const p = getPlayerPos();
+        chunkManager.rebuildGrassOnly(p.x, p.z);
+      });
+    };
+
+    const rebuildForest = () => {
+      if (this.rebuildRafId !== null) {
+        cancelAnimationFrame(this.rebuildRafId);
+      }
+      this.rebuildRafId = requestAnimationFrame(() => {
+        this.rebuildRafId = null;
+        const p = getPlayerPos();
+        chunkManager.rebuildForestOnly(p.x, p.z);
+      });
+    };
+
     // 1. Trees & Open Groves Folder
     const forestFolder = this.gui.addFolder('Trees & Open Groves');
     forestFolder
       .add(config, 'enableTrees')
       .name('Enable 3D Trees')
-      .onChange(rebuild);
+      .onChange(rebuildForest);
 
     forestFolder
       .add(config, 'forestCoverage', 0.0, 0.85, 0.05)
@@ -48,12 +70,12 @@ export class DebugOverlay {
     forestFolder
       .add(config, 'treeDensity', 0.1, 0.85, 0.05)
       .name('Grove Sparseness')
-      .onFinishChange(rebuild);
+      .onFinishChange(rebuildForest);
 
     forestFolder
       .add(config, 'treeScale', 0.5, 1.8, 0.05)
       .name('Tree Size')
-      .onFinishChange(rebuild);
+      .onFinishChange(rebuildForest);
 
     forestFolder
       .add(config, 'windSpeed', 0, 5, 0.1)
@@ -112,27 +134,27 @@ export class DebugOverlay {
     grassFolder
       .add(config, 'enableGrassBlades')
       .name('3D Grass Blades')
-      .onChange(rebuild);
+      .onChange(rebuildGrass);
 
     grassFolder
       .add(config, 'enableFlowers')
       .name('Wildflowers')
-      .onChange(rebuild);
+      .onChange(rebuildGrass);
 
     grassFolder
       .add(config, 'grassDensity', 400, 6000, 200)
       .name('Tufts per Chunk')
-      .onFinishChange(rebuild);
+      .onFinishChange(rebuildGrass);
 
     grassFolder
       .add(config, 'grassHeight', 0.4, 2.2, 0.05)
       .name('Grass Height')
-      .onFinishChange(rebuild);
+      .onFinishChange(rebuildGrass);
 
     grassFolder
       .add(config, 'tallGrassCoverage', 0.0, 1.0, 0.05)
       .name('Waist-High Grass Areas')
-      .onFinishChange(rebuild);
+      .onFinishChange(rebuildGrass);
 
     grassFolder
       .add(config, 'blankClayMode')

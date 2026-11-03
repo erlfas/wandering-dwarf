@@ -118,7 +118,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
         treeMaterial,
         isNearLOD,
         castShadow,
-        this
+        this,
+        dist
       );
       this.mesh.add(this.chunkForest.group);
     }
@@ -140,7 +141,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   public updateSegments(
     newSegments: number,
     config: WorldConfig,
-    noise: TerrainNoise
+    noise: TerrainNoise,
+    waterMaterial?: THREE.Material
   ): void {
     if (this.segments === newSegments) return;
     let pool = geometryPool.get(this.segments);
@@ -152,9 +154,76 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
     this.segments = newSegments;
     this.mesh.geometry = this.buildGeometry(noise, config.blankClayMode);
+    const shouldHaveWater =
+      config.enableWater &&
+      !config.blankClayMode &&
+      this.minElevation < config.waterLevel - 0.10;
+    if (this.waterMesh) {
+      this.waterMesh.visible = shouldHaveWater;
+      this.waterMesh.position.y = config.waterLevel;
+      this.waterMesh.updateMatrix();
+    } else if (shouldHaveWater && waterMaterial) {
+      if (!sharedWaterGeo || sharedWaterGeoSize !== this.size) {
+        sharedWaterGeo?.dispose();
+        sharedWaterGeo = new THREE.PlaneGeometry(this.size, this.size, 8, 8);
+        sharedWaterGeo.rotateX(-Math.PI / 2);
+        sharedWaterGeoSize = this.size;
+      }
+      this.waterMesh = new THREE.Mesh(sharedWaterGeo, waterMaterial);
+      this.waterMesh.position.y = config.waterLevel;
+      this.waterMesh.updateMatrix();
+      this.waterMesh.matrixAutoUpdate = false;
+      this.waterMesh.receiveShadow = true;
+      this.mesh.add(this.waterMesh);
+      this.waterMesh.updateMatrixWorld(true);
+    }
     if (this.borderLine) {
       this.setBorderVisible(false);
       this.setBorderVisible(true);
+    }
+  }
+
+  public rebuildGrass(
+    grassDensityMult: number,
+    config: WorldConfig,
+    noise: TerrainNoise,
+    grassMaterial: THREE.Material,
+    flowerMaterial: THREE.Material
+  ): void {
+    if (this.chunkGrass) {
+      this.mesh.remove(this.chunkGrass.group);
+      this.chunkGrass.dispose();
+      this.chunkGrass = undefined;
+    }
+    this.updateGrass(grassDensityMult, config, noise, grassMaterial, flowerMaterial);
+  }
+
+  public rebuildForest(
+    config: WorldConfig,
+    noise: TerrainNoise,
+    treeMaterial: THREE.Material,
+    dist: number
+  ): void {
+    if (this.chunkForest) {
+      this.mesh.remove(this.chunkForest.group);
+      this.chunkForest.dispose();
+      this.chunkForest = undefined;
+    }
+    if ((config.enableTrees || config.enableTracks) && !config.blankClayMode) {
+      this.chunkForest = new ChunkForest(
+        this.cx,
+        this.cz,
+        this.size,
+        config,
+        noise,
+        treeMaterial,
+        dist <= 1.5,
+        dist <= 2.2,
+        this,
+        dist
+      );
+      this.mesh.add(this.chunkForest.group);
+      this.chunkForest.group.updateMatrixWorld(true);
     }
   }
 
@@ -193,7 +262,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   }
 
   public updateForestLOD(dist: number): void {
-    this.chunkForest?.setLOD(dist <= 1.5, dist <= 2.2);
+    this.chunkForest?.setLOD(dist <= 1.5, dist <= 2.2, dist);
   }
 
   public getColliders(): Float32Array | undefined {
@@ -203,7 +272,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   public sampleHeightAndNormal(
     localX: number,
     localZ: number,
-    outNormal: THREE.Vector3
+    outNormal: THREE.Vector3,
+    outColor?: THREE.Color
   ): number {
     const segments = this.segments;
     const stride = segments + 1;
@@ -251,7 +321,56 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       normArr[i11 + 2] * w11;
     outNormal.set(nx, ny, nz).normalize();
 
+    if (outColor) {
+      const colArr = (geo.attributes.color as THREE.BufferAttribute).array as Float32Array;
+      const r =
+        colArr[i00] * w00 + colArr[i10] * w10 + colArr[i01] * w01 + colArr[i11] * w11;
+      const g =
+        colArr[i00 + 1] * w00 +
+        colArr[i10 + 1] * w10 +
+        colArr[i01 + 1] * w01 +
+        colArr[i11 + 1] * w11;
+      const b =
+        colArr[i00 + 2] * w00 +
+        colArr[i10 + 2] * w10 +
+        colArr[i01 + 2] * w01 +
+        colArr[i11 + 2] * w11;
+      outColor.setRGB(r, g, b);
+    }
+
     return wy;
+  }
+
+  public sampleTrackWeight(localX: number, localZ: number): number {
+    if (this.maxTrackWeight <= 0.001) return 0;
+    const trackWeights = this.mesh.geometry.userData.trackWeights as
+      | Float32Array
+      | undefined;
+    if (!trackWeights) return 0;
+
+    const segments = this.segments;
+    const stride = segments + 1;
+    const half = this.size * 0.5;
+    const invStep = segments / this.size;
+
+    const u = THREE.MathUtils.clamp((localX + half) * invStep, 0, segments - 0.0001);
+    const v = THREE.MathUtils.clamp((localZ + half) * invStep, 0, segments - 0.0001);
+    const ix = Math.floor(u);
+    const iz = Math.floor(v);
+    const fx = u - ix;
+    const fz = v - iz;
+
+    const i00 = iz * stride + ix;
+    const i10 = i00 + 1;
+    const i01 = i00 + stride;
+    const i11 = i01 + 1;
+
+    return (
+      trackWeights[i00] * (1 - fx) * (1 - fz) +
+      trackWeights[i10] * fx * (1 - fz) +
+      trackWeights[i01] * (1 - fx) * fz +
+      trackWeights[i11] * fx * fz
+    );
   }
 
   public sampleColor(localX: number, localZ: number, outColor: THREE.Color): void {
@@ -304,19 +423,29 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     const half = size * 0.5;
     const step = size / segments;
 
+    const count = (segments + 1) * (segments + 1);
     const pool = geometryPool.get(segments);
     let geometry: THREE.BufferGeometry;
+    let isReusedSameSize = false;
     if (pool && pool.length > 0) {
       geometry = pool.pop()!;
+      isReusedSameSize = geometry.userData.gridSize === size;
     } else {
       geometry = new THREE.PlaneGeometry(size, size, segments, segments);
       geometry.rotateX(-Math.PI / 2);
-      const count = (segments + 1) * (segments + 1);
+      geometry.deleteAttribute('uv');
       geometry.setAttribute(
         'color',
         new THREE.BufferAttribute(new Float32Array(count * 3), 3)
       );
+      geometry.userData.trackWeights = new Float32Array(count);
+      geometry.userData.gridSize = size;
     }
+    if (!geometry.userData.trackWeights || geometry.userData.trackWeights.length < count) {
+      geometry.userData.trackWeights = new Float32Array(count);
+    }
+    geometry.userData.gridSize = size;
+    const trackWeights = geometry.userData.trackWeights as Float32Array;
 
     const posAttr = geometry.attributes.position as THREE.BufferAttribute;
     const normAttr = geometry.attributes.normal as THREE.BufferAttribute;
@@ -371,12 +500,16 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
         const pIdx = padRow + (ix + 1);
         const wy = paddedHeights[pIdx];
+        const tw = paddedTrackWeights[pIdx];
+        trackWeights[i] = tw;
         if (wy < minH) minH = wy;
         if (wy > maxH) maxH = wy;
 
-        posArr[cIdx] = localX;
+        if (!isReusedSameSize) {
+          posArr[cIdx] = localX;
+          posArr[cIdx + 2] = localZ;
+        }
         posArr[cIdx + 1] = wy;
-        posArr[cIdx + 2] = localZ;
 
         // Compute central-difference normal directly from the 4 neighbor heights in paddedHeights
         const hL = paddedHeights[pIdx - 1];
@@ -403,7 +536,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
             wz,
             tempNormal,
             tempColor,
-            paddedTrackWeights[pIdx]
+            tw
           );
           colors[cIdx] = tempColor.r;
           colors[cIdx + 1] = tempColor.g;

@@ -13,8 +13,14 @@ export interface GrassUniforms {
 }
 
 export interface ChunkSurfaceSampler {
-  sampleHeightAndNormal(localX: number, localZ: number, outNormal: THREE.Vector3): number;
+  sampleHeightAndNormal(
+    localX: number,
+    localZ: number,
+    outNormal: THREE.Vector3,
+    outColor?: THREE.Color
+  ): number;
   sampleColor(localX: number, localZ: number, outColor: THREE.Color): void;
+  sampleTrackWeight?(localX: number, localZ: number): number;
   getElevationBounds?(): { minH: number; maxH: number };
   hasTrack?(): boolean;
 }
@@ -403,6 +409,23 @@ export function loadGrassClumpModel(uniforms: GrassUniforms): void {
       clumpMat.roughness = 0.82;
       clumpMat.metalness = 0.02;
       clumpMat.side = THREE.DoubleSide;
+      if (clumpMat.normalMap) {
+        clumpMat.normalMap.dispose();
+        clumpMat.normalMap = null;
+      }
+      if (clumpMat.roughnessMap) {
+        clumpMat.roughnessMap.dispose();
+        clumpMat.roughnessMap = null;
+      }
+      if (clumpMat.metalnessMap) {
+        clumpMat.metalnessMap.dispose();
+        clumpMat.metalnessMap = null;
+      }
+      if (clumpMat.aoMap) {
+        clumpMat.aoMap.dispose();
+        clumpMat.aoMap = null;
+      }
+      origMat.dispose();
       applyGrassWindShader(clumpMat, uniforms, { isFlower: false, isModelClump: true });
 
       sharedClumpGeo = geo;
@@ -432,6 +455,76 @@ const sharedNormal = new THREE.Vector3();
 const sharedBaseColor = new THREE.Color();
 const sharedClumpColor = new THREE.Color();
 const sharedFlowerColor = new THREE.Color();
+
+// Reusable module-level scratch buffers so ChunkGrass only allocates GPU buffers for actual placed instances
+let grassMatBuf = new Float32Array(2600 * 16);
+let grassColBuf = new Float32Array(2600 * 3);
+let tallMatBuf = new Float32Array(2470 * 16);
+let tallColBuf = new Float32Array(2470 * 3);
+let clumpMatBuf = new Float32Array(16 * 16);
+let clumpColBuf = new Float32Array(16 * 3);
+let flowerMatBuf = new Float32Array(450 * 16);
+let flowerColBuf = new Float32Array(450 * 3);
+
+function ensureGrassScratchBuffers(
+  maxGrass: number,
+  maxTall: number,
+  maxClumps: number,
+  maxFlowers: number
+): void {
+  if (grassMatBuf.length < maxGrass * 16) {
+    grassMatBuf = new Float32Array(maxGrass * 16);
+    grassColBuf = new Float32Array(maxGrass * 3);
+  }
+  if (tallMatBuf.length < maxTall * 16) {
+    tallMatBuf = new Float32Array(maxTall * 16);
+    tallColBuf = new Float32Array(maxTall * 3);
+  }
+  if (clumpMatBuf.length < maxClumps * 16) {
+    clumpMatBuf = new Float32Array(maxClumps * 16);
+    clumpColBuf = new Float32Array(maxClumps * 3);
+  }
+  if (flowerMatBuf.length < maxFlowers * 16) {
+    flowerMatBuf = new Float32Array(maxFlowers * 16);
+    flowerColBuf = new Float32Array(maxFlowers * 3);
+  }
+}
+
+function recordGrassInstance(
+  matBuf: Float32Array,
+  colBuf: Float32Array,
+  idx: number,
+  matrix: THREE.Matrix4,
+  color: THREE.Color
+): void {
+  matrix.toArray(matBuf, idx * 16);
+  const cIdx = idx * 3;
+  colBuf[cIdx] = color.r;
+  colBuf[cIdx + 1] = color.g;
+  colBuf[cIdx + 2] = color.b;
+}
+
+function buildPopulatedGrassInstancedMesh(
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  count: number,
+  matBuf: Float32Array,
+  colBuf: Float32Array,
+  boundSphere: THREE.Sphere,
+  receiveShadow: boolean
+): THREE.InstancedMesh {
+  const mesh = new THREE.InstancedMesh(geo, mat, count);
+  mesh.castShadow = false;
+  mesh.receiveShadow = receiveShadow;
+  mesh.boundingSphere = boundSphere;
+  mesh.matrixAutoUpdate = false;
+  (mesh.instanceMatrix.array as Float32Array).set(matBuf.subarray(0, count * 16));
+  mesh.instanceMatrix.needsUpdate = true;
+  const colArray = new Float32Array(count * 3);
+  colArray.set(colBuf.subarray(0, count * 3));
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(colArray, 3);
+  return mesh;
+}
 
 export class ChunkGrass {
   public readonly group = new THREE.Group();
@@ -476,53 +569,17 @@ export class ChunkGrass {
     const radius = Math.sqrt(2 * halfSize * halfSize + halfY * halfY) + 1.2;
     const chunkBoundSphere = new THREE.Sphere(new THREE.Vector3(0, centerY, 0), radius);
 
-    const grassMesh = new THREE.InstancedMesh(sharedTuftGeo, grassMaterial, maxCount);
-    grassMesh.castShadow = false;
-    grassMesh.receiveShadow = true;
-    grassMesh.boundingSphere = chunkBoundSphere;
-    grassMesh.matrixAutoUpdate = false;
-
     // Dedicated dense waist-high grass strand clusters (~0.75m - 0.92m tall, matching dwarf waist height)
     const maxTallGrass =
       config.tallGrassCoverage > 0.001 ? Math.floor(maxCount * 0.95) : 0;
-    const tallGrassMesh =
-      maxTallGrass > 0
-        ? new THREE.InstancedMesh(sharedTallGrassGeo, grassMaterial, maxTallGrass)
-        : undefined;
-    if (tallGrassMesh) {
-      tallGrassMesh.castShadow = false;
-      tallGrassMesh.receiveShadow = true;
-      tallGrassMesh.boundingSphere = chunkBoundSphere;
-      tallGrassMesh.matrixAutoUpdate = false;
-    }
 
     // 3D modelled tall grass & seed-head clumps (`3dmodels/grass clump 3d model.glb`)
     // Visible only on close-range LOD chunks (dist <= 1.5, where densityMultiplier >= 0.9)
-    const maxClumps = Math.min(16, Math.max(4, Math.floor(maxCount * 0.008)));
-    const clumpMesh =
-      maxClumps > 0
-        ? new THREE.InstancedMesh(
-            sharedClumpGeo ?? sharedTuftGeo,
-            sharedClumpMat ?? grassMaterial,
-            maxClumps
-          )
-        : undefined;
-    if (clumpMesh) {
-      clumpMesh.castShadow = false;
-      clumpMesh.receiveShadow = false;
-      clumpMesh.boundingSphere = chunkBoundSphere;
-      clumpMesh.matrixAutoUpdate = false;
-    }
+    const maxClumps = Math.min(6, Math.max(2, Math.floor(maxCount * 0.0025)));
 
     const maxFlowers = config.enableFlowers ? Math.floor(maxCount * 0.075) : 0;
-    const flowerMesh =
-      maxFlowers > 0
-        ? new THREE.InstancedMesh(sharedFlowerGeo, flowerMaterial, maxFlowers)
-        : undefined;
-    if (flowerMesh) {
-      flowerMesh.boundingSphere = chunkBoundSphere;
-      flowerMesh.matrixAutoUpdate = false;
-    }
+
+    ensureGrassScratchBuffers(maxCount, maxTallGrass, maxClumps, maxFlowers);
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
@@ -544,10 +601,10 @@ export class ChunkGrass {
       const wx = worldOffsetX + lx;
       const wz = worldOffsetZ + lz;
 
-      // Fast O(1) height & normal lookup from chunk vertex buffer when available
+      // Fast O(1) height, normal & color lookup from chunk vertex buffer when available
       let wy: number;
       if (sampler) {
-        wy = sampler.sampleHeightAndNormal(lx, lz, sharedNormal);
+        wy = sampler.sampleHeightAndNormal(lx, lz, sharedNormal, sharedBaseColor);
       } else {
         wy = noise.getHeight(wx, wz);
         noise.getNormal(wx, wz, sharedNormal);
@@ -558,7 +615,11 @@ export class ChunkGrass {
       if (config.enableWater && wy < config.waterLevel + 0.52) continue;
 
       // Evaluate forest track weight: keep the worn dirt footpath clear while framing its verges
-      const trackW = chunkNearTrack ? noise.getTrackWeight(wx, wz, wy) : 0;
+      const trackW = chunkNearTrack
+        ? sampler?.sampleTrackWeight
+          ? sampler.sampleTrackWeight(lx, lz)
+          : noise.getTrackWeight(wx, wz, wy)
+        : 0;
       if (trackW > 0.44) continue;
       const isTrackVerge = trackW >= 0.06 && trackW <= 0.44;
 
@@ -607,12 +668,8 @@ export class ChunkGrass {
       sharedDummy.scale.set(scaleXZ, scaleY, scaleXZ);
       sharedDummy.updateMatrix();
 
-      grassMesh.setMatrixAt(grassIdx, sharedDummy.matrix);
-
       // Match the exact terrain surface color with slight per-tuft organic variation
-      if (sampler) {
-        sampler.sampleColor(lx, lz, sharedBaseColor);
-      } else {
+      if (!sampler) {
         noise.getSurfaceColor(wx, wy, wz, sharedNormal, sharedBaseColor);
       }
       // Ensure grass on the inner track verge stays vibrant meadow green rather than dirt brown
@@ -624,11 +681,10 @@ export class ChunkGrass {
         (rng() - 0.5) * 0.08,
         (rng() - 0.5) * 0.06
       );
-      grassMesh.setColorAt(grassIdx, sharedBaseColor);
-      grassIdx++;
+      recordGrassInstance(grassMatBuf, grassColBuf, grassIdx++, sharedDummy.matrix, sharedBaseColor);
 
       // Spawn dense, overlapping waist-high grass strand clusters (~0.75m - 0.92m) inside tall-grass areas
-      if (tallGrassMesh && tallGrassIdx < maxTallGrass && tallGrass > 0.08) {
+      if (maxTallGrass > 0 && tallGrassIdx < maxTallGrass && tallGrass > 0.08) {
         // Place 1 to 3 closely packed 17-blade clusters per sample to form a thick, continuous waist-high bed
         const subCount = tallGrass > 0.52 ? 3 : tallGrass > 0.25 ? 2 : 1;
         for (let sc = 0; sc < subCount && tallGrassIdx < maxTallGrass; sc++) {
@@ -655,7 +711,6 @@ export class ChunkGrass {
           );
           sharedDummy.scale.set(tallScaleXZ, tallScaleY, tallScaleXZ);
           sharedDummy.updateMatrix();
-          tallGrassMesh.setMatrixAt(tallGrassIdx, sharedDummy.matrix);
 
           // Rich sunlit golden-green meadow tint for waist-high grass strands
           sharedClumpColor.copy(sharedBaseColor).offsetHSL(
@@ -663,8 +718,13 @@ export class ChunkGrass {
             0.03 + (rng() - 0.5) * 0.06,
             0.02 + (rng() - 0.5) * 0.05
           );
-          tallGrassMesh.setColorAt(tallGrassIdx, sharedClumpColor);
-          tallGrassIdx++;
+          recordGrassInstance(
+            tallMatBuf,
+            tallColBuf,
+            tallGrassIdx++,
+            sharedDummy.matrix,
+            sharedClumpColor
+          );
         }
       }
 
@@ -676,7 +736,7 @@ export class ChunkGrass {
           ? 0.11
           : 0.055 * (0.6 + patch * 0.8);
       if (
-        clumpMesh &&
+        maxClumps > 0 &&
         clumpIdx < maxClumps &&
         (tallGrass > 0.2 || patch > 0.35 || isTrackVerge) &&
         rng() < clumpChance
@@ -690,7 +750,6 @@ export class ChunkGrass {
         sharedDummy.position.set(lx, wy - 0.04, lz);
         sharedDummy.scale.set(clumpScaleXZ, clumpScaleY, clumpScaleXZ);
         sharedDummy.updateMatrix();
-        clumpMesh.setMatrixAt(clumpIdx, sharedDummy.matrix);
 
         // Keep bright natural texture colors with subtle organic warm/cool variation per clump
         sharedClumpColor.setHex(0xffffff).offsetHSL(
@@ -698,14 +757,19 @@ export class ChunkGrass {
           (rng() - 0.5) * 0.08,
           (rng() - 0.5) * 0.07
         );
-        clumpMesh.setColorAt(clumpIdx, sharedClumpColor);
-        clumpIdx++;
+        recordGrassInstance(
+          clumpMatBuf,
+          clumpColBuf,
+          clumpIdx++,
+          sharedDummy.matrix,
+          sharedClumpColor
+        );
       }
 
       // Place wildflower blossoms in lush patches & abundantly along track borders (matching art/forest_track.jpg)
       const flowerChance = isTrackVerge ? 0.21 : 0.095;
       if (
-        flowerMesh &&
+        maxFlowers > 0 &&
         flowerIdx < maxFlowers &&
         (patch > 0.42 || isTrackVerge) &&
         rng() < flowerChance
@@ -713,7 +777,6 @@ export class ChunkGrass {
         sharedDummy.position.set(lx, wy - 0.03, lz);
         sharedDummy.scale.setScalar(0.85 + rng() * 0.55);
         sharedDummy.updateMatrix();
-        flowerMesh.setMatrixAt(flowerIdx, sharedDummy.matrix);
 
         // Along track verges, emphasize golden buttercups, white daisies, and sky-blue forget-me-nots
         const rPick = rng();
@@ -733,8 +796,13 @@ export class ChunkGrass {
           ? FLOWER_PALETTE[2]
           : FLOWER_PALETTE[3];
         sharedFlowerColor.copy(palettePick);
-        flowerMesh.setColorAt(flowerIdx, sharedFlowerColor);
-        flowerIdx++;
+        recordGrassInstance(
+          flowerMatBuf,
+          flowerColBuf,
+          flowerIdx++,
+          sharedDummy.matrix,
+          sharedFlowerColor
+        );
       }
     }
 
@@ -743,74 +811,56 @@ export class ChunkGrass {
     this.fullFlowerCount = flowerIdx;
 
     if (grassIdx > 0) {
-      grassMesh.count = grassIdx;
-      grassMesh.instanceMatrix.clearUpdateRanges();
-      grassMesh.instanceMatrix.addUpdateRange(0, grassIdx * 16);
-      grassMesh.instanceMatrix.needsUpdate = true;
-      if (grassMesh.instanceColor) {
-        grassMesh.instanceColor.clearUpdateRanges();
-        grassMesh.instanceColor.addUpdateRange(0, grassIdx * 3);
-        grassMesh.instanceColor.needsUpdate = true;
-      }
-      this.grassInstanced = grassMesh;
-      this.group.add(grassMesh);
-    } else {
-      grassMesh.dispose();
+      this.grassInstanced = buildPopulatedGrassInstancedMesh(
+        sharedTuftGeo,
+        grassMaterial,
+        grassIdx,
+        grassMatBuf,
+        grassColBuf,
+        chunkBoundSphere,
+        true
+      );
+      this.group.add(this.grassInstanced);
     }
 
-    if (tallGrassMesh) {
-      if (tallGrassIdx > 0) {
-        tallGrassMesh.count = tallGrassIdx;
-        tallGrassMesh.instanceMatrix.clearUpdateRanges();
-        tallGrassMesh.instanceMatrix.addUpdateRange(0, tallGrassIdx * 16);
-        tallGrassMesh.instanceMatrix.needsUpdate = true;
-        if (tallGrassMesh.instanceColor) {
-          tallGrassMesh.instanceColor.clearUpdateRanges();
-          tallGrassMesh.instanceColor.addUpdateRange(0, tallGrassIdx * 3);
-          tallGrassMesh.instanceColor.needsUpdate = true;
-        }
-        this.tallGrassInstanced = tallGrassMesh;
-        this.group.add(tallGrassMesh);
-      } else {
-        tallGrassMesh.dispose();
-      }
+    if (tallGrassIdx > 0) {
+      this.tallGrassInstanced = buildPopulatedGrassInstancedMesh(
+        sharedTallGrassGeo,
+        grassMaterial,
+        tallGrassIdx,
+        tallMatBuf,
+        tallColBuf,
+        chunkBoundSphere,
+        true
+      );
+      this.group.add(this.tallGrassInstanced);
     }
 
-    if (clumpMesh) {
-      if (clumpIdx > 0) {
-        clumpMesh.count = clumpIdx;
-        clumpMesh.instanceMatrix.clearUpdateRanges();
-        clumpMesh.instanceMatrix.addUpdateRange(0, clumpIdx * 16);
-        clumpMesh.instanceMatrix.needsUpdate = true;
-        if (clumpMesh.instanceColor) {
-          clumpMesh.instanceColor.clearUpdateRanges();
-          clumpMesh.instanceColor.addUpdateRange(0, clumpIdx * 3);
-          clumpMesh.instanceColor.needsUpdate = true;
-        }
-        this.clumpInstanced = clumpMesh;
-        activeClumpMeshes.add(clumpMesh);
-        this.group.add(clumpMesh);
-      } else {
-        clumpMesh.dispose();
-      }
+    if (clumpIdx > 0) {
+      this.clumpInstanced = buildPopulatedGrassInstancedMesh(
+        sharedClumpGeo ?? sharedTuftGeo,
+        sharedClumpMat ?? grassMaterial,
+        clumpIdx,
+        clumpMatBuf,
+        clumpColBuf,
+        chunkBoundSphere,
+        false
+      );
+      activeClumpMeshes.add(this.clumpInstanced);
+      this.group.add(this.clumpInstanced);
     }
 
-    if (flowerMesh) {
-      if (flowerIdx > 0) {
-        flowerMesh.count = flowerIdx;
-        flowerMesh.instanceMatrix.clearUpdateRanges();
-        flowerMesh.instanceMatrix.addUpdateRange(0, flowerIdx * 16);
-        flowerMesh.instanceMatrix.needsUpdate = true;
-        if (flowerMesh.instanceColor) {
-          flowerMesh.instanceColor.clearUpdateRanges();
-          flowerMesh.instanceColor.addUpdateRange(0, flowerIdx * 3);
-          flowerMesh.instanceColor.needsUpdate = true;
-        }
-        this.flowerInstanced = flowerMesh;
-        this.group.add(flowerMesh);
-      } else {
-        flowerMesh.dispose();
-      }
+    if (flowerIdx > 0) {
+      this.flowerInstanced = buildPopulatedGrassInstancedMesh(
+        sharedFlowerGeo,
+        flowerMaterial,
+        flowerIdx,
+        flowerMatBuf,
+        flowerColBuf,
+        chunkBoundSphere,
+        false
+      );
+      this.group.add(this.flowerInstanced);
     }
 
     this.setDensityMultiplier(densityMultiplier);

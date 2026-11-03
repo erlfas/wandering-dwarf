@@ -21,6 +21,8 @@ export class DwarfCharacter {
 
   private swimTime = 0;
   private swimBlend = 0; // Smooth 0..1 transition between land stance and swimming posture
+  private idleStateTime = 0;
+  private idleMixerAccum = 0;
   public heading = 0;    // Radians around Y axis
 
   // Scale factor so the ~0.85m native GLB mesh stands ~1.40m tall in the world
@@ -46,6 +48,8 @@ export class DwarfCharacter {
     this.swimRippleRing = new THREE.Mesh(ringGeo1, ringMat1);
     this.swimRippleRing.position.y = 0.56;
     this.swimRippleRing.visible = false;
+    this.swimRippleRing.updateMatrix();
+    this.swimRippleRing.matrixAutoUpdate = false;
     this.root.add(this.swimRippleRing);
 
     const ringGeo2 = new THREE.RingGeometry(0.62, 0.72, 24);
@@ -59,6 +63,8 @@ export class DwarfCharacter {
     this.swimOuterRing = new THREE.Mesh(ringGeo2, ringMat2);
     this.swimOuterRing.position.y = 0.55;
     this.swimOuterRing.visible = false;
+    this.swimOuterRing.updateMatrix();
+    this.swimOuterRing.matrixAutoUpdate = false;
     this.root.add(this.swimOuterRing);
   }
 
@@ -260,11 +266,13 @@ export class DwarfCharacter {
     nextAction.reset();
     nextAction.setEffectiveTimeScale(1);
     nextAction.setEffectiveWeight(1);
-    if (prevAction) {
+    if ( prevAction ) {
       nextAction.crossFadeFrom(prevAction, fadeDuration, true);
     }
     nextAction.play();
     this.currentState = nextState;
+    this.idleStateTime = 0;
+    this.idleMixerAccum = 0;
   }
 
   /**
@@ -285,14 +293,22 @@ export class DwarfCharacter {
       let diff = targetHeading - this.heading;
       while (diff > Math.PI) diff -= Math.PI * 2;
       while (diff < -Math.PI) diff += Math.PI * 2;
-      this.heading += diff * Math.min(1, dt * (isSwimming ? 7 : 12));
+      if (Math.abs(diff) > 0.0005) {
+        this.heading += diff * Math.min(1, dt * (isSwimming ? 7 : 12));
+      } else {
+        this.heading = targetHeading;
+      }
     }
 
     this.root.rotation.y = this.heading;
 
-    // Smoothly blend in/out of swimming state
+    // Smoothly blend in/out of swimming state (snap at epsilon to avoid IEEE-754 subnormal floats)
     const targetBlend = isSwimming ? 1 : 0;
-    this.swimBlend = THREE.MathUtils.lerp(this.swimBlend, targetBlend, Math.min(1, dt * 8));
+    if (Math.abs(this.swimBlend - targetBlend) > 0.001) {
+      this.swimBlend = THREE.MathUtils.lerp(this.swimBlend, targetBlend, Math.min(1, dt * 8));
+    } else {
+      this.swimBlend = targetBlend;
+    }
 
     const isMoving = moveSpeed > 0.15;
     const isRunning = moveSpeed > 8.8;
@@ -321,7 +337,21 @@ export class DwarfCharacter {
         }
       }
 
-      this.mixer.update(dt);
+      if (this.currentState === 'idle') {
+        this.idleStateTime += dt;
+        // Once the 0.25s crossfade into idle completes, throttle breathing mixer updates to ~30 Hz
+        if (this.idleStateTime > 0.28) {
+          this.idleMixerAccum += dt;
+          if (this.idleMixerAccum >= 0.033) {
+            this.mixer.update(this.idleMixerAccum);
+            this.idleMixerAccum = 0;
+          }
+        } else {
+          this.mixer.update(dt);
+        }
+      } else {
+        this.mixer.update(dt);
+      }
     }
 
     if (isSwimming) {
@@ -340,10 +370,12 @@ export class DwarfCharacter {
       const ring1Phase = (this.swimTime * 0.45) % 1;
       const ring2Phase = (this.swimTime * 0.45 + 0.5) % 1;
       this.swimRippleRing.scale.setScalar(0.85 + ring1Phase * (isMoving ? 1.1 : 0.65));
+      this.swimRippleRing.updateMatrix();
       (this.swimRippleRing.material as THREE.MeshBasicMaterial).opacity =
         (1.0 - ring1Phase) * 0.55 * this.swimBlend;
 
       this.swimOuterRing.scale.setScalar(0.85 + ring2Phase * (isMoving ? 1.25 : 0.75));
+      this.swimOuterRing.updateMatrix();
       (this.swimOuterRing.material as THREE.MeshBasicMaterial).opacity =
         (1.0 - ring2Phase) * 0.4 * this.swimBlend;
     } else {
@@ -356,6 +388,8 @@ export class DwarfCharacter {
           this.landYOffset,
           Math.min(1, dt * 10)
         );
+      } else if (this.modelContainer.position.y !== this.landYOffset) {
+        this.modelContainer.position.y = this.landYOffset;
       }
     }
   }
