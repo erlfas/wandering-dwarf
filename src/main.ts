@@ -12,6 +12,7 @@ import { LandmarkManager } from './world/LandmarkManager';
 import { LivingWorldManager } from './world/LivingWorldManager';
 import { ChallengeManager } from './world/ChallengeManager';
 import { FishingAndFishManager } from './world/FishingAndFishManager';
+import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
 import { WaterReflectionController } from './world/WaterMesh';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
@@ -182,6 +183,26 @@ const fishingManager = new FishingAndFishManager(
 scene.add(fishingManager.group);
 explorer.setFishingManager(fishingManager);
 
+const huntingManager = new HuntingAndDeerManager(
+  config,
+  noise,
+  camera,
+  renderer.domElement,
+  dwarf,
+  (gold, msg) => {
+    treasureManager.grantBonusGold(gold, msg);
+    if (gold > 0) {
+      persistCurrentProgress(false);
+    }
+  }
+);
+scene.add(huntingManager.group);
+explorer.setHuntingManager(huntingManager);
+
+// Ensure equipping the Bow stows the Fishing Rod, and equipping the Fishing Rod stows the Bow
+fishingManager.setOnEnterFishingCallback(() => huntingManager.exitHuntingMode());
+huntingManager.setOnEnterHuntingCallback(() => fishingManager.exitFishingMode());
+
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
 
 // Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
@@ -191,6 +212,7 @@ treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 livingWorldManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 fishingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+huntingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
@@ -323,6 +345,8 @@ const debugOverlay = new DebugOverlay(
     challengeManager.reset();
     fishingManager.exitFishingMode();
     fishingManager.rebuildAll();
+    huntingManager.exitHuntingMode();
+    huntingManager.rebuildAll();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -413,6 +437,7 @@ function animate(): void {
     explorer.lastAimForward,
     explorer.lastAimRight
   );
+  huntingManager.update(dt, elapsedTime, explorer.playerPos);
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   const snap = 2.0;

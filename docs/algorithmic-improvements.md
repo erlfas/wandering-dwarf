@@ -126,10 +126,10 @@ This caused two problems:
 
 ---
 
-## 6. Close-Range 3D Asset LODs, Pre-Parse GLB Stripping, Vertex Welding & Shadow Proxies (`ForestField.ts`, `GrassField.ts` & `LandmarkManager.ts`)
+## 6. Close-Range 3D Asset LODs, Pre-Parse GLB Stripping, Vertex Welding & Shadow Proxies (`ForestField.ts`, `GrassField.ts`, `LandmarkManager.ts` & `HuntingAndDeerManager.ts`)
 
 ### Pre-Parse GLB Texture & Specular Extension Stripping (`GLTFLoader` Plugin)
-All `.glb` assets (`pine tree`, `oak tree`, `simple dwarven hut`, `ancient stone circle`, `grass clump`, and `dwarf front t-pose`) were exported with `KHR_materials_specular` (forcing Three.js to compile expensive `THREE.MeshPhysicalMaterial` shaders) plus unused `metallicRoughnessTexture`, `normalTexture`, and `occlusionTexture` maps.
+All `.glb` assets (`pine tree`, `oak tree`, `simple dwarven hut`, `ancient stone circle`, `grass clump`, `deer`, and `dwarf front t-pose`) were exported with `KHR_materials_specular` (forcing Three.js to compile expensive `THREE.MeshPhysicalMaterial` shaders) plus unused `metallicRoughnessTexture`, `normalTexture`, and `occlusionTexture` maps.
 - Registering a `GLTFLoader` `beforeRoot` plugin strips `matDef.extensions.KHR_materials_specular`, `metallicRoughnessTexture`, `normalTexture`, and `occlusionTexture` from `parser.json.materials` *before* `GLTFLoader` instantiates `ImageBitmap` decoders or materials—saving **>150 MB of GPU texture memory** and ensuring lightweight `MeshStandardMaterial` compilation across all models.
 
 ### Close-Range GLB LOD Architecture & Geometry Optimizations
@@ -147,6 +147,9 @@ All `.glb` assets (`pine tree`, `oak tree`, `simple dwarven hut`, `ancient stone
    - **Backface Normal Preservation (`DoubleSide` Foliage):** Custom wind shaders preserve smooth upward-biased canopy/blade normals on backfaces rather than flipping `vNormal` via `gl_FrontFacing`, eliminating harsh dark bands on double-sided grass blades and tree foliage.
 4. **Broadleaf Geometry Reduction & Explicit Bounding Spheres:**
    - Reduced `THREE.IcosahedronGeometry(1.0, detail)` canopy lobes from `detail = 2` to `detail = 1` (**75% vertex reduction**) and assigned an explicit chunk-enclosing `THREE.Sphere` (`radius = size * 0.85`) to all `InstancedMesh` objects for accurate frustum culling.
+5. **Wild Deer 3D Model LOD & Pooled Arrow Projectiles (`HuntingAndDeerManager`):**
+   - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the welded 18,574-triangle `deer 3d model.glb` (`sharedDeerGlbGeo` + `sharedDeerGlbMats`) with unused PBR maps stripped pre-parse and `receiveShadow = false`.
+   - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Swaps `deer.bodyMesh` in-place to a pre-merged ~112-triangle procedural deer geometry (`deerFallbackGeo` + `deerFallbackMats`), gating `castShadow` behind `dist <= 2.2` chunks (`48 m`) and reusing a fixed 6-slot pool of merged 3D arrow projectiles (`sharedArrowGeo`).
 
 ---
 

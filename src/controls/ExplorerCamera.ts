@@ -6,6 +6,7 @@ import { DwarfCharacter } from '../player/DwarfCharacter';
 import { RelicStore } from '../player/RelicStore';
 import { LandmarkManager } from '../world/LandmarkManager';
 import { FishingAndFishManager } from '../world/FishingAndFishManager';
+import { HuntingAndDeerManager } from '../world/HuntingAndDeerManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -57,6 +58,7 @@ export class ExplorerCamera {
   private relicStore?: RelicStore;
   private landmarkManager?: LandmarkManager;
   private fishingManager?: FishingAndFishManager;
+  private huntingManager?: HuntingAndDeerManager;
   public lastAimForward = 0;
   public lastAimRight = 0;
 
@@ -87,6 +89,10 @@ export class ExplorerCamera {
     this.fishingManager = fm;
   }
 
+  public setHuntingManager(hm: HuntingAndDeerManager): void {
+    this.huntingManager = hm;
+  }
+
   public isAttackingOrAirborne(): boolean {
     return this.isSliding || this.heightAboveGround > 0.25;
   }
@@ -100,6 +106,9 @@ export class ExplorerCamera {
   public getMovementStatus(): string {
     if (this.fishingManager?.isFishingActive()) {
       return `🎣 Fishing (${this.fishingManager.fishCaughtCount} Caught)`;
+    }
+    if (this.huntingManager?.isHuntingActive()) {
+      return `🏹 Hunting (${this.huntingManager.deerHuntedCount} Hunted)`;
     }
     if (this.isGliding) return '🪂 Wind Gliding';
     if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
@@ -215,7 +224,7 @@ export class ExplorerCamera {
     domElement.addEventListener(
       'mousedown',
       (e) => {
-        if (e.button === 0 || e.button === 2) {
+        if (e.button === 2 || (e.button === 0 && !this.huntingManager?.isHuntingActive())) {
           this.isDragging = true;
           this.lastMouseX = e.clientX;
           this.lastMouseY = e.clientY;

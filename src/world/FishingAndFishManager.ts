@@ -198,6 +198,7 @@ export class FishingAndFishManager {
   private fishingBannerEl: HTMLElement | null;
   private fishingToggleBtn: HTMLElement | null;
   private audioCtx: AudioContext | null = null;
+  private onEnterFishingCallback?: () => void;
 
   constructor(
     private config: WorldConfig,
@@ -214,6 +215,10 @@ export class FishingAndFishManager {
     this.initFishAssets();
     this.initFishingVisuals();
     this.bindEvents();
+  }
+
+  public setOnEnterFishingCallback(cb: () => void): void {
+    this.onEnterFishingCallback = cb;
   }
 
   public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
@@ -490,6 +495,7 @@ export class FishingAndFishManager {
       return;
     }
 
+    this.onEnterFishingCallback?.();
     this.state = 'aiming';
     this.aimYaw = this.dwarf.heading;
     this.aimDistance = 9.5;

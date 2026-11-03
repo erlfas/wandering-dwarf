@@ -19,6 +19,14 @@ export class DwarfCharacter {
   private equippedRodGroup = new THREE.Group();
   private rodBendPivot = new THREE.Group();
   private rodTipNode = new THREE.Object3D();
+  private stowedBowGroup = new THREE.Group();
+  private equippedBowGroup = new THREE.Group();
+  private upperBowLimb = new THREE.Group();
+  private lowerBowLimb = new THREE.Group();
+  private bowStringPositions = new Float32Array(3 * 3);
+  private bowStringAttr!: THREE.BufferAttribute;
+  private nockedArrowGroup = new THREE.Group();
+  private bowLaunchNode = new THREE.Object3D();
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
@@ -28,6 +36,12 @@ export class DwarfCharacter {
   private castAnimTimer = 0;
   private rodBendTarget = 0;
   private rodBendCurrent = 0;
+
+  private isHuntingMode = false;
+  private huntingEquipBlend = 0;
+  private bowDrawTarget = 0;
+  private bowDrawCurrent = 0;
+  private bowReleaseTimer = 0;
 
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
@@ -205,6 +219,64 @@ export class DwarfCharacter {
     this.stowedRodGroup.add(stowedTipRing);
 
     this.backpackGroup.add(this.stowedRodGroup);
+
+    // 4. Stowed Hunting Bow & Feathered Arrow Quiver on the left side (-X) of the backpack
+    const arrowFeatherMat = new THREE.MeshStandardMaterial({
+      color: 0xd93829,
+      roughness: 0.65,
+      metalness: 0.05,
+    });
+    const steelHeadMat = new THREE.MeshStandardMaterial({
+      color: 0xd8e2eb,
+      roughness: 0.25,
+      metalness: 0.88,
+    });
+
+    const arrowQuiverGeo = new THREE.CylinderGeometry(0.052, 0.044, 0.36, 8);
+    const arrowQuiver = new THREE.Mesh(arrowQuiverGeo, flapMat);
+    arrowQuiver.position.set(-0.19, -0.01, -0.02);
+    arrowQuiver.rotation.z = 0.22;
+    arrowQuiver.castShadow = true;
+    this.backpackGroup.add(arrowQuiver);
+
+    // 3 feathered arrows sticking out of the backpack quiver over the left shoulder
+    const quiverArrowShaftGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.28, 6);
+    const quiverFletchGeo = new THREE.ConeGeometry(0.022, 0.075, 4);
+    for (let i = 0; i < 3; i++) {
+      const aGroup = new THREE.Group();
+      const ox = -0.19 - i * 0.016;
+      const oz = -0.03 + (i - 1) * 0.018;
+      aGroup.position.set(ox, 0.14, oz);
+      aGroup.rotation.set(-0.08 + i * 0.05, 0, 0.22 + (i - 1) * 0.06);
+
+      const shaft = new THREE.Mesh(quiverArrowShaftGeo, corkMat);
+      shaft.position.y = 0.12;
+      aGroup.add(shaft);
+
+      const fletch = new THREE.Mesh(quiverFletchGeo, arrowFeatherMat);
+      fletch.position.y = 0.24;
+      aGroup.add(fletch);
+
+      this.backpackGroup.add(aGroup);
+    }
+
+    // Stowed Dwarven Recurve Bow strapped diagonally across the backpack
+    this.stowedBowGroup.position.set(-0.14, 0.06, -0.13);
+    this.stowedBowGroup.rotation.set(0.1, 0.18, 0.52);
+
+    const stowedBowArcGeo = new THREE.TorusGeometry(0.36, 0.018, 7, 16, Math.PI * 0.86);
+    stowedBowArcGeo.rotateZ(-Math.PI * 0.43);
+    const stowedBowArc = new THREE.Mesh(stowedBowArcGeo, rodWoodMat);
+    stowedBowArc.position.x = -0.12;
+    stowedBowArc.castShadow = true;
+    this.stowedBowGroup.add(stowedBowArc);
+
+    const stowedBowGripGeo = new THREE.CylinderGeometry(0.024, 0.024, 0.16, 8);
+    const stowedBowGrip = new THREE.Mesh(stowedBowGripGeo, brassMat);
+    stowedBowGrip.position.set(0.23, 0, 0);
+    this.stowedBowGroup.add(stowedBowGrip);
+
+    this.backpackGroup.add(this.stowedBowGroup);
     this.modelContainer.add(this.backpackGroup);
 
     // Equipped 3D Fishing Rod held by the dwarf in Fishing Mode
@@ -255,12 +327,92 @@ export class DwarfCharacter {
 
     this.equippedRodGroup.add(this.rodBendPivot);
     this.modelContainer.add(this.equippedRodGroup);
+
+    // 5. Equipped 3D Dwarven Hunting Bow & Nocked Arrow held in Hunting Mode
+    this.equippedBowGroup.position.set(-0.22, 0.88, 0.34);
+    this.equippedBowGroup.visible = false;
+
+    const bowRiserGeo = new THREE.CylinderGeometry(0.024, 0.024, 0.24, 8);
+    const bowRiser = new THREE.Mesh(bowRiserGeo, brassMat);
+    bowRiser.castShadow = true;
+    this.equippedBowGroup.add(bowRiser);
+
+    // Upper & Lower flexible limbs (hinged at +/-0.10m Y so they flex backward along -Z when drawn)
+    this.upperBowLimb.position.set(0, 0.1, 0);
+    const upperLimbGeo = new THREE.CylinderGeometry(0.01, 0.022, 0.46, 8);
+    upperLimbGeo.translate(0, 0.23, 0);
+    upperLimbGeo.rotateX(-0.28);
+    const upperLimbMesh = new THREE.Mesh(upperLimbGeo, rodWoodMat);
+    upperLimbMesh.castShadow = true;
+    this.upperBowLimb.add(upperLimbMesh);
+
+    const limbTipGeo = new THREE.SphereGeometry(0.018, 8, 6);
+    const upperTipCap = new THREE.Mesh(limbTipGeo, brassMat);
+    upperTipCap.position.set(0, Math.cos(0.28) * 0.46, -Math.sin(0.28) * 0.46);
+    this.upperBowLimb.add(upperTipCap);
+    this.equippedBowGroup.add(this.upperBowLimb);
+
+    this.lowerBowLimb.position.set(0, -0.1, 0);
+    const lowerLimbGeo = new THREE.CylinderGeometry(0.022, 0.01, 0.46, 8);
+    lowerLimbGeo.translate(0, -0.23, 0);
+    lowerLimbGeo.rotateX(0.28);
+    const lowerLimbMesh = new THREE.Mesh(lowerLimbGeo, rodWoodMat);
+    lowerLimbMesh.castShadow = true;
+    this.lowerBowLimb.add(lowerLimbMesh);
+
+    const lowerTipCap = new THREE.Mesh(limbTipGeo, brassMat);
+    lowerTipCap.position.set(0, -Math.cos(0.28) * 0.46, -Math.sin(0.28) * 0.46);
+    this.lowerBowLimb.add(lowerTipCap);
+    this.equippedBowGroup.add(this.lowerBowLimb);
+
+    // Dynamic 3-vertex Bowstring (upper tip -> nock point -> lower tip)
+    const bowStringGeo = new THREE.BufferGeometry();
+    this.bowStringAttr = new THREE.BufferAttribute(this.bowStringPositions, 3);
+    this.bowStringAttr.setUsage(THREE.DynamicDrawUsage);
+    bowStringGeo.setAttribute('position', this.bowStringAttr);
+    const bowStringMat = new THREE.LineBasicMaterial({
+      color: 0xf4f1de,
+      transparent: true,
+      opacity: 0.92,
+    });
+    const bowStringLine = new THREE.Line(bowStringGeo, bowStringMat);
+    bowStringLine.frustumCulled = false;
+    this.equippedBowGroup.add(bowStringLine);
+
+    // Nocked 3D Arrow resting on the bow (oriented along +Z forward)
+    const arrowShaftGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.68, 6);
+    arrowShaftGeo.rotateX(Math.PI / 2);
+    arrowShaftGeo.translate(0, 0, 0.24);
+    const arrowShaftMesh = new THREE.Mesh(arrowShaftGeo, corkMat);
+    arrowShaftMesh.castShadow = true;
+    this.nockedArrowGroup.add(arrowShaftMesh);
+
+    const arrowTipGeo = new THREE.ConeGeometry(0.024, 0.09, 4);
+    arrowTipGeo.rotateX(Math.PI / 2);
+    arrowTipGeo.translate(0, 0, 0.61);
+    const arrowTipMesh = new THREE.Mesh(arrowTipGeo, steelHeadMat);
+    this.nockedArrowGroup.add(arrowTipMesh);
+
+    const arrowFletchGeo = new THREE.ConeGeometry(0.026, 0.09, 4);
+    arrowFletchGeo.rotateX(-Math.PI / 2);
+    arrowFletchGeo.translate(0, 0, -0.06);
+    const arrowFletchMesh = new THREE.Mesh(arrowFletchGeo, arrowFeatherMat);
+    this.nockedArrowGroup.add(arrowFletchMesh);
+
+    this.equippedBowGroup.add(this.nockedArrowGroup);
+
+    this.bowLaunchNode.position.set(0, 0.02, 0.42);
+    this.equippedBowGroup.add(this.bowLaunchNode);
+    this.modelContainer.add(this.equippedBowGroup);
   }
 
   public setFishingMode(active: boolean): void {
     if (this.isFishingMode === active) return;
     this.isFishingMode = active;
-    if (!active) {
+    if (active) {
+      this.isHuntingMode = false;
+      this.bowDrawTarget = 0;
+    } else {
       this.castAnimTimer = 0;
       this.rodBendTarget = 0;
     }
@@ -277,6 +429,33 @@ export class DwarfCharacter {
   public getRodTipWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
     this.root.updateMatrixWorld(true);
     return this.rodTipNode.getWorldPosition(out);
+  }
+
+  public setHuntingMode(active: boolean): void {
+    if (this.isHuntingMode === active) return;
+    this.isHuntingMode = active;
+    if (active) {
+      this.isFishingMode = false;
+      this.rodBendTarget = 0;
+    } else {
+      this.bowDrawTarget = 0;
+      this.bowReleaseTimer = 0;
+    }
+  }
+
+  public setBowDraw(draw: number): void {
+    this.bowDrawTarget = THREE.MathUtils.clamp(draw, 0, 1.0);
+  }
+
+  public triggerBowReleaseAnimation(): void {
+    this.bowReleaseTimer = 0.28;
+    this.bowDrawTarget = 0;
+    this.bowDrawCurrent = 0;
+  }
+
+  public getBowLaunchWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
+    this.root.updateMatrixWorld(true);
+    return this.bowLaunchNode.getWorldPosition(out);
   }
 
   private buildTrailParticles(): THREE.Points {
@@ -685,6 +864,84 @@ export class DwarfCharacter {
         Math.min(1, dt * 10.0)
       );
       this.rodBendPivot.rotation.x = this.rodBendCurrent * 0.42 + Math.max(0, castSwingPitch) * 0.25;
+    }
+
+    // Animate drawing the Hunting Bow & Arrow out of the backpack (or stowing it back)
+    const wantHunting = this.isHuntingMode && !isSwimming && !isGliding;
+    const targetHuntBlend = wantHunting ? 1.0 : 0.0;
+    if (Math.abs(this.huntingEquipBlend - targetHuntBlend) > 0.002) {
+      this.huntingEquipBlend = THREE.MathUtils.lerp(
+        this.huntingEquipBlend,
+        targetHuntBlend,
+        Math.min(1, dt * 9.5)
+      );
+    } else {
+      this.huntingEquipBlend = targetHuntBlend;
+    }
+
+    const bowOut = this.huntingEquipBlend > 0.25;
+    this.stowedBowGroup.visible = !bowOut;
+    this.equippedBowGroup.visible = bowOut;
+
+    if (bowOut) {
+      const equipT = THREE.MathUtils.smoothstep(this.huntingEquipBlend, 0.25, 1.0);
+      if (this.bowReleaseTimer > 0) {
+        this.bowReleaseTimer = Math.max(0, this.bowReleaseTimer - dt);
+      }
+
+      this.bowDrawCurrent = THREE.MathUtils.lerp(
+        this.bowDrawCurrent,
+        this.bowDrawTarget,
+        Math.min(1, dt * 11.0)
+      );
+
+      const recoilZ = this.bowReleaseTimer > 0 ? Math.sin((this.bowReleaseTimer / 0.28) * Math.PI) * 0.07 : 0;
+      const startX = -0.22;
+      const startY = 1.12;
+      const startZ = -0.18;
+      this.equippedBowGroup.position.set(
+        THREE.MathUtils.lerp(startX, -0.18, equipT),
+        THREE.MathUtils.lerp(startY, 0.92, equipT),
+        THREE.MathUtils.lerp(startZ, 0.36 + recoilZ, equipT)
+      );
+      this.equippedBowGroup.rotation.set(
+        THREE.MathUtils.lerp(0.85, -0.06, equipT),
+        THREE.MathUtils.lerp(-0.45, 0.08, equipT),
+        THREE.MathUtils.lerp(0.55, 0.14, equipT)
+      );
+
+      // Flex upper & lower bow limbs backward as the bowstring is drawn
+      const limbFlex = this.bowDrawCurrent * 0.36;
+      this.upperBowLimb.rotation.x = -limbFlex;
+      this.lowerBowLimb.rotation.x = limbFlex;
+
+      // Update 3-point bowstring geometry: upper tip -> nocked center -> lower tip
+      const totalAngle = 0.28 + limbFlex;
+      const tipY = 0.1 + Math.cos(totalAngle) * 0.46;
+      const tipZ = -Math.sin(totalAngle) * 0.46;
+      const stringVibration =
+        this.bowReleaseTimer > 0
+          ? Math.sin(this.bowReleaseTimer * 95.0) * (this.bowReleaseTimer / 0.28) * 0.04
+          : 0;
+      const nockZ = tipZ - this.bowDrawCurrent * 0.34 + stringVibration;
+
+      this.bowStringPositions[0] = 0;
+      this.bowStringPositions[1] = tipY;
+      this.bowStringPositions[2] = tipZ;
+      this.bowStringPositions[3] = 0;
+      this.bowStringPositions[4] = 0;
+      this.bowStringPositions[5] = nockZ;
+      this.bowStringPositions[6] = 0;
+      this.bowStringPositions[7] = -tipY;
+      this.bowStringPositions[8] = tipZ;
+      this.bowStringAttr.needsUpdate = true;
+
+      // Hide nocked arrow briefly right after releasing a shot while dwarf reaches for next arrow
+      const showNockedArrow = this.bowReleaseTimer < 0.12;
+      this.nockedArrowGroup.visible = showNockedArrow;
+      if (showNockedArrow) {
+        this.nockedArrowGroup.position.set(0, 0, nockZ + 0.06);
+      }
     }
 
     // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)
