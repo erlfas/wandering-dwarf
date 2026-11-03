@@ -29,6 +29,11 @@ export interface WorldConfig {
   treeDensity: number;        // Sparseness inside wooded groves (0.1 = very airy, 1.0 = fuller grove)
   treeScale: number;          // Overall tree size multiplier
 
+  // Forest Tracks & Footpaths settings
+  enableTracks: boolean;      // Carve and render infinite winding forest tracks where dwarfs walk
+  trackWidth: number;         // Width of the worn dirt footpath (meters)
+  trackDensity: number;       // Frequency of intersecting secondary trails (0..1)
+
   // Grass & Surface settings
   enableGrassBlades: boolean; // 3D instanced grass tufts on nearby chunks
   grassDensity: number;       // Number of grass tufts per chunk (inner ring)
@@ -82,6 +87,11 @@ export const defaultWorldConfig: WorldConfig = {
   forestCoverage: 0.45,
   treeDensity: 0.38,
   treeScale: 1.0,
+
+  // Infinite winding forest tracks & trails
+  enableTracks: true,
+  trackWidth: 3.2,
+  trackDensity: 0.65,
 
   // Lush procedural grass settings
   enableGrassBlades: true,

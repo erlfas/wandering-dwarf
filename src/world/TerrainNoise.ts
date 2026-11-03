@@ -24,8 +24,15 @@ const COL_HIGH_RIDGE = new THREE.Color(0x6c8c3c);    // Breezy ridge green
 const COL_STEEP_EARTH = new THREE.Color(0x7d6549);   // Warm earthy dirt/rock on steep slopes
 const COL_SHORE_BANK = new THREE.Color(0x8c7355);    // Warm sandy/muddy pond & river bank
 const COL_RIVERBED = new THREE.Color(0x4c4639);      // Wet pebbles/silt below water level
+// Painterly forest track palette inspired by art/forest_track.jpg
+const COL_TRACK_DIRT_LIGHT = new THREE.Color(0xc49f6c); // Sunlit golden-tan packed sandy loam
+const COL_TRACK_DIRT_MID = new THREE.Color(0xa88354);   // Warm ochre footpath earth
+const COL_TRACK_RUT_DARK = new THREE.Color(0x7d603c);   // Deeper compacted earth in ruts & root shadows
+const COL_TRACK_GRAVEL = new THREE.Color(0x94897b);     // Weathered grey-taupe stony patches in center
+const COL_TRACK_VERGE_MOSS = new THREE.Color(0x668236); // Mossy yellow-green grass encroaching track edges
 const tempColorA = new THREE.Color();
 const tempColorB = new THREE.Color();
+const tempColorC = new THREE.Color();
 const INV_MESO_NORM = 1.0 / 1.7104;
 
 export class TerrainNoise {
@@ -38,6 +45,10 @@ export class TerrainNoise {
   private riverNoise!: NoiseFunction2D;
   private pondNoise!: NoiseFunction2D;
   private forestNoise!: NoiseFunction2D;
+  private trackNoiseA!: NoiseFunction2D;
+  private trackNoiseB!: NoiseFunction2D;
+  private trackOriginOffsetA = 0;
+  private trackOriginOffsetB = 0;
   private config: WorldConfig;
 
   constructor(config: WorldConfig) {
@@ -56,6 +67,180 @@ export class TerrainNoise {
     this.riverNoise = createNoise2D(rng);
     this.pondNoise = createNoise2D(rng);
     this.forestNoise = createNoise2D(rng);
+    this.trackNoiseA = createNoise2D(rng);
+    this.trackNoiseB = createNoise2D(rng);
+
+    // Anchor the primary infinite track so it passes directly through player spawn (0, 0)
+    this.trackOriginOffsetA = 0;
+    this.trackOriginOffsetA = this.evalTrackPhaseA(0, 0);
+    // Place a scenic secondary trail junction ~38m ahead of spawn
+    this.trackOriginOffsetB = 0;
+    this.trackOriginOffsetB = this.evalTrackPhaseB(0, 0) + 38.0;
+  }
+
+  private evalTrackPhaseA(x: number, z: number, precomputedMacro?: number): number {
+    const cfg = this.config;
+    const steerA =
+      (precomputedMacro !== undefined
+        ? precomputedMacro
+        : this.macroNoise(x * cfg.macroScale, z * cfg.macroScale)) * 36.0;
+    const coarseA =
+      x * 0.82 -
+      z * 0.57 +
+      steerA +
+      this.trackNoiseA(x * 0.0038, z * 0.0038) * 68.0 -
+      this.trackOriginOffsetA;
+    const fineA =
+      this.trackNoiseB(x * 0.011 + 17.3, z * 0.011 - 29.1) * 18.0 +
+      this.microNoise(x * 0.034, z * 0.034) * 3.2;
+    return coarseA + fineA;
+  }
+
+  private evalTrackPhaseB(x: number, z: number): number {
+    const cfg = this.config;
+    const steerB = this.macroNoise(x * cfg.macroScale + 13.5, z * cfg.macroScale - 9.2) * 32.0;
+    const coarseB =
+      x * 0.46 +
+      z * 0.888 +
+      steerB +
+      this.trackNoiseB(x * 0.0036 - 53.1, z * 0.0036 + 41.7) * 64.0 -
+      this.trackOriginOffsetB;
+    const fineB =
+      this.trackNoiseA(x * 0.0105 - 19.8, z * 0.0105 + 63.4) * 17.5 +
+      this.microNoise(x * 0.032 + 11.4, z * 0.032 - 8.7) * 3.0;
+    return coarseB + fineB;
+  }
+
+  /**
+   * Computes the distance (in meters) to the nearest infinite winding footpath centerline,
+   * using coarse-bound early-outs so off-track points skip fine octave evaluations.
+   */
+  public getTrackDistance(x: number, z: number, precomputedMacro?: number): number {
+    const cfg = this.config;
+    if (!cfg.enableTracks) return 999.0;
+
+    const periodA = 210.0;
+    const steerA =
+      (precomputedMacro !== undefined
+        ? precomputedMacro
+        : this.macroNoise(x * cfg.macroScale, z * cfg.macroScale)) * 36.0;
+    const coarseA =
+      x * 0.82 -
+      z * 0.57 +
+      steerA +
+      this.trackNoiseA(x * 0.0038, z * 0.0038) * 68.0 -
+      this.trackOriginOffsetA;
+    let dA = Math.abs(coarseA - Math.round(coarseA / periodA) * periodA);
+
+    if (dA < 28.0) {
+      const fineA =
+        coarseA +
+        this.trackNoiseB(x * 0.011 + 17.3, z * 0.011 - 29.1) * 18.0 +
+        this.microNoise(x * 0.034, z * 0.034) * 3.2;
+      dA = Math.abs(fineA - Math.round(fineA / periodA) * periodA);
+    }
+
+    let d = dA;
+
+    if (cfg.trackDensity > 0.05) {
+      const periodB = 300.0 - cfg.trackDensity * 105.0;
+      const steerB = this.macroNoise(x * cfg.macroScale + 13.5, z * cfg.macroScale - 9.2) * 32.0;
+      const coarseB =
+        x * 0.46 +
+        z * 0.888 +
+        steerB +
+        this.trackNoiseB(x * 0.0036 - 53.1, z * 0.0036 + 41.7) * 64.0 -
+        this.trackOriginOffsetB;
+      let dB = Math.abs(coarseB - Math.round(coarseB / periodB) * periodB);
+
+      if (dB < 27.0) {
+        const fineB =
+          coarseB +
+          this.trackNoiseA(x * 0.0105 - 19.8, z * 0.0105 + 63.4) * 17.5 +
+          this.microNoise(x * 0.032 + 11.4, z * 0.032 - 8.7) * 3.0;
+        dB = Math.abs(fineB - Math.round(fineB / periodB) * periodB);
+      }
+
+      // Smooth-min at trail junctions so forks & crossroads flare naturally
+      if (dA < 12.0 && dB < 12.0) {
+        const k = 3.2;
+        const h = Math.max(0.0, k - Math.abs(dA - dB)) / k;
+        d = Math.min(dA, dB) - h * h * k * 0.25;
+      } else {
+        d = Math.min(dA, dB);
+      }
+    }
+
+    return Math.max(0.0, d);
+  }
+
+  /**
+   * Returns a continuous [0, 1] track weight at world (x, z):
+   * - 0.0: off-track meadow / forest
+   * - 0.05 .. 0.45: raised grassy verge, root bank & fern border
+   * - 0.45 .. 1.0: worn sandy-ochre dirt footpath bed (1.0 at centerline)
+   */
+  public getTrackWeight(
+    x: number,
+    z: number,
+    wy?: number,
+    precomputedMacro?: number
+  ): number {
+    const cfg = this.config;
+    if (!cfg.enableTracks) return 0;
+
+    if (wy !== undefined && cfg.enableWater && wy < cfg.waterLevel + 0.15) {
+      return 0;
+    }
+
+    const d = this.getTrackDistance(x, z, precomputedMacro);
+    const halfDirt = cfg.trackWidth * 0.5;
+    const maxRadius = halfDirt + 2.1;
+    if (d >= maxRadius) return 0;
+
+    // Organic edge undulation so the track width breathes and grass encroaches irregularly
+    const edgeNoise =
+      this.meadowNoise(x * 0.085 + 7.1, z * 0.085 - 13.4) * 0.34 +
+      this.microNoise(x * 0.22, z * 0.22) * 0.18;
+    const effHalfDirt = Math.max(0.85, halfDirt + edgeNoise);
+    const effOuter = effHalfDirt + 1.45;
+
+    if (d >= effOuter) return 0;
+
+    let weight: number;
+    if (d <= effHalfDirt) {
+      // Map [0, effHalfDirt] -> [1.0, 0.45]
+      const t = d / effHalfDirt;
+      weight = 1.0 - t * t * 0.55;
+    } else {
+      // Map [effHalfDirt, effOuter] -> [0.45, 0.0]
+      const t = THREE.MathUtils.smoothstep(d, effHalfDirt, effOuter);
+      weight = 0.45 * (1.0 - t);
+    }
+
+    if (wy !== undefined && cfg.enableWater) {
+      const waterFade = THREE.MathUtils.smoothstep(
+        wy,
+        cfg.waterLevel + 0.15,
+        cfg.waterLevel + 1.05
+      );
+      weight *= waterFade;
+    }
+
+    return weight;
+  }
+
+  /**
+   * Computes the unit 2D tangent direction (tx, tz) along the primary track at (x, z).
+   */
+  public getTrackHeading(x: number, z: number): number {
+    const eps = 1.0;
+    const gx = this.evalTrackPhaseA(x + eps, z) - this.evalTrackPhaseA(x - eps, z);
+    const gz = this.evalTrackPhaseA(x, z + eps) - this.evalTrackPhaseA(x, z - eps);
+    // Tangent is perpendicular to phase gradient (gx, gz)
+    const tx = -gz;
+    const tz = gx;
+    return Math.atan2(tx, tz);
   }
 
   /**
@@ -161,6 +346,22 @@ export class TerrainNoise {
       }
     }
 
+    // 6. Infinite Winding Forest Tracks (graded footpath trough + subtle shoulder banks)
+    if (cfg.enableTracks && (!cfg.enableWater || height > cfg.waterLevel + 0.15)) {
+      const trackW = this.getTrackWeight(x, z, height);
+      if (trackW > 0.001) {
+        // Level out sharp micro bumps along the walking bed
+        height -= micro * cfg.microAmplitude * 0.42 * trackW;
+
+        // Worn center trough (-0.15m) + subtle raised earthen root bank (+0.045m) at shoulders
+        const centerTrough = THREE.MathUtils.smoothstep(trackW, 0.36, 1.0);
+        const shoulderBank =
+          Math.sin(THREE.MathUtils.clamp(trackW / 0.46, 0, 1) * Math.PI) *
+          (1.0 - centerTrough);
+        height += shoulderBank * 0.048 - centerTrough * 0.15;
+      }
+    }
+
     return height;
   }
 
@@ -246,6 +447,42 @@ export class TerrainNoise {
     const slope = 1.0 - THREE.MathUtils.clamp(normal.y, 0, 1);
     const earthBlend = THREE.MathUtils.smoothstep(slope, 0.22, 0.48);
     tempColorB.copy(tempColorA).lerp(COL_STEEP_EARTH, earthBlend * 0.78);
+
+    // Painterly Forest Track Coloring (matching art/forest_track.jpg)
+    if (this.config.enableTracks) {
+      const trackW = this.getTrackWeight(x, z, y);
+      if (trackW > 0.01) {
+        // High-frequency soil & pebble mottling along the path
+        const soilDetail = this.microNoise(x * 0.19 + 41.2, z * 0.19 - 23.8); // [-1, 1]
+        const stonyPatch = this.meadowNoise(x * 0.095 - 14.5, z * 0.095 + 31.1); // [-1, 1]
+
+        // 1. Verge moss & root bank transition on the shoulders (0.01 .. 0.48)
+        const vergeFactor = THREE.MathUtils.smoothstep(trackW, 0.02, 0.38);
+        tempColorB.lerp(COL_TRACK_VERGE_MOSS, vergeFactor * 0.55);
+
+        // 2. Worn sandy-ochre dirt bed in the track interior (0.24 .. 1.0)
+        if (trackW > 0.22) {
+          const sunSoilT = THREE.MathUtils.clamp(0.5 + soilDetail * 0.45 + (patch - 0.5) * 0.35, 0, 1);
+          tempColorC.copy(COL_TRACK_DIRT_MID).lerp(COL_TRACK_DIRT_LIGHT, sunSoilT);
+
+          // Darker compacted earth in wheel/boot ruts & embankment edges
+          const rutMask = THREE.MathUtils.smoothstep(trackW, 0.42, 0.72) * (1.0 - THREE.MathUtils.smoothstep(trackW, 0.82, 1.0));
+          const rutDarken = THREE.MathUtils.clamp(rutMask * 0.65 + (soilDetail < -0.15 ? (-soilDetail - 0.15) * 0.55 : 0), 0, 0.75);
+          tempColorC.lerp(COL_TRACK_RUT_DARK, rutDarken);
+
+          // Weathered grey-taupe gravel/cobble tint in stony pockets along the center
+          if (trackW > 0.52 && stonyPatch > 0.08) {
+            const gravelT = THREE.MathUtils.smoothstep(stonyPatch, 0.08, 0.65) * THREE.MathUtils.smoothstep(trackW, 0.52, 0.85);
+            tempColorC.lerp(COL_TRACK_GRAVEL, gravelT * 0.52);
+          }
+
+          // Irregular mossy edge breakup so dirt & grass interpenetrate naturally
+          const edgeBreakup = soilDetail * 0.08;
+          const dirtBlend = THREE.MathUtils.smoothstep(trackW + edgeBreakup, 0.25, 0.56);
+          tempColorB.lerp(tempColorC, dirtBlend * 0.96);
+        }
+      }
+    }
 
     // Shoreline & Riverbed coloring near/below waterLevel (matching sandy/earthy pond rims in art)
     if (this.config.enableWater) {

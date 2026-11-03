@@ -98,8 +98,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       this.mesh.add(this.chunkGrass.group);
     }
 
-    // 3. Add Forest Groves & Shoreline Boulders across all visible chunks
-    if (config.enableTrees && !config.blankClayMode) {
+    // 3. Add Forest Groves, Track Details & Shoreline Boulders across visible chunks
+    if ((config.enableTrees || config.enableTracks) && !config.blankClayMode) {
       const isNearLOD = dist <= 1.5;
       const castShadow = dist <= 2.2;
       this.chunkForest = new ChunkForest(

@@ -164,6 +164,185 @@ function createShorelineRockGeometry(): THREE.BufferGeometry {
 }
 
 /**
+ * Builds an embedded cluster of flat, weathered stepping stones and pebbles for the dirt track bed,
+ * directly inspired by the rocky cobble patches in `art/forest_track.jpg` and `art/scene_3.jpg`.
+ */
+function createTrackCobbleClusterGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const stones = [
+    { x: 0.0, z: 0.0, rx: 0.28, ry: 0.075, rz: 0.22, rotY: 0.3, bot: 0x78654b, top: 0x9c968b },
+    { x: 0.26, z: 0.14, rx: 0.18, ry: 0.06, rz: 0.15, rotY: 1.1, bot: 0x736047, top: 0x8e887e },
+    { x: -0.22, z: 0.18, rx: 0.16, ry: 0.055, rz: 0.19, rotY: -0.7, bot: 0x756249, top: 0x969085 },
+    { x: 0.12, z: -0.22, rx: 0.11, ry: 0.045, rz: 0.09, rotY: 0.5, bot: 0x705d44, top: 0x868178 },
+    { x: -0.18, z: -0.14, rx: 0.09, ry: 0.04, rz: 0.08, rotY: 2.1, bot: 0x705d44, top: 0xa39d92 },
+  ];
+
+  for (const s of stones) {
+    const stone = new THREE.DodecahedronGeometry(1.0, 0);
+    stone.scale(s.rx, s.ry, s.rz);
+    stone.rotateY(s.rotY);
+    stone.translate(s.x, s.ry * 0.35, s.z);
+    parts.push(
+      colorizeGeometry(
+        stone,
+        new THREE.Color(s.bot),
+        new THREE.Color(s.top),
+        0.0
+      )
+    );
+  }
+
+  const merged = mergeGeometries(parts, false);
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+/**
+ * Builds a gnarled exposed tree root & fallen leaf cluster that creeps across the earthen banks
+ * of the forest track, matching the twisted roots in `art/forest_track.jpg` and `art/scene_3.jpg`.
+ */
+function createTrackRootsGeometry(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const barkDark = new THREE.Color(0x4a311d);
+  const barkLight = new THREE.Color(0x7c593a);
+
+  // Main gnarled root emerging from the grassy shoulder bank
+  const mainRoot = new THREE.CylinderGeometry(0.048, 0.085, 0.62, 6);
+  mainRoot.rotateX(Math.PI * 0.47);
+  mainRoot.rotateY(0.12);
+  mainRoot.translate(0, 0.05, -0.22);
+  parts.push(colorizeGeometry(mainRoot, barkDark, barkLight, 0.0));
+
+  // Center crooked tendril reaching onto the track edge
+  const midTendril = new THREE.CylinderGeometry(0.018, 0.048, 0.58, 5);
+  midTendril.rotateX(Math.PI * 0.52);
+  midTendril.rotateY(-0.18);
+  midTendril.translate(0.03, 0.025, 0.28);
+  parts.push(colorizeGeometry(midTendril, barkDark, barkLight, 0.0));
+
+  // Left forked root tendril
+  const leftTendril = new THREE.CylinderGeometry(0.015, 0.042, 0.52, 5);
+  leftTendril.rotateX(Math.PI * 0.51);
+  leftTendril.rotateY(0.48);
+  leftTendril.translate(-0.16, 0.028, 0.16);
+  parts.push(colorizeGeometry(leftTendril, barkDark, barkLight, 0.0));
+
+  // Right forked root tendril
+  const rightTendril = new THREE.CylinderGeometry(0.014, 0.038, 0.46, 5);
+  rightTendril.rotateX(Math.PI * 0.52);
+  rightTendril.rotateY(-0.55);
+  rightTendril.translate(0.18, 0.024, 0.12);
+  parts.push(colorizeGeometry(rightTendril, barkDark, barkLight, 0.0));
+
+  // Two small fallen dry autumn leaves nestled against the roots (as seen in art/forest_track.jpg)
+  const leafColorBot = new THREE.Color(0x6e4726);
+  const leafColorTop = new THREE.Color(0x9e6f3e);
+  const leaf1 = new THREE.ConeGeometry(0.065, 0.02, 4);
+  leaf1.scale(1.4, 0.4, 0.85);
+  leaf1.rotateY(0.8);
+  leaf1.translate(-0.12, 0.02, -0.05);
+  parts.push(colorizeGeometry(leaf1, leafColorBot, leafColorTop, 0.0));
+
+  const leaf2 = new THREE.ConeGeometry(0.055, 0.02, 4);
+  leaf2.scale(1.3, 0.4, 0.8);
+  leaf2.rotateY(-0.5);
+  leaf2.translate(0.14, 0.02, -0.08);
+  parts.push(colorizeGeometry(leaf2, leafColorBot, leafColorTop, 0.0));
+
+  const merged = mergeGeometries(parts, false);
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+/**
+ * Builds a stylized 3D woodland fern rosette with 8 arching, diamond-tapered fronds
+ * matching the lush green ferns framing the track in `art/forest_track.jpg`.
+ */
+function createWoodlandFernGeometry(): THREE.BufferGeometry {
+  const frondCount = 8;
+  const segs = 4;
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const uvs: number[] = [];
+
+  const colBase = new THREE.Color(0x294a1c);
+  const colMid = new THREE.Color(0x4f802d);
+  const colTip = new THREE.Color(0x74a842);
+  const c = new THREE.Color();
+
+  for (let f = 0; f < frondCount; f++) {
+    const isInner = f % 2 === 1;
+    const angle = (f / frondCount) * Math.PI * 2 + (isInner ? 0.18 : -0.1);
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+
+    const frondLen = isInner ? 0.48 : 0.62;
+    const archHeight = isInner ? 0.36 : 0.28;
+    const maxHalfW = isInner ? 0.11 : 0.145;
+
+    for (let s = 0; s < segs; s++) {
+      const t0 = s / segs;
+      const t1 = (s + 1) / segs;
+
+      const r0 = 0.03 + t0 * frondLen;
+      const r1 = 0.03 + t1 * frondLen;
+
+      // Arch upward then curve gracefully outward toward the frond tip
+      const y0 = Math.sin(t0 * Math.PI * 0.78) * archHeight * (1.0 - t0 * 0.22);
+      const y1 = Math.sin(t1 * Math.PI * 0.78) * archHeight * (1.0 - t1 * 0.22);
+
+      // Serrated fern-pinnae silhouette profile (widest at t ~ 0.45, tapering to a point at t = 1)
+      const w0 = Math.sin(Math.pow(t0, 0.7) * Math.PI) * maxHalfW;
+      const w1 = s === segs - 1 ? 0.005 : Math.sin(Math.pow(t1, 0.7) * Math.PI) * maxHalfW;
+
+      const lx0 = r0 * cosA - w0 * sinA;
+      const lz0 = r0 * sinA + w0 * cosA;
+      const rx0 = r0 * cosA + w0 * sinA;
+      const rz0 = r0 * sinA - w0 * cosA;
+
+      const lx1 = r1 * cosA - w1 * sinA;
+      const lz1 = r1 * sinA + w1 * cosA;
+      const rx1 = r1 * cosA + w1 * sinA;
+      const rz1 = r1 * sinA - w1 * cosA;
+
+      // Two triangles per frond segment
+      positions.push(
+        lx0, y0, lz0,
+        rx0, y0, rz0,
+        lx1, y1, lz1,
+        rx0, y0, rz0,
+        rx1, y1, rz1,
+        lx1, y1, lz1
+      );
+
+      for (let v = 0; v < 6; v++) {
+        normals.push(cosA * 0.25, 0.94, sinA * 0.25);
+      }
+
+      const ts = [t0, t0, t1, t0, t1, t1];
+      for (const tv of ts) {
+        if (tv < 0.5) {
+          c.copy(colBase).lerp(colMid, tv * 2.0);
+        } else {
+          c.copy(colMid).lerp(colTip, (tv - 0.5) * 2.0);
+        }
+        colors.push(c.r, c.g, c.b);
+        uvs.push(0, tv * 0.55); // Gentle wind rustle on fern frond tips
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+/**
  * Enhances any MeshStandardMaterial (either textured GLB pine material or vertex-colored tree material)
  * with realistic multi-layered wind sway & branch flutter shaders, plus depth shadow support.
  */
@@ -434,15 +613,25 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
 }
 
 let sharedRockGeo: THREE.BufferGeometry | null = null;
+let sharedTrackCobbleGeo: THREE.BufferGeometry | null = null;
+let sharedTrackRootsGeo: THREE.BufferGeometry | null = null;
+let sharedFernGeo: THREE.BufferGeometry | null = null;
+let sharedFernMat: THREE.MeshStandardMaterial | null = null;
 
 const forestDummy = new THREE.Object3D();
 const forestNormal = new THREE.Vector3();
+const upVec = new THREE.Vector3(0, 1, 0);
+const alignQuat = new THREE.Quaternion();
+const yawQuat = new THREE.Quaternion();
 
 export class ChunkForest {
   public readonly group = new THREE.Group();
   private pineInstanced?: THREE.InstancedMesh;
   private broadleafInstanced?: THREE.InstancedMesh;
   private rockInstanced?: THREE.InstancedMesh;
+  private cobbleInstanced?: THREE.InstancedMesh;
+  private rootsInstanced?: THREE.InstancedMesh;
+  private fernInstanced?: THREE.InstancedMesh;
   private treeMaterial: THREE.Material;
   private isNearLOD = false;
 
@@ -462,6 +651,15 @@ export class ChunkForest {
     if (!fallbackPineGeo) fallbackPineGeo = createPineTreeGeometry();
     if (!fallbackBroadleafGeo) fallbackBroadleafGeo = createBroadleafTreeGeometry();
     if (!sharedRockGeo) sharedRockGeo = createShorelineRockGeometry();
+    if (!sharedTrackCobbleGeo) sharedTrackCobbleGeo = createTrackCobbleClusterGeometry();
+    if (!sharedTrackRootsGeo) sharedTrackRootsGeo = createTrackRootsGeometry();
+    if (!sharedFernGeo) sharedFernGeo = createWoodlandFernGeometry();
+    if (!sharedFernMat) {
+      sharedFernMat = (treeMaterial as THREE.MeshStandardMaterial).clone();
+      sharedFernMat.side = THREE.DoubleSide;
+      sharedFernMat.roughness = 0.78;
+      sharedFernMat.onBeforeCompile = (treeMaterial as THREE.MeshStandardMaterial).onBeforeCompile;
+    }
 
     // Use a 9.6m jittered grid (5x5 = 25 candidate cells per 48m chunk) so trees NEVER overlap
     // and always maintain airy spacing with open clearings.
@@ -475,15 +673,107 @@ export class ChunkForest {
     const pineTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
     const broadleafTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
     const rockTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
+    const cobbleTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
+    const rootsTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
+    const fernTransforms: { matrix: THREE.Matrix4; tint: THREE.Color }[] = [];
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
 
-    for (let gz = 0; gz < gridSteps; gz++) {
-      for (let gx = 0; gx < gridSteps; gx++) {
-        // Jitter position inside the 9.6m cell while keeping buffer from cell edges
-        const lx = -size / 2 + (gx + 0.18 + rng() * 0.64) * cellSize;
-        const lz = -size / 2 + (gz + 0.18 + rng() * 0.64) * cellSize;
+    if (config.enableTrees) {
+      for (let gz = 0; gz < gridSteps; gz++) {
+        for (let gx = 0; gx < gridSteps; gx++) {
+          // Jitter position inside the 9.6m cell while keeping buffer from cell edges
+          const lx = -size / 2 + (gx + 0.18 + rng() * 0.64) * cellSize;
+          const lz = -size / 2 + (gz + 0.18 + rng() * 0.64) * cellSize;
+          const wx = worldOffsetX + lx;
+          const wz = worldOffsetZ + lz;
+
+          let wy: number;
+          if (sampler) {
+            wy = sampler.sampleHeightAndNormal(lx, lz, forestNormal);
+          } else {
+            wy = noise.getHeight(wx, wz);
+            noise.getNormal(wx, wz, forestNormal);
+          }
+
+          // Check if right on a pond or river shoreline -> occasionally place a mossy shoreline boulder!
+          const distAboveWater = wy - config.waterLevel;
+          if (
+            config.enableWater &&
+            distAboveWater > -0.25 &&
+            distAboveWater < 0.75 &&
+            rng() < 0.28
+          ) {
+            forestDummy.position.set(lx, wy - 0.12, lz);
+            forestDummy.rotation.set(
+              (rng() - 0.5) * 0.3,
+              rng() * Math.PI * 2,
+              (rng() - 0.5) * 0.3
+            );
+            const rScale = 0.6 + rng() * 0.95;
+            forestDummy.scale.set(rScale, rScale * (0.75 + rng() * 0.4), rScale);
+            forestDummy.updateMatrix();
+            const rockTint = new THREE.Color(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
+            rockTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rockTint });
+            continue;
+          }
+
+          // Do not place trees in water, on wet shorelines, or on steep cliffs
+          if (config.enableWater && distAboveWater < 1.25) continue;
+          if (forestNormal.y < 0.78) continue;
+
+          // Keep walking tracks completely clear of trees so dwarfs have an open path
+          if (config.enableTracks && noise.getTrackWeight(wx, wz, wy) > 0.16) continue;
+
+          // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
+          const groveDensity = noise.getForestDensity(wx, wz);
+          if (groveDensity <= 0.02) continue;
+
+          // Keep groves airy and non-crowded using config.treeDensity
+          const spawnChance = groveDensity * config.treeDensity * 0.75;
+          if (rng() > spawnChance) continue;
+
+          // Trees near the edge of a grove are slightly smaller saplings; deeper grove trees are taller
+          const groveScale = 0.68 + groveDensity * 0.42;
+          const randomScale = (0.82 + rng() * 0.42) * groveScale * config.treeScale;
+
+          forestDummy.position.set(lx, wy - 0.08, lz);
+          forestDummy.rotation.set(
+            (rng() - 0.5) * 0.06,
+            rng() * Math.PI * 2,
+            (rng() - 0.5) * 0.06
+          );
+          forestDummy.scale.setScalar(randomScale);
+          forestDummy.updateMatrix();
+
+          const tint = new THREE.Color(0xffffff).offsetHSL(
+            (rng() - 0.5) * 0.035,
+            (rng() - 0.5) * 0.08,
+            (rng() - 0.5) * 0.08
+          );
+
+          // Mix conifers and broadleaf trees (more pines on higher slopes, more oaks in warm valleys)
+          const pineBias = THREE.MathUtils.clamp(0.48 + (wy - config.waterLevel) * 0.008, 0.3, 0.75);
+          if (rng() < pineBias) {
+            pineTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
+          } else {
+            broadleafTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
+          }
+        }
+      }
+    }
+
+    // Populate 3D Forest Track details (embedded cobble clusters, gnarled bank roots & woodland ferns)
+    // Only evaluate on chunks whose center is within reach of a track corridor
+    if (
+      config.enableTracks &&
+      noise.getTrackDistance(worldOffsetX, worldOffsetZ) < size * 0.85
+    ) {
+      const trackCandidates = 96;
+      for (let i = 0; i < trackCandidates; i++) {
+        const lx = (rng() - 0.5) * size;
+        const lz = (rng() - 0.5) * size;
         const wx = worldOffsetX + lx;
         const wz = worldOffsetZ + lz;
 
@@ -495,65 +785,87 @@ export class ChunkForest {
           noise.getNormal(wx, wz, forestNormal);
         }
 
-        // Check if right on a pond or river shoreline -> occasionally place a mossy shoreline boulder!
-        const distAboveWater = wy - config.waterLevel;
-        if (
-          config.enableWater &&
-          distAboveWater > -0.25 &&
-          distAboveWater < 0.75 &&
-          rng() < 0.28
-        ) {
-          forestDummy.position.set(lx, wy - 0.12, lz);
-          forestDummy.rotation.set(
-            (rng() - 0.5) * 0.3,
-            rng() * Math.PI * 2,
-            (rng() - 0.5) * 0.3
-          );
-          const rScale = 0.6 + rng() * 0.95;
-          forestDummy.scale.set(rScale, rScale * (0.75 + rng() * 0.4), rScale);
-          forestDummy.updateMatrix();
-          const rockTint = new THREE.Color(0xffffff).offsetHSL(0, 0, (rng() - 0.5) * 0.12);
-          rockTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rockTint });
-          continue;
+        if (config.enableWater && wy < config.waterLevel + 0.45) continue;
+        if (forestNormal.y < 0.72) continue;
+
+        const trackW = noise.getTrackWeight(wx, wz, wy);
+        if (trackW <= 0.03) continue;
+
+        alignQuat.setFromUnitVectors(upVec, forestNormal);
+
+        // 1. Center & Rut Bed (trackW >= 0.48): Embedded flat cobbles & pebbles (matching art/forest_track.jpg)
+        if (trackW >= 0.48) {
+          const patch = noise.getMeadowPatch(wx * 2.1, wz * 2.1);
+          // Cluster cobbles into natural stony sections along the path
+          if (rng() < 0.25 + patch * 0.55) {
+            forestDummy.position.set(lx, wy - 0.012, lz);
+            yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+            const cScale = 0.72 + rng() * 0.65;
+            forestDummy.scale.set(cScale, cScale * (0.75 + rng() * 0.35), cScale);
+            forestDummy.updateMatrix();
+            const cobbleTint = new THREE.Color(0xffffff).offsetHSL(
+              (rng() - 0.5) * 0.03,
+              (rng() - 0.5) * 0.06,
+              (rng() - 0.5) * 0.14
+            );
+            cobbleTransforms.push({ matrix: forestDummy.matrix.clone(), tint: cobbleTint });
+          }
         }
+        // 2. Earthen Embankment / Verge Edge (0.20 <= trackW < 0.48): Gnarled exposed roots & woodland ferns
+        else if (trackW >= 0.2) {
+          const roll = rng();
+          if (roll < 0.38) {
+            // Point gnarled root tendrils inward toward the lower track bed
+            const dPlusX = noise.getTrackDistance(wx + 0.6, wz);
+            const dMinusX = noise.getTrackDistance(wx - 0.6, wz);
+            const dPlusZ = noise.getTrackDistance(wx, wz + 0.6);
+            const dMinusZ = noise.getTrackDistance(wx, wz - 0.6);
+            const inwardAngle =
+              Math.atan2(dMinusX - dPlusX, dMinusZ - dPlusZ) + (rng() - 0.5) * 0.55;
 
-        // Do not place trees in water, on wet shorelines, or on steep cliffs
-        if (config.enableWater && distAboveWater < 1.25) continue;
-        if (forestNormal.y < 0.78) continue;
-
-        // Evaluate grove mask: 0 in open meadows, >0 in wooded groves
-        const groveDensity = noise.getForestDensity(wx, wz);
-        if (groveDensity <= 0.02) continue;
-
-        // Keep groves airy and non-crowded using config.treeDensity
-        const spawnChance = groveDensity * config.treeDensity * 0.75;
-        if (rng() > spawnChance) continue;
-
-        // Trees near the edge of a grove are slightly smaller saplings; deeper grove trees are taller
-        const groveScale = 0.68 + groveDensity * 0.42;
-        const randomScale = (0.82 + rng() * 0.42) * groveScale * config.treeScale;
-
-        forestDummy.position.set(lx, wy - 0.08, lz);
-        forestDummy.rotation.set(
-          (rng() - 0.5) * 0.06,
-          rng() * Math.PI * 2,
-          (rng() - 0.5) * 0.06
-        );
-        forestDummy.scale.setScalar(randomScale);
-        forestDummy.updateMatrix();
-
-        const tint = new THREE.Color(0xffffff).offsetHSL(
-          (rng() - 0.5) * 0.035,
-          (rng() - 0.5) * 0.08,
-          (rng() - 0.5) * 0.08
-        );
-
-        // Mix conifers and broadleaf trees (more pines on higher slopes, more oaks in warm valleys)
-        const pineBias = THREE.MathUtils.clamp(0.48 + (wy - config.waterLevel) * 0.008, 0.3, 0.75);
-        if (rng() < pineBias) {
-          pineTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
-        } else {
-          broadleafTransforms.push({ matrix: forestDummy.matrix.clone(), tint });
+            forestDummy.position.set(lx, wy - 0.015, lz);
+            yawQuat.setFromAxisAngle(upVec, inwardAngle);
+            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+            const rScale = 0.82 + rng() * 0.62;
+            forestDummy.scale.setScalar(rScale);
+            forestDummy.updateMatrix();
+            const rootTint = new THREE.Color(0xffffff).offsetHSL(
+              (rng() - 0.5) * 0.03,
+              (rng() - 0.5) * 0.08,
+              (rng() - 0.5) * 0.12
+            );
+            rootsTransforms.push({ matrix: forestDummy.matrix.clone(), tint: rootTint });
+          } else if (roll < 0.78) {
+            // Lush woodland fern rosette framing the track shoulder
+            forestDummy.position.set(lx, wy - 0.02, lz);
+            yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+            forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+            const fScale = 0.78 + rng() * 0.58;
+            forestDummy.scale.setScalar(fScale);
+            forestDummy.updateMatrix();
+            const fernTint = new THREE.Color(0xffffff).offsetHSL(
+              (rng() - 0.5) * 0.04,
+              (rng() - 0.5) * 0.1,
+              (rng() - 0.5) * 0.1
+            );
+            fernTransforms.push({ matrix: forestDummy.matrix.clone(), tint: fernTint });
+          }
+        }
+        // 3. Outer Grassy Shoulder (0.03 < trackW < 0.20): Additional border ferns
+        else if (rng() < 0.42) {
+          forestDummy.position.set(lx, wy - 0.02, lz);
+          yawQuat.setFromAxisAngle(upVec, rng() * Math.PI * 2);
+          forestDummy.quaternion.copy(alignQuat).multiply(yawQuat);
+          const fScale = 0.72 + rng() * 0.62;
+          forestDummy.scale.setScalar(fScale);
+          forestDummy.updateMatrix();
+          const fernTint = new THREE.Color(0xffffff).offsetHSL(
+            (rng() - 0.5) * 0.04,
+            (rng() - 0.5) * 0.1,
+            (rng() - 0.5) * 0.1
+          );
+          fernTransforms.push({ matrix: forestDummy.matrix.clone(), tint: fernTint });
         }
       }
     }
@@ -638,6 +950,61 @@ export class ChunkForest {
       if (this.rockInstanced.instanceColor) this.rockInstanced.instanceColor.needsUpdate = true;
       this.group.add(this.rockInstanced);
     }
+
+    if (cobbleTransforms.length > 0) {
+      this.cobbleInstanced = new THREE.InstancedMesh(
+        sharedTrackCobbleGeo,
+        treeMaterial,
+        cobbleTransforms.length
+      );
+      this.cobbleInstanced.castShadow = false;
+      this.cobbleInstanced.receiveShadow = true;
+      this.cobbleInstanced.boundingSphere = chunkBoundSphere;
+      cobbleTransforms.forEach((item, idx) => {
+        this.cobbleInstanced!.setMatrixAt(idx, item.matrix);
+        this.cobbleInstanced!.setColorAt(idx, item.tint);
+      });
+      this.cobbleInstanced.instanceMatrix.needsUpdate = true;
+      if (this.cobbleInstanced.instanceColor)
+        this.cobbleInstanced.instanceColor.needsUpdate = true;
+      this.group.add(this.cobbleInstanced);
+    }
+
+    if (rootsTransforms.length > 0) {
+      this.rootsInstanced = new THREE.InstancedMesh(
+        sharedTrackRootsGeo,
+        treeMaterial,
+        rootsTransforms.length
+      );
+      this.rootsInstanced.castShadow = castShadow;
+      this.rootsInstanced.receiveShadow = true;
+      this.rootsInstanced.boundingSphere = chunkBoundSphere;
+      rootsTransforms.forEach((item, idx) => {
+        this.rootsInstanced!.setMatrixAt(idx, item.matrix);
+        this.rootsInstanced!.setColorAt(idx, item.tint);
+      });
+      this.rootsInstanced.instanceMatrix.needsUpdate = true;
+      if (this.rootsInstanced.instanceColor) this.rootsInstanced.instanceColor.needsUpdate = true;
+      this.group.add(this.rootsInstanced);
+    }
+
+    if (fernTransforms.length > 0) {
+      this.fernInstanced = new THREE.InstancedMesh(
+        sharedFernGeo,
+        sharedFernMat ?? treeMaterial,
+        fernTransforms.length
+      );
+      this.fernInstanced.castShadow = false;
+      this.fernInstanced.receiveShadow = true;
+      this.fernInstanced.boundingSphere = chunkBoundSphere;
+      fernTransforms.forEach((item, idx) => {
+        this.fernInstanced!.setMatrixAt(idx, item.matrix);
+        this.fernInstanced!.setColorAt(idx, item.tint);
+      });
+      this.fernInstanced.instanceMatrix.needsUpdate = true;
+      if (this.fernInstanced.instanceColor) this.fernInstanced.instanceColor.needsUpdate = true;
+      this.group.add(this.fernInstanced);
+    }
   }
 
   public setLOD(isNearLOD: boolean, castShadow: boolean): void {
@@ -707,6 +1074,9 @@ export class ChunkForest {
     if (this.rockInstanced) {
       this.rockInstanced.castShadow = castShadow;
     }
+    if (this.rootsInstanced) {
+      this.rootsInstanced.castShadow = castShadow;
+    }
   }
 
   public dispose(): void {
@@ -719,5 +1089,8 @@ export class ChunkForest {
       this.broadleafInstanced.dispose();
     }
     this.rockInstanced?.dispose();
+    this.cobbleInstanced?.dispose();
+    this.rootsInstanced?.dispose();
+    this.fernInstanced?.dispose();
   }
 }

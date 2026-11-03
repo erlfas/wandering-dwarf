@@ -38,6 +38,14 @@ export class ExplorerCamera {
     this.playerPos.y = this.noise.getHeight(0, 0);
     this.smoothedTarget.copy(this.playerPos);
 
+    if (this.config.enableTracks) {
+      const trackHeading = this.noise.getTrackHeading(0, 0);
+      this.dwarf.heading = trackHeading;
+      this.dwarf.root.rotation.y = trackHeading;
+      // Camera sits behind the dwarf looking forward along the winding track
+      this.yaw = trackHeading + Math.PI;
+    }
+
     this.bindEvents(domElement);
   }
 

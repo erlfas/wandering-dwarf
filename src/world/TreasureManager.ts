@@ -445,6 +445,15 @@ export class TreasureManager {
         this.noise.getNormal(wx, wz, normal);
         if (normal.y < 0.82) continue;
 
+        // Avoid blocking the center of a walking track; place chests beside the trail or in meadows
+        if (
+          !isStartChunk &&
+          this.config.enableTracks &&
+          this.noise.getTrackWeight(wx, wz, wy) > 0.44
+        ) {
+          continue;
+        }
+
         const isRare = !isStartChunk && rng() < 0.22;
         const points = isRare ? 250 : 100;
         const { root, lidPivot, glowRing } = this.buildChestMesh(isRare);

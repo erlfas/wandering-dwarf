@@ -420,9 +420,15 @@ export class ChunkGrass {
       if (sharedNormal.y < 0.72) continue;
       if (config.enableWater && wy < config.waterLevel + 0.52) continue;
 
+      // Evaluate forest track weight: keep the worn dirt footpath clear while framing its verges
+      const trackW = config.enableTracks ? noise.getTrackWeight(wx, wz, wy) : 0;
+      if (trackW > 0.44) continue;
+      const isTrackVerge = trackW >= 0.06 && trackW <= 0.44;
+
       const patch = noise.getMeadowPatch(wx, wz);
-      // Create natural clumping: slightly sparser in some pockets, thicker in lush patches
-      if (rng() > 0.35 + patch * 0.65) continue;
+      // Create natural clumping: lush framing along track verges, natural pockets in open meadows
+      const keepProb = isTrackVerge ? 0.88 : 0.35 + patch * 0.65;
+      if (rng() > keepProb) continue;
 
       sharedDummy.position.set(lx, wy - 0.03, lz);
       sharedDummy.rotation.set(
@@ -431,10 +437,18 @@ export class ChunkGrass {
         (rng() - 0.5) * 0.15
       );
 
+      // Taper grass height down smoothly at the inner dirt edge; boost lushness on the outer shoulder
+      const vergeHeightMod = isTrackVerge
+        ? trackW > 0.3
+          ? THREE.MathUtils.lerp(1.05, 0.45, (trackW - 0.3) / 0.14)
+          : 1.18
+        : 1.0;
+
       const scaleXZ = (0.75 + rng() * 0.65) * (0.85 + patch * 0.3);
       const scaleY =
         (0.65 + rng() * 0.75) *
         (0.75 + patch * 0.45) *
+        vergeHeightMod *
         config.grassHeight;
       sharedDummy.scale.set(scaleXZ, scaleY, scaleXZ);
       sharedDummy.updateMatrix();
@@ -447,6 +461,10 @@ export class ChunkGrass {
       } else {
         noise.getSurfaceColor(wx, wy, wz, sharedNormal, sharedBaseColor);
       }
+      // Ensure grass on the inner track verge stays vibrant meadow green rather than dirt brown
+      if (trackW > 0.22) {
+        sharedBaseColor.lerp(sharedClumpColor.setHex(0x5c8234), 0.65);
+      }
       sharedBaseColor.offsetHSL(
         (rng() - 0.5) * 0.03,
         (rng() - 0.5) * 0.08,
@@ -455,12 +473,13 @@ export class ChunkGrass {
       grassMesh.setColorAt(grassIdx, sharedBaseColor);
       grassIdx++;
 
-      // Spawn the 3D modelled tall grass clump in lush meadow patches & near groves
+      // Spawn the 3D modelled tall grass clump in lush meadow patches & along track shoulders
+      const clumpChance = isTrackVerge && trackW < 0.32 ? 0.11 : 0.055 * (0.6 + patch * 0.8);
       if (
         clumpMesh &&
         clumpIdx < maxClumps &&
-        patch > 0.35 &&
-        rng() < 0.055 * (0.6 + patch * 0.8)
+        (patch > 0.35 || isTrackVerge) &&
+        rng() < clumpChance
       ) {
         const clumpScaleXZ = (0.78 + rng() * 0.52) * (0.85 + patch * 0.3);
         const clumpScaleY =
@@ -482,26 +501,36 @@ export class ChunkGrass {
         clumpIdx++;
       }
 
-      // Occasionally place a wildflower blossom in lush patches (matching concept art)
+      // Place wildflower blossoms in lush patches & abundantly along track borders (matching art/forest_track.jpg)
+      const flowerChance = isTrackVerge ? 0.21 : 0.095;
       if (
         flowerMesh &&
         flowerIdx < maxFlowers &&
-        patch > 0.42 &&
-        rng() < 0.095
+        (patch > 0.42 || isTrackVerge) &&
+        rng() < flowerChance
       ) {
         sharedDummy.position.set(lx, wy - 0.03, lz);
         sharedDummy.scale.setScalar(0.85 + rng() * 0.55);
         sharedDummy.updateMatrix();
         flowerMesh.setMatrixAt(flowerIdx, sharedDummy.matrix);
 
-        const palettePick =
-          rng() < 0.48
-            ? FLOWER_PALETTE[0] // White daisies most common
-            : rng() < 0.82
-            ? FLOWER_PALETTE[1] // Yellow buttercups
-            : rng() < 0.94
-            ? FLOWER_PALETTE[2] // Sky-blue forget-me-nots
-            : FLOWER_PALETTE[3];
+        // Along track verges, emphasize golden buttercups, white daisies, and sky-blue forget-me-nots
+        const rPick = rng();
+        const palettePick = isTrackVerge
+          ? rPick < 0.44
+            ? FLOWER_PALETTE[1] // Golden buttercup yellow (prominent in art/forest_track.jpg)
+            : rPick < 0.78
+            ? FLOWER_PALETTE[0] // Crisp daisy white
+            : rPick < 0.96
+            ? FLOWER_PALETTE[2] // Sky-blue forget-me-not
+            : FLOWER_PALETTE[3]
+          : rPick < 0.48
+          ? FLOWER_PALETTE[0]
+          : rPick < 0.82
+          ? FLOWER_PALETTE[1]
+          : rPick < 0.94
+          ? FLOWER_PALETTE[2]
+          : FLOWER_PALETTE[3];
         sharedFlowerColor.copy(palettePick);
         flowerMesh.setColorAt(flowerIdx, sharedFlowerColor);
         flowerIdx++;

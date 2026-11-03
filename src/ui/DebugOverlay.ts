@@ -51,6 +51,23 @@ export class DebugOverlay {
       .add(config, 'windStrength', 0, 0.8, 0.02)
       .name('Wind Gust Strength');
 
+    // 1b. Forest Tracks & Trails Folder
+    const trackFolder = this.gui.addFolder('Forest Tracks & Trails');
+    trackFolder
+      .add(config, 'enableTracks')
+      .name('Enable Forest Tracks')
+      .onChange(rebuild);
+
+    trackFolder
+      .add(config, 'trackWidth', 1.8, 5.5, 0.2)
+      .name('Track Width (m)')
+      .onFinishChange(rebuild);
+
+    trackFolder
+      .add(config, 'trackDensity', 0.0, 1.0, 0.05)
+      .name('Trail Network Density')
+      .onFinishChange(rebuild);
+
     // 2. Rivers & Ponds Folder
     const waterFolder = this.gui.addFolder('Rivers & Ponds');
     waterFolder
