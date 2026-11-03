@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { WorldConfig } from './Config';
-import { ChunkForest } from './ForestField';
+import { ChunkForest, HutPlacement } from './ForestField';
 import { ChunkGrass, ChunkSurfaceSampler } from './GrassField';
 import { TerrainNoise } from './TerrainNoise';
 
@@ -376,6 +376,10 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
   public getColliders(): Float32Array | undefined {
     return this.chunkForest?.colliders;
+  }
+
+  public getHuts(): readonly HutPlacement[] {
+    return this.chunkForest ? this.chunkForest.huts : [];
   }
 
   public sampleHeightAndNormal(

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { WorldConfig } from './Config';
 import {
   createTreeMaterial,
+  HutPlacement,
   loadDwarvenHutModel,
   loadOakTreeModel,
   loadPineTreeModel,
@@ -314,6 +315,20 @@ export class ChunkManager {
 
   public getActiveChunkCount(): number {
     return this.chunks.size;
+  }
+
+  public getHutsInChunk(cx: number, cz: number): readonly HutPlacement[] {
+    const chunk = this.chunks.get(this.getKey(cx, cz));
+    return chunk ? chunk.getHuts() : [];
+  }
+
+  public forEachLoadedHut(cb: (hut: HutPlacement) => void): void {
+    for (const chunk of this.chunks.values()) {
+      const huts = chunk.getHuts();
+      for (let i = 0; i < huts.length; i++) {
+        cb(huts[i]);
+      }
+    }
   }
 
   /**

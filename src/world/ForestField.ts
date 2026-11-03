@@ -955,6 +955,19 @@ const yawQuat = new THREE.Quaternion();
 const sharedTint = new THREE.Color();
 const forestBiome = { forest: 0, meadow: 0, tallGrass: 0 };
 
+export interface HutPlacement {
+  id: string;
+  cx: number;
+  cz: number;
+  worldX: number;
+  worldY: number;
+  worldZ: number;
+  rotationY: number;
+  scale: number;
+  doorWorldX: number;
+  doorWorldZ: number;
+}
+
 // Pre-allocated scratch buffers for zero-allocation ChunkForest builds
 const MAX_GRID_INST = 25;
 const MAX_HUT_INST = 2;
@@ -973,8 +986,9 @@ const rootsMatBuf = new Float32Array(MAX_TRACK_INST * 16);
 const rootsColBuf = new Float32Array(MAX_TRACK_INST * 3);
 const fernMatBuf = new Float32Array(MAX_TRACK_INST * 16);
 const fernColBuf = new Float32Array(MAX_TRACK_INST * 3);
-const colliderScratchBuf = new Float32Array(MAX_GRID_INST * 3);
+const colliderScratchBuf = new Float32Array((MAX_GRID_INST + MAX_HUT_INST) * 3);
 const EMPTY_COLLIDERS = new Float32Array(0);
+const EMPTY_HUTS: readonly HutPlacement[] = [];
 
 function recordCollider(idx: number, wx: number, wz: number, radius: number): void {
   const cIdx = idx * 3;
@@ -1013,6 +1027,7 @@ function populateInstancedMesh(
 export class ChunkForest {
   public readonly group = new THREE.Group();
   public readonly colliders: Float32Array;
+  public readonly huts: readonly HutPlacement[];
   private pineInstanced?: THREE.InstancedMesh;
   private broadleafInstanced?: THREE.InstancedMesh;
   private hutInstanced?: THREE.InstancedMesh;
@@ -1081,6 +1096,7 @@ export class ChunkForest {
     let hutCount = 0;
     let rockCount = 0;
     let colliderCount = 0;
+    let placedHuts: HutPlacement[] | null = null;
 
     const worldOffsetX = cx * size;
     const worldOffsetZ = cz * size;
@@ -1169,12 +1185,11 @@ export class ChunkForest {
             rng() < 0.055
           ) {
             const hutScale = (0.92 + rng() * 0.16) * config.treeScale;
+            const rotX = (rng() - 0.5) * 0.03;
+            const rotY = rng() * Math.PI * 2;
+            const rotZ = (rng() - 0.5) * 0.03;
             forestDummy.position.set(lx, wy - 0.16, lz);
-            forestDummy.rotation.set(
-              (rng() - 0.5) * 0.03,
-              rng() * Math.PI * 2,
-              (rng() - 0.5) * 0.03
-            );
+            forestDummy.rotation.set(rotX, rotY, rotZ);
             forestDummy.scale.setScalar(hutScale);
             forestDummy.updateMatrix();
 
@@ -1185,6 +1200,21 @@ export class ChunkForest {
             );
             recordInstance(hutMatBuf, hutColBuf, hutCount++, forestDummy.matrix, sharedTint);
             recordCollider(colliderCount++, wx, wz, 2.22 * hutScale);
+            const doorDist = 2.65 * hutScale;
+            placedHuts = [
+              {
+                id: `hut_${cx}_${cz}`,
+                cx,
+                cz,
+                worldX: wx,
+                worldY: wy - 0.16,
+                worldZ: wz,
+                rotationY: rotY,
+                scale: hutScale,
+                doorWorldX: wx + Math.sin(rotY) * doorDist,
+                doorWorldZ: wz + Math.cos(rotY) * doorDist,
+              },
+            ];
             continue;
           }
 
@@ -1221,6 +1251,76 @@ export class ChunkForest {
     }
 
     this.trackSeed = ((rng() * 0xffffffff) >>> 0) ^ chunkSeed;
+
+    // Guarantee a welcoming Dwarven Hut in the starter chunk (0, 0) if the grove roll didn't place one
+    if (cx === 0 && cz === 0 && hutCount === 0 && config.enableTrees) {
+      const starterCandidates: readonly [number, number][] = [
+        [13.5, -10.5],
+        [14.5, 9.5],
+        [-14.0, 11.5],
+        [11.5, -15.5],
+        [16.0, -3.5],
+      ];
+      for (const [candLx, candLz] of starterCandidates) {
+        const candWx = worldOffsetX + candLx;
+        const candWz = worldOffsetZ + candLz;
+        let candWy: number;
+        if (sampler) {
+          candWy = sampler.sampleHeightAndNormal(candLx, candLz, forestNormal);
+        } else {
+          candWy = noise.getHeight(candWx, candWz);
+          noise.getNormal(candWx, candWz, forestNormal);
+        }
+        if (config.enableWater && candWy - config.waterLevel < 1.2) continue;
+        if (forestNormal.y < 0.78) continue;
+        const candTrackW = chunkHasTrack
+          ? sampler?.sampleTrackWeight
+            ? sampler.sampleTrackWeight(candLx, candLz)
+            : noise.getTrackWeight(candWx, candWz, candWy)
+          : 0;
+        if (candTrackW > 0.16) continue;
+
+        let overlapsTree = false;
+        for (let ci = 0; ci < colliderCount; ci++) {
+          const dx = candWx - colliderScratchBuf[ci * 3];
+          const dz = candWz - colliderScratchBuf[ci * 3 + 1];
+          const minR = colliderScratchBuf[ci * 3 + 2] + 2.6;
+          if (dx * dx + dz * dz < minR * minR) {
+            overlapsTree = true;
+            break;
+          }
+        }
+        if (overlapsTree) continue;
+
+        const hutScale = 1.0 * config.treeScale;
+        const rotY = Math.atan2(-candLx, -candLz);
+        forestDummy.position.set(candLx, candWy - 0.16, candLz);
+        forestDummy.rotation.set(0, rotY, 0);
+        forestDummy.scale.setScalar(hutScale);
+        forestDummy.updateMatrix();
+        sharedTint.setHex(0xffffff);
+        recordInstance(hutMatBuf, hutColBuf, hutCount++, forestDummy.matrix, sharedTint);
+        recordCollider(colliderCount++, candWx, candWz, 2.22 * hutScale);
+        const doorDist = 2.65 * hutScale;
+        placedHuts = [
+          {
+            id: `hut_${cx}_${cz}`,
+            cx,
+            cz,
+            worldX: candWx,
+            worldY: candWy - 0.16,
+            worldZ: candWz,
+            rotationY: rotY,
+            scale: hutScale,
+            doorWorldX: candWx + Math.sin(rotY) * doorDist,
+            doorWorldZ: candWz + Math.cos(rotY) * doorDist,
+          },
+        ];
+        break;
+      }
+    }
+
+    this.huts = placedHuts ?? EMPTY_HUTS;
     this.colliders =
       colliderCount > 0 ? colliderScratchBuf.slice(0, colliderCount * 3) : EMPTY_COLLIDERS;
 

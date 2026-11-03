@@ -150,6 +150,10 @@ All `.glb` assets (`pine tree`, `oak tree`, `simple dwarven hut`, `ancient stone
 5. **Wild Deer 3D Model LOD & Pooled Arrow Projectiles (`HuntingAndDeerManager`):**
    - **Close-Range LOD (`dist <= 1.5` chunks, ~72 m):** Renders the welded 18,574-triangle `deer 3d model.glb` (`sharedDeerGlbGeo` + `sharedDeerGlbMats`) with unused PBR maps stripped pre-parse and `receiveShadow = false`.
    - **Mid/Far-Range LOD (`dist > 1.5` chunks):** Swaps `deer.bodyMesh` in-place to a pre-merged ~112-triangle procedural deer geometry (`deerFallbackGeo` + `deerFallbackMats`), gating `castShadow` behind `dist <= 2.2` chunks (`48 m`) and reusing a fixed 6-slot pool of merged 3D arrow projectiles (`sharedArrowGeo`).
+6. **Dwarven Hut Cutaway Interior & Collectible Artefacts (`HutManager.ts`):**
+   - **Pre-Parse Specular & PBR Stripping + Normal Guard:** Loads `3dmodels/dwarven hut interior 3d model.glb` (19,625 triangles, 22,939 vertices) via `createOptimizedGlbLoader()`, strips unused `skinIndex`/`skinWeight` attributes, aligns the wooden plank floor (`9.2%` of height) to `Y = 0` at `5.2 m` height, guards `computeVertexNormals()`, and hot-swaps from a `< 90`-triangle procedural cutaway fallback.
+   - **On-Demand Interior Stage & Exterior Culling:** The interior mesh and 6 pre-merged 3D Dwarven Artefact geometries (`ARTEFACT_CATALOG`) are only visible while the dwarf is inside a hut (`interiorGroup.visible = true`), while exterior chunk/foliage/water groups and planar water reflections are hidden/skipped—eliminating exterior draw calls and preventing grass or terrain from clipping through the interior floorboards.
+   - **$O(1)$ Furniture Collision & Chunk-Cached Doorway Markers:** Interior wall clamping and 18 precomputed furniture collision circles (`HUT_INTERIOR_COLLIDERS`) run in $O(1)$ time with zero heap allocations, and exterior doorway threshold markers synchronize only when `centerCx`, `centerCz`, or `activeChunkCount` changes.
 
 ---
 

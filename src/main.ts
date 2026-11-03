@@ -13,6 +13,7 @@ import { LivingWorldManager } from './world/LivingWorldManager';
 import { ChallengeManager } from './world/ChallengeManager';
 import { FishingAndFishManager } from './world/FishingAndFishManager';
 import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
+import { HutManager } from './world/HutManager';
 import { WaterReflectionController } from './world/WaterMesh';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
@@ -125,6 +126,7 @@ const landmarkManager = new LandmarkManager(
   config,
   noise,
   (tx, tz, label) => {
+    hutManager.exitCurrentHut(true);
     explorer.setPose(tx, tz, explorer.getHeading(), explorer.yaw, explorer.pitch, explorer.distance);
     chunkManager.update(
       explorer.playerPos.x,
@@ -203,6 +205,44 @@ explorer.setHuntingManager(huntingManager);
 fishingManager.setOnEnterFishingCallback(() => huntingManager.exitHuntingMode());
 huntingManager.setOnEnterHuntingCallback(() => fishingManager.exitFishingMode());
 
+const hutManager = new HutManager(
+  config,
+  scene,
+  fog,
+  chunkManager,
+  dwarf,
+  [
+    chunkManager.group,
+    treasureManager.group,
+    landmarkManager.group,
+    livingWorldManager.group,
+    challengeManager.group,
+    fishingManager.group,
+    huntingManager.group,
+  ],
+  (x, z, heading, yaw, pitch, distance) => {
+    explorer.setPose(x, z, heading, yaw, pitch, distance);
+  },
+  (gold, msg) => {
+    treasureManager.grantBonusGold(gold, msg);
+    relicStore.renderShop();
+    persistCurrentProgress(false);
+  }
+);
+scene.add(hutManager.group);
+explorer.setHutManager(hutManager);
+hutManager.setOnEnterHutCallback(() => {
+  fishingManager.exitFishingMode();
+  huntingManager.exitHuntingMode();
+});
+hutManager.setOnWarmHearthCallback(() => {
+  const wasActive = landmarkManager.campfireBuffTimer > 50.0;
+  landmarkManager.campfireBuffTimer = 60.0;
+  if (!wasActive) {
+    treasureManager.grantBonusGold(25, '🔥 Hut Hearth Warmth! +20% Speed & Jump (60s) +25 Gold');
+  }
+});
+
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
 
 // Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
@@ -227,6 +267,7 @@ if (savedProgress) {
     savedProgress.chestsCollected,
     savedProgress.collectedIds
   );
+  hutManager.restoreProgress(savedProgress.artefactsCollected);
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
   syncBeaconFog();
@@ -256,6 +297,7 @@ const reusableSaveState: SavedProgress = {
   distance: 11.5,
   score: 0,
   chestsCollected: 0,
+  artefactsCollected: 0,
   collectedIds: [],
   unlockedRelics: [],
   litBeacons: [],
@@ -272,6 +314,7 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.distance = Math.round(explorer.distance * 100) / 100;
   reusableSaveState.score = treasureManager.score;
   reusableSaveState.chestsCollected = treasureManager.chestsCollected;
+  reusableSaveState.artefactsCollected = hutManager.artefactsCollected;
   reusableSaveState.collectedIds = treasureManager.getCollectedIds();
   reusableSaveState.unlockedRelics = relicStore.getUnlockedIds();
   reusableSaveState.litBeacons = landmarkManager.getLitBeacons();
@@ -347,6 +390,7 @@ const debugOverlay = new DebugOverlay(
     fishingManager.rebuildAll();
     huntingManager.exitHuntingMode();
     huntingManager.rebuildAll();
+    hutManager.reset();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -419,25 +463,31 @@ function animate(): void {
   const py = explorer.playerPos.y;
   const pz = explorer.playerPos.z;
   const hasLodestone = relicStore.has('lodestone_amulet');
-  chunkManager.update(px, py, pz, elapsedTime, false);
-  treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
-  landmarkManager.update(dt, elapsedTime, explorer.playerPos);
-  challengeManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
-  livingWorldManager.update(
-    dt,
-    elapsedTime,
-    explorer.playerPos,
-    explorer.isAttackingOrAirborne(),
-    sunOffset
-  );
-  fishingManager.update(
-    dt,
-    elapsedTime,
-    explorer.playerPos,
-    explorer.lastAimForward,
-    explorer.lastAimRight
-  );
-  huntingManager.update(dt, elapsedTime, explorer.playerPos);
+  hutManager.update(dt, elapsedTime, explorer.playerPos);
+
+  if (!hutManager.isInsideHut()) {
+    chunkManager.update(px, py, pz, elapsedTime, false);
+    treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
+    landmarkManager.update(dt, elapsedTime, explorer.playerPos);
+    challengeManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
+    livingWorldManager.update(
+      dt,
+      elapsedTime,
+      explorer.playerPos,
+      explorer.isAttackingOrAirborne(),
+      sunOffset
+    );
+    fishingManager.update(
+      dt,
+      elapsedTime,
+      explorer.playerPos,
+      explorer.lastAimForward,
+      explorer.lastAimRight
+    );
+    huntingManager.update(dt, elapsedTime, explorer.playerPos);
+  } else if (landmarkManager.campfireBuffTimer > 0) {
+    landmarkManager.campfireBuffTimer = Math.max(0, landmarkManager.campfireBuffTimer - dt);
+  }
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   const snap = 2.0;
@@ -478,7 +528,14 @@ function animate(): void {
   if (elapsedTime - lastHudUpdate >= 0.2) {
     lastHudUpdate = elapsedTime;
     const nearest = treasureManager.getNearestChest(explorer.playerPos);
-    const nextHint = nearest ? nearest.label : 'Explore further!';
+    const hutHint = hutManager.getNearestHutHint(explorer.playerPos);
+    const nextHint = hutManager.isInsideHut()
+      ? (hutHint ?? 'Inside Dwarven Hut')
+      : nearest
+        ? hutHint
+          ? `${nearest.label} • ${hutHint}`
+          : nearest.label
+        : (hutHint ?? 'Explore further!');
     if (nextHint !== lastChestHintText) {
       lastChestHintText = nextHint;
       nearestChestHint.textContent = nextHint;
@@ -566,17 +623,19 @@ function animate(): void {
     }
   }
 
-  // Render planar water reflection pass (reflecting the dwarf, backpack/fishing rod, trees, and sky)
-  waterReflection.update(
-    renderer,
-    scene,
-    camera,
-    config,
-    chunkManager.waterMaterial,
-    dwarf.root,
-    explorer.getHeading(),
-    sampleSurfaceHeight
-  );
+  // Render planar water reflection pass when outdoors
+  if (!hutManager.isInsideHut()) {
+    waterReflection.update(
+      renderer,
+      scene,
+      camera,
+      config,
+      chunkManager.waterMaterial,
+      dwarf.root,
+      explorer.getHeading(),
+      sampleSurfaceHeight
+    );
+  }
 
   renderer.render(scene, camera);
 }

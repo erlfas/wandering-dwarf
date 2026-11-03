@@ -7,6 +7,7 @@ import { RelicStore } from '../player/RelicStore';
 import { LandmarkManager } from '../world/LandmarkManager';
 import { FishingAndFishManager } from '../world/FishingAndFishManager';
 import { HuntingAndDeerManager } from '../world/HuntingAndDeerManager';
+import { HutManager } from '../world/HutManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -59,6 +60,7 @@ export class ExplorerCamera {
   private landmarkManager?: LandmarkManager;
   private fishingManager?: FishingAndFishManager;
   private huntingManager?: HuntingAndDeerManager;
+  private hutManager?: HutManager;
   public lastAimForward = 0;
   public lastAimRight = 0;
 
@@ -93,6 +95,10 @@ export class ExplorerCamera {
     this.huntingManager = hm;
   }
 
+  public setHutManager(hm: HutManager): void {
+    this.hutManager = hm;
+  }
+
   public isAttackingOrAirborne(): boolean {
     return this.isSliding || this.heightAboveGround > 0.25;
   }
@@ -104,6 +110,10 @@ export class ExplorerCamera {
   }
 
   public getMovementStatus(): string {
+    if (this.hutManager?.isInsideHut()) {
+      const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
+      return hasWarmth ? '🏠 Inside Hut • 🔥 Hearth Warmth' : '🏠 Inside Dwarven Hut';
+    }
     if (this.fishingManager?.isFishingActive()) {
       return `🎣 Fishing (${this.fishingManager.fishCaughtCount} Caught)`;
     }
@@ -139,7 +149,10 @@ export class ExplorerCamera {
     pitch: number,
     distance: number
   ): void {
-    const groundY = this.noise.getHeight(x, z);
+    const insideHut = this.hutManager?.isInsideHut() ?? false;
+    const groundY = insideHut
+      ? this.hutManager!.getInteriorFloorHeight(0)
+      : this.noise.getHeight(x, z);
     this.lastGroundY = groundY;
     this.lastGroundSampleX = x;
     this.lastGroundSampleZ = z;
@@ -147,7 +160,7 @@ export class ExplorerCamera {
     this.lastTrackSampleZ = NaN;
     const swimSurfaceY = this.config.waterLevel - 0.54;
     const y =
-      this.config.enableWater && !this.config.blankClayMode
+      !insideHut && this.config.enableWater && !this.config.blankClayMode
         ? Math.max(groundY, swimSurfaceY)
         : groundY;
 
@@ -348,14 +361,16 @@ export class ExplorerCamera {
     let baseSpeed = this.config.walkSpeed * (isSprinting ? sprintMult : 1.0);
 
     // Check terrain depth vs water level using cached ground height
+    const insideHut = this.hutManager?.isInsideHut() ?? false;
     let isSwimming =
+      !insideHut &&
       this.config.enableWater &&
       !this.config.blankClayMode &&
       this.lastGroundY < this.config.waterLevel - 0.38;
 
     // Evaluate Trailblazer footpath boost when moving on worn dirt trails
     const wantsMove = forward !== 0 || right !== 0 || holdingSlideKey || this.dashTimer > 0;
-    if (wantsMove && !isSwimming && this.config.enableTracks) {
+    if (wantsMove && !insideHut && !isSwimming && this.config.enableTracks) {
       const tdx = this.playerPos.x - this.lastTrackSampleX;
       const tdz = this.playerPos.z - this.lastTrackSampleZ;
       if (tdx * tdx + tdz * tdz > 0.04) {
@@ -477,12 +492,16 @@ export class ExplorerCamera {
       this.playerPos.z += dirZ * stepDist;
       targetHeading = Math.atan2(dirX, dirZ);
 
-      this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
-      this.landmarkManager?.resolveObstacleCollision(
-        this.playerPos,
-        0.38,
-        this.heightAboveGround
-      );
+      if (insideHut) {
+        this.hutManager!.resolveInteriorCollision(this.playerPos, 0.35);
+      } else {
+        this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
+        this.landmarkManager?.resolveObstacleCollision(
+          this.playerPos,
+          0.38,
+          this.heightAboveGround
+        );
+      }
       const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
       if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
         actualSpeed = 0;
@@ -508,12 +527,16 @@ export class ExplorerCamera {
         targetHeading = Math.atan2(moveX, moveZ);
 
         if (this.config.cameraMode === 'dwarf') {
-          this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
-          this.landmarkManager?.resolveObstacleCollision(
-            this.playerPos,
-            0.38,
-            this.heightAboveGround
-          );
+          if (insideHut) {
+            this.hutManager!.resolveInteriorCollision(this.playerPos, 0.35);
+          } else {
+            this.chunkManager.resolveObstacleCollision(this.playerPos, 0.38);
+            this.landmarkManager?.resolveObstacleCollision(
+              this.playerPos,
+              0.38,
+              this.heightAboveGround
+            );
+          }
           const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
           if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
             actualSpeed = 0;
@@ -526,7 +549,10 @@ export class ExplorerCamera {
 
     // Evaluate surface floor height (reusing cached groundY when stationary)
     let groundY = this.lastGroundY;
-    if (
+    if (insideHut) {
+      groundY = this.hutManager!.getInteriorFloorHeight(groundY);
+      this.lastGroundY = groundY;
+    } else if (
       this.playerPos.x !== this.lastGroundSampleX ||
       this.playerPos.z !== this.lastGroundSampleZ
     ) {
@@ -539,12 +565,13 @@ export class ExplorerCamera {
       this.lastGroundY = groundY;
     }
     isSwimming =
+      !insideHut &&
       this.config.enableWater &&
       !this.config.blankClayMode &&
       groundY < this.config.waterLevel - 0.38;
     const swimSurfaceY = this.config.waterLevel - 0.54;
     const floorY =
-      this.config.enableWater && !this.config.blankClayMode
+      !insideHut && this.config.enableWater && !this.config.blankClayMode
         ? Math.max(groundY, swimSurfaceY)
         : groundY;
 
@@ -615,7 +642,8 @@ export class ExplorerCamera {
     }
 
     // Automatically swing camera behind the dwarf when walking/running unless overridden by mouse
-    if (this.config.cameraMode === 'dwarf') {
+    // (When inside the cutaway hut, preserve the isometric cutaway view unless manually orbited)
+    if (this.config.cameraMode === 'dwarf' && !insideHut) {
       if (this.isDragging) {
         this.followActive = false;
       } else if ((targetHeading !== null || (isFishing && this.lastAimRight !== 0)) && this.mouseOverrideTimer <= 0) {
@@ -651,8 +679,10 @@ export class ExplorerCamera {
     const desiredCamZ = this.smoothedTarget.z + cosYaw * horizDist;
     let desiredCamY = this.smoothedTarget.y + vertDist;
 
-    // Prevent camera from clipping below terrain surface
-    const camGroundY = this.chunkManager.getSurfaceHeight(desiredCamX, desiredCamZ) + 1.2;
+    // Prevent camera from clipping below terrain surface or hut floor
+    const camGroundY = insideHut
+      ? floorY + 0.65
+      : this.chunkManager.getSurfaceHeight(desiredCamX, desiredCamZ) + 1.2;
     if (desiredCamY < camGroundY) {
       desiredCamY = camGroundY;
     }

@@ -18,6 +18,7 @@ export interface SavedProgress {
   distance: number;
   score: number;
   chestsCollected: number;
+  artefactsCollected?: number;
   collectedIds: string[];
   unlockedRelics?: string[];
   litBeacons?: SavedBeaconWaypoint[];
@@ -54,6 +55,8 @@ export function loadProgress(): SavedProgress | null {
       distance: typeof data.distance === 'number' ? data.distance : 11.5,
       score: data.score,
       chestsCollected: data.chestsCollected,
+      artefactsCollected:
+        typeof data.artefactsCollected === 'number' ? data.artefactsCollected : 0,
       collectedIds: data.collectedIds.filter((id): id is string => typeof id === 'string'),
       unlockedRelics: Array.isArray(data.unlockedRelics)
         ? data.unlockedRelics.filter((id): id is string => typeof id === 'string')
