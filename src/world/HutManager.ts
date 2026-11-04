@@ -714,16 +714,14 @@ export class HutManager {
 
     if (this.nearestHut && (this.nearestHutDist <= 7.0 || this.nearestDoorDist <= 4.5)) {
       this.enterHut(this.nearestHut);
-    } else if (this.nearestHut) {
+    } else if (this.nearestHut && this.nearestHutDist <= 14.0) {
       const dx = this.nearestHut.worldX - this.dwarf.root.position.x;
       const dz = this.nearestHut.worldZ - this.dwarf.root.position.z;
       const dir = formatCompassDir(dx, dz);
       this.showToast(
-        `🏠 Nearest Dwarven Hut: ${this.nearestHutDist.toFixed(0)}m ${dir} — Walk to its door to enter!`,
+        `🏠 Nearest Dwarven Hut: ${this.nearestHutDist.toFixed(0)}m ${dir} — Walk to its door to enter & buy Equipment!`,
         false
       );
-    } else {
-      this.showToast('🏠 Explore wooded groves to find a Dwarven Hut!', false);
     }
   }
 
@@ -1095,14 +1093,14 @@ export class HutManager {
     if (!this.artefactCollectedInVisit) {
       this.setBanner(
         true,
-        `<span>🏠 <strong>Inside Dwarven Hut</strong> • <span class="hut-tag">${def.icon} ${def.name} (+${def.gold}g)</span> Walk to the Pedestal to Collect!</span>` +
-          `<button type="button" class="hut-action-pill exit">🚪 Exit Hut (E)</button>`
+        `<span>🏠 <strong>Inside Dwarven House</strong> • <span class="hut-tag">${def.icon} ${def.name} (+${def.gold}g)</span> • 🛒 <strong>Buy Equipment (Keys 5–8)</strong></span>` +
+          `<button type="button" class="hut-action-pill exit">🚪 Exit House (E)</button>`
       );
     } else {
       this.setBanner(
         true,
-        `<span>🏠 <strong>Inside Dwarven Hut</strong> • <span class="hut-tag collected">✅ ${def.name} Collected!</span> Step onto the Doorstep or Press <kbd>E</kbd></span>` +
-          `<button type="button" class="hut-action-pill exit">🚪 Exit Hut (E)</button>`
+        `<span>🏠 <strong>Inside Dwarven House</strong> • <span class="hut-tag collected">✅ ${def.name} Collected!</span> • 🛒 <strong>Buy Equipment (Keys 5–8)</strong></span>` +
+          `<button type="button" class="hut-action-pill exit">🚪 Exit House (E)</button>`
       );
     }
   }

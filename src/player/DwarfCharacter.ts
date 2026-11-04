@@ -27,6 +27,13 @@ export class DwarfCharacter {
   private bowStringAttr!: THREE.BufferAttribute;
   private nockedArrowGroup = new THREE.Group();
   private bowLaunchNode = new THREE.Object3D();
+  private carriedStoneGroup = new THREE.Group();
+  private carriedStoneMeshes: THREE.Mesh[] = [];
+  private carriedBlockGroup = new THREE.Group();
+  private carriedBlockMeshes: THREE.Mesh[] = [];
+  private chiselToolGroup = new THREE.Group();
+  private hammerPivot = new THREE.Group();
+  private chiselPivot = new THREE.Group();
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
@@ -42,6 +49,12 @@ export class DwarfCharacter {
   private bowDrawTarget = 0;
   private bowDrawCurrent = 0;
   private bowReleaseTimer = 0;
+
+  private carriedRawStones = 0;
+  private carriedChiseledBlocks = 0;
+  private chiselAnimTimer = 0;
+  private chiselAnimDuration = 1.0;
+  private carryBobTime = 0;
 
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
@@ -404,6 +417,123 @@ export class DwarfCharacter {
     this.bowLaunchNode.position.set(0, 0.02, 0.42);
     this.equippedBowGroup.add(this.bowLaunchNode);
     this.modelContainer.add(this.equippedBowGroup);
+
+    // 6. Carried Natural Stones & Chiseled Castle Blocks held in front of chest/arms
+    this.carriedStoneGroup.position.set(0, 0.72, 0.36);
+    this.carriedStoneGroup.visible = false;
+    const fallbackRockGeo = new THREE.DodecahedronGeometry(0.28, 1);
+    fallbackRockGeo.scale(1.15, 0.85, 1.05);
+    fallbackRockGeo.translate(0, 0.24, 0);
+    const fallbackRockMat = new THREE.MeshStandardMaterial({
+      color: 0x8d9299,
+      roughness: 0.88,
+      metalness: 0.04,
+    });
+    const stoneOffsets = [
+      [0, 0, 0, 0.62, 0],
+      [-0.18, 0.26, -0.05, 0.48, 1.2],
+      [0.18, 0.28, -0.04, 0.46, -0.9],
+    ];
+    for (let i = 0; i < 3; i++) {
+      const [sx, sy, sz, sc, ry] = stoneOffsets[i];
+      const sm = new THREE.Mesh(fallbackRockGeo, fallbackRockMat);
+      sm.position.set(sx, sy, sz);
+      sm.scale.setScalar(sc);
+      sm.rotation.y = ry;
+      sm.castShadow = true;
+      sm.visible = i === 0;
+      this.carriedStoneMeshes.push(sm);
+      this.carriedStoneGroup.add(sm);
+    }
+    this.modelContainer.add(this.carriedStoneGroup);
+
+    // 7. Carried Chiseled Ashlar Castle Blocks
+    this.carriedBlockGroup.position.set(0, 0.76, 0.36);
+    this.carriedBlockGroup.visible = false;
+    const ashlarBlockGeo = new THREE.BoxGeometry(0.46, 0.26, 0.34);
+    const ashlarBlockMat = new THREE.MeshStandardMaterial({
+      color: 0xaeb4bc,
+      roughness: 0.76,
+      metalness: 0.08,
+    });
+    const blockOffsets = [
+      [0, 0.08, 0, 0],
+      [0, 0.35, -0.02, 0.06],
+      [-0.16, 0.61, -0.04, -0.08],
+      [0.16, 0.61, -0.04, 0.08],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const [bx, by, bz, ry] = blockOffsets[i];
+      const bm = new THREE.Mesh(ashlarBlockGeo, ashlarBlockMat);
+      bm.position.set(bx, by, bz);
+      bm.rotation.y = ry;
+      bm.castShadow = true;
+      bm.visible = i === 0;
+      this.carriedBlockMeshes.push(bm);
+      this.carriedBlockGroup.add(bm);
+    }
+    this.modelContainer.add(this.carriedBlockGroup);
+
+    // 8. Mason's Hammer & Chisel held in hands when chiseling at the Quarry Workbench
+    this.chiselToolGroup.position.set(0, 0.88, 0.32);
+    this.chiselToolGroup.visible = false;
+
+    // Right-hand Mason's Hammer
+    this.hammerPivot.position.set(0.24, 0.08, 0.04);
+    const hammerShaftGeo = new THREE.CylinderGeometry(0.016, 0.02, 0.38, 7);
+    hammerShaftGeo.translate(0, 0.16, 0);
+    const hammerShaft = new THREE.Mesh(hammerShaftGeo, rodWoodMat);
+    hammerShaft.castShadow = true;
+    this.hammerPivot.add(hammerShaft);
+
+    const hammerHeadGeo = new THREE.BoxGeometry(0.11, 0.1, 0.22);
+    hammerHeadGeo.translate(0, 0.34, 0);
+    const hammerHead = new THREE.Mesh(hammerHeadGeo, steelHeadMat);
+    hammerHead.castShadow = true;
+    this.hammerPivot.add(hammerHead);
+    this.chiselToolGroup.add(this.hammerPivot);
+
+    // Left-hand Stone Chisel
+    this.chiselPivot.position.set(-0.18, 0.02, 0.14);
+    this.chiselPivot.rotation.set(0.65, -0.25, -0.2);
+    const chiselBodyGeo = new THREE.CylinderGeometry(0.012, 0.018, 0.28, 6);
+    const chiselMesh = new THREE.Mesh(chiselBodyGeo, steelHeadMat);
+    chiselMesh.castShadow = true;
+    this.chiselPivot.add(chiselMesh);
+    this.chiselToolGroup.add(this.chiselPivot);
+
+    this.modelContainer.add(this.chiselToolGroup);
+  }
+
+  public setNaturalRockAsset(
+    geo: THREE.BufferGeometry,
+    mat: THREE.MeshStandardMaterial
+  ): void {
+    for (const m of this.carriedStoneMeshes) {
+      m.geometry = geo;
+      m.material = mat;
+      m.receiveShadow = false;
+    }
+  }
+
+  public setCarriedLoad(rawStones: number, chiseledBlocks: number): void {
+    this.carriedRawStones = Math.max(0, Math.floor(rawStones));
+    this.carriedChiseledBlocks = Math.max(0, Math.floor(chiseledBlocks));
+    for (let i = 0; i < this.carriedStoneMeshes.length; i++) {
+      this.carriedStoneMeshes[i].visible = i < this.carriedRawStones;
+    }
+    for (let i = 0; i < this.carriedBlockMeshes.length; i++) {
+      this.carriedBlockMeshes[i].visible = i < this.carriedChiseledBlocks;
+    }
+  }
+
+  public triggerChiselAnimation(duration = 1.0): void {
+    this.chiselAnimDuration = Math.max(0.25, duration);
+    this.chiselAnimTimer = this.chiselAnimDuration;
+  }
+
+  public isChiseling(): boolean {
+    return this.chiselAnimTimer > 0;
   }
 
   public setFishingMode(active: boolean): void {
@@ -941,6 +1071,36 @@ export class DwarfCharacter {
       this.nockedArrowGroup.visible = showNockedArrow;
       if (showNockedArrow) {
         this.nockedArrowGroup.position.set(0, 0, nockZ + 0.06);
+      }
+    }
+
+    // Animate Mason's Hammer & Chisel when chiseling at the Quarry Workbench
+    const isChiselingNow = this.chiselAnimTimer > 0 && !isSwimming && !rodOut && !bowOut;
+    if (this.chiselAnimTimer > 0) {
+      this.chiselAnimTimer = Math.max(0, this.chiselAnimTimer - dt);
+    }
+    this.chiselToolGroup.visible = isChiselingNow;
+    if (isChiselingNow) {
+      const phase = (1.0 - this.chiselAnimTimer / this.chiselAnimDuration) * Math.PI * 6.0;
+      const strike = Math.abs(Math.sin(phase));
+      this.hammerPivot.rotation.x = 0.25 + strike * 0.95;
+      this.chiselPivot.position.z = 0.14 + (1.0 - strike) * 0.04;
+    }
+
+    // Show carried Natural Stones or Chiseled Castle Blocks when not fishing/hunting/swimming/chiseling
+    const canShowCarry = !isSwimming && !rodOut && !bowOut && !isChiselingNow;
+    const showRawStones = canShowCarry && this.carriedRawStones > 0 && this.carriedChiseledBlocks === 0;
+    const showBlocks = canShowCarry && this.carriedChiseledBlocks > 0;
+    this.carriedStoneGroup.visible = showRawStones;
+    this.carriedBlockGroup.visible = showBlocks;
+    if (showRawStones || showBlocks) {
+      this.carryBobTime += dt * (moveSpeed > 0.2 ? 9.0 : 2.2);
+      const bobY = Math.sin(this.carryBobTime) * (moveSpeed > 0.2 ? 0.032 : 0.01);
+      if (showRawStones) {
+        this.carriedStoneGroup.position.y = 0.72 + bobY;
+      }
+      if (showBlocks) {
+        this.carriedBlockGroup.position.y = 0.76 + bobY;
       }
     }
 

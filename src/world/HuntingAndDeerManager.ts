@@ -1072,9 +1072,10 @@ export class HuntingAndDeerManager {
         this.dwarf.spawnBurst(hitDeer.pos.x, hitDeer.pos.y + 0.8, hitDeer.pos.z, 16);
         this.dwarf.spawnBurst(playerPos.x, playerPos.y + 0.8, playerPos.z, 10);
         this.playHuntSuccessFanfare();
+        const rations = hitDeer.species.gold >= 250 ? 3 : 2;
         this.onGrantGold(
           hitDeer.species.gold,
-          `🏹 Hunted ${hitDeer.species.name}! +${hitDeer.species.gold} Gold`
+          `🏹 Hunted ${hitDeer.species.name}! +${hitDeer.species.gold} Gold & +${rations} Venison Food (+Energy ⚡)`
         );
         this.updateBannerUI();
         continue;

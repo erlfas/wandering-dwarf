@@ -3,6 +3,7 @@ import { getSharedAudioContext } from '../player/RelicStore';
 import { ChunkManager } from '../world/ChunkManager';
 import { WorldConfig } from '../world/Config';
 import { LandmarkManager } from '../world/LandmarkManager';
+import { CastleAndQuarryManager } from '../world/CastleAndQuarryManager';
 import { SavedDiscoveredHut } from '../world/ProgressStorage';
 import { createSeededRandom, TerrainNoise } from '../world/TerrainNoise';
 import { TreasureManager } from '../world/TreasureManager';
@@ -87,7 +88,9 @@ interface InteractiveMapMarker {
     | 'chest_rare'
     | 'chest_std'
     | 'chest_opened'
-    | 'dig_site';
+    | 'dig_site'
+    | 'quarry'
+    | 'castle';
   title: string;
   subtitle: string;
   worldX: number;
@@ -158,6 +161,11 @@ export class WorldMap {
   private trailToggleBtn: HTMLButtonElement;
   private markersToggleBtn: HTMLButtonElement;
   private gridToggleBtn: HTMLButtonElement;
+  private castleManager?: CastleAndQuarryManager;
+
+  public setCastleAndQuarryManager(cm: CastleAndQuarryManager): void {
+    this.castleManager = cm;
+  }
 
   constructor(
     private config: WorldConfig,
@@ -1492,8 +1500,8 @@ export class WorldMap {
       this.interactiveMarkers.push({
         id: hut.id,
         kind: 'hut',
-        title: '🏠 Dwarven Wooden Hut',
-        subtitle: 'Enter doorway (E) to collect Dwarven Artefacts & warm by the hearth',
+        title: '🏠 Dwarven Wooden House',
+        subtitle: 'Enter doorway (E) to buy Mason Equipment, collect Artefacts & warm by the hearth',
         worldX: hut.x,
         worldY: hut.y,
         worldZ: hut.z,
@@ -1502,6 +1510,46 @@ export class WorldMap {
         radiusPx: 12,
         canTeleport: false,
       });
+    }
+
+    // 2b. Player-Placed Stone Quarries & Castles
+    if (this.castleManager) {
+      for (const q of this.castleManager.getSerializedQuarries()) {
+        const sx = worldToScreenX(q.x);
+        const sy = worldToScreenY(q.z);
+        this.drawPin(ctx, sx, sy, 9.5, '#3b424c', '#ffd166', '⛏️', true);
+        this.interactiveMarkers.push({
+          id: q.id,
+          kind: 'quarry',
+          title: '⛏️ Dwarven Stone Quarry',
+          subtitle: `Chisel Raw Stones into Blocks (${q.stockpiledBlocks} Blocks Stockpiled)`,
+          worldX: q.x,
+          worldY: q.y,
+          worldZ: q.z,
+          screenX: sx,
+          screenY: sy,
+          radiusPx: 12,
+          canTeleport: false,
+        });
+      }
+      for (const c of this.castleManager.getSerializedCastles()) {
+        const sx = worldToScreenX(c.x);
+        const sy = worldToScreenY(c.z);
+        this.drawPin(ctx, sx, sy, 11.0, '#1d3557', '#48cae4', '🏰', true);
+        this.interactiveMarkers.push({
+          id: c.id,
+          kind: 'castle',
+          title: `🏰 ${c.name}`,
+          subtitle: `Castle Construction: ${c.blocksPlaced}/30 Blocks Placed`,
+          worldX: c.x,
+          worldY: c.y,
+          worldZ: c.z,
+          screenX: sx,
+          screenY: sy,
+          radiusPx: 14,
+          canTeleport: false,
+        });
+      }
     }
 
     // 3. Active Buried Map Hoard Dig Site (X Marks the Spot!)

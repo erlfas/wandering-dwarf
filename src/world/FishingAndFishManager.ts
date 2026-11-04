@@ -1221,9 +1221,10 @@ export class FishingAndFishManager {
 
           this.dwarf.spawnBurst(playerPos.x, playerPos.y + 0.8, playerPos.z, 14);
           this.playCatchFanfare();
+          const rations = caught.species.gold >= 200 ? 2 : 1;
           this.onGrantGold(
             caught.species.gold,
-            `🐟 Caught ${caught.species.name}! +${caught.species.gold} Gold`
+            `🐟 Caught ${caught.species.name}! +${caught.species.gold} Gold & +${rations} Fish Food (+Energy ⚡)`
           );
         }
         this.dwarf.setRodBend(0);

@@ -1,3 +1,5 @@
+import { SavedCastleSite, SavedQuarrySite } from './CastleAndQuarryManager';
+
 const STORAGE_KEY = 'procedural_world_progress_v1';
 
 export interface SavedBeaconWaypoint {
@@ -32,6 +34,13 @@ export interface SavedProgress {
   discoveredCells?: number[];
   discoveredHuts?: SavedDiscoveredHut[];
   exploredTrail?: number[];
+  quarries?: SavedQuarrySite[];
+  castles?: SavedCastleSite[];
+  unlockedHouseEquipment?: string[];
+  energy?: number;
+  foodCount?: number;
+  carriedRawStones?: number;
+  carriedChiseledBlocks?: number;
 }
 
 export function loadProgress(): SavedProgress | null {
@@ -98,6 +107,16 @@ export function loadProgress(): SavedProgress | null {
       exploredTrail: Array.isArray(data.exploredTrail)
         ? data.exploredTrail.filter((n): n is number => typeof n === 'number' && Number.isFinite(n))
         : [],
+      quarries: Array.isArray(data.quarries) ? data.quarries : [],
+      castles: Array.isArray(data.castles) ? data.castles : [],
+      unlockedHouseEquipment: Array.isArray(data.unlockedHouseEquipment)
+        ? data.unlockedHouseEquipment.filter((s): s is string => typeof s === 'string')
+        : [],
+      energy: typeof data.energy === 'number' ? data.energy : 100,
+      foodCount: typeof data.foodCount === 'number' ? data.foodCount : 2,
+      carriedRawStones: typeof data.carriedRawStones === 'number' ? data.carriedRawStones : 0,
+      carriedChiseledBlocks:
+        typeof data.carriedChiseledBlocks === 'number' ? data.carriedChiseledBlocks : 0,
     };
   } catch {
     return null;

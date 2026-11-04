@@ -15,6 +15,7 @@ import { ChallengeManager } from './world/ChallengeManager';
 import { FishingAndFishManager } from './world/FishingAndFishManager';
 import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
 import { HutManager } from './world/HutManager';
+import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { WaterReflectionController } from './world/WaterMesh';
 import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
 
@@ -180,6 +181,8 @@ const fishingManager = new FishingAndFishManager(
   (gold, msg) => {
     treasureManager.grantBonusGold(gold, msg);
     if (gold > 0) {
+      castleAndQuarryManager.addFoodRations(gold >= 200 ? 2 : 1, 'fish');
+      castleAndQuarryManager.renderHouseShop();
       persistCurrentProgress(false);
     }
   }
@@ -196,6 +199,8 @@ const huntingManager = new HuntingAndDeerManager(
   (gold, msg) => {
     treasureManager.grantBonusGold(gold, msg);
     if (gold > 0) {
+      castleAndQuarryManager.addFoodRations(gold >= 250 ? 3 : 2, 'deer');
+      castleAndQuarryManager.renderHouseShop();
       persistCurrentProgress(false);
     }
   }
@@ -207,7 +212,35 @@ explorer.setHuntingManager(huntingManager);
 fishingManager.setOnEnterFishingCallback(() => huntingManager.exitHuntingMode());
 huntingManager.setOnEnterHuntingCallback(() => fishingManager.exitFishingMode());
 
-const hutManager = new HutManager(
+let hutManager!: HutManager;
+
+const castleAndQuarryManager = new CastleAndQuarryManager(
+  config,
+  noise,
+  chunkManager,
+  dwarf,
+  () => treasureManager.score,
+  (amt) => {
+    const ok = treasureManager.spendGold(amt);
+    if (ok) {
+      relicStore.renderShop();
+    }
+    return ok;
+  },
+  (gold, msg) => {
+    treasureManager.grantBonusGold(gold, msg);
+    relicStore.renderShop();
+    castleAndQuarryManager.renderHouseShop();
+  },
+  () => hutManager?.isInsideHut() ?? false
+);
+scene.add(castleAndQuarryManager.group);
+explorer.setCastleAndQuarryManager(castleAndQuarryManager);
+castleAndQuarryManager.onStateChanged = () => {
+  persistCurrentProgress(false);
+};
+
+hutManager = new HutManager(
   config,
   scene,
   fog,
@@ -221,6 +254,7 @@ const hutManager = new HutManager(
     challengeManager.group,
     fishingManager.group,
     huntingManager.group,
+    castleAndQuarryManager.group,
   ],
   (x, z, heading, yaw, pitch, distance) => {
     explorer.setPose(x, z, heading, yaw, pitch, distance);
@@ -228,6 +262,7 @@ const hutManager = new HutManager(
   (gold, msg) => {
     treasureManager.grantBonusGold(gold, msg);
     relicStore.renderShop();
+    castleAndQuarryManager.renderHouseShop();
     persistCurrentProgress(false);
   }
 );
@@ -272,6 +307,15 @@ if (savedProgress) {
   hutManager.restoreProgress(savedProgress.artefactsCollected);
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
+  castleAndQuarryManager.restoreProgress(
+    savedProgress.quarries,
+    savedProgress.castles,
+    savedProgress.unlockedHouseEquipment,
+    savedProgress.energy,
+    savedProgress.foodCount,
+    savedProgress.carriedRawStones,
+    savedProgress.carriedChiseledBlocks
+  );
   syncBeaconFog();
   explorer.setPose(
     savedProgress.playerPos.x,
@@ -326,6 +370,13 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.discoveredCells = worldMap.getSerializedDiscoveredCells();
   reusableSaveState.discoveredHuts = worldMap.getSerializedDiscoveredHuts();
   reusableSaveState.exploredTrail = worldMap.getSerializedTrail();
+  reusableSaveState.quarries = castleAndQuarryManager.getSerializedQuarries();
+  reusableSaveState.castles = castleAndQuarryManager.getSerializedCastles();
+  reusableSaveState.unlockedHouseEquipment = castleAndQuarryManager.getUnlockedEquipmentIds();
+  reusableSaveState.energy = Math.round(castleAndQuarryManager.energy);
+  reusableSaveState.foodCount = castleAndQuarryManager.foodCount;
+  reusableSaveState.carriedRawStones = castleAndQuarryManager.carriedRawStones;
+  reusableSaveState.carriedChiseledBlocks = castleAndQuarryManager.carriedChiseledBlocks;
   return reusableSaveState;
 }
 
@@ -355,6 +406,7 @@ function persistCurrentProgress(sync = false): void {
 
 treasureManager.onChestCollected = () => {
   relicStore.renderShop();
+  castleAndQuarryManager.renderHouseShop();
   persistCurrentProgress(false);
 };
 relicStore.onRelicUnlocked = () => {
@@ -395,6 +447,7 @@ const worldMap = new WorldMap(
     persistCurrentProgress(false);
   }
 );
+worldMap.setCastleAndQuarryManager(castleAndQuarryManager);
 worldMap.restoreProgress(
   savedProgress?.discoveredCells,
   savedProgress?.discoveredHuts,
@@ -424,6 +477,7 @@ const debugOverlay = new DebugOverlay(
     huntingManager.exitHuntingMode();
     huntingManager.rebuildAll();
     hutManager.reset();
+    castleAndQuarryManager.reset();
     syncBeaconFog();
     explorer.resetToOrigin();
     chunkManager.rebuildAll(
@@ -504,6 +558,12 @@ function animate(): void {
   const pz = explorer.playerPos.z;
   const hasLodestone = relicStore.has('lodestone_amulet');
   hutManager.update(dt, elapsedTime, explorer.playerPos);
+  castleAndQuarryManager.update(
+    dt,
+    elapsedTime,
+    explorer.playerPos,
+    explorer.isSprintingNow()
+  );
 
   if (!hutManager.isInsideHut()) {
     chunkManager.update(px, py, pz, elapsedTime, false);

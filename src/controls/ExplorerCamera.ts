@@ -8,6 +8,7 @@ import { LandmarkManager } from '../world/LandmarkManager';
 import { FishingAndFishManager } from '../world/FishingAndFishManager';
 import { HuntingAndDeerManager } from '../world/HuntingAndDeerManager';
 import { HutManager } from '../world/HutManager';
+import { CastleAndQuarryManager } from '../world/CastleAndQuarryManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -61,6 +62,7 @@ export class ExplorerCamera {
   private fishingManager?: FishingAndFishManager;
   private huntingManager?: HuntingAndDeerManager;
   private hutManager?: HutManager;
+  private castleManager?: CastleAndQuarryManager;
   public lastAimForward = 0;
   public lastAimRight = 0;
 
@@ -99,6 +101,17 @@ export class ExplorerCamera {
     this.hutManager = hm;
   }
 
+  public setCastleAndQuarryManager(cm: CastleAndQuarryManager): void {
+    this.castleManager = cm;
+  }
+
+  public isSprintingNow(): boolean {
+    return (
+      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) &&
+      this.currentSpeed > 4.0
+    );
+  }
+
   public isAttackingOrAirborne(): boolean {
     return this.isSliding || this.heightAboveGround > 0.25;
   }
@@ -119,6 +132,12 @@ export class ExplorerCamera {
     }
     if (this.huntingManager?.isHuntingActive()) {
       return `🏹 Hunting (${this.huntingManager.deerHuntedCount} Hunted)`;
+    }
+    if (this.castleManager && this.castleManager.carriedChiseledBlocks > 0) {
+      return `🧱 Carrying ${this.castleManager.carriedChiseledBlocks} Castle Block${this.castleManager.carriedChiseledBlocks > 1 ? 's' : ''}`;
+    }
+    if (this.castleManager && this.castleManager.carriedRawStones > 0) {
+      return `🪨 Carrying ${this.castleManager.carriedRawStones} Natural Stone${this.castleManager.carriedRawStones > 1 ? 's' : ''}`;
     }
     if (this.isGliding) return '🪂 Wind Gliding';
     if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
@@ -389,6 +408,9 @@ export class ExplorerCamera {
     if (this.landmarkManager?.hasCampfireBuff()) {
       baseSpeed *= 1.2;
     }
+    if (this.castleManager) {
+      baseSpeed *= this.castleManager.getCarrySpeedMultiplier();
+    }
 
     if (this.mouseOverrideTimer > 0 && !this.isDragging) {
       this.mouseOverrideTimer = Math.max(0, this.mouseOverrideTimer - dt);
@@ -533,6 +555,7 @@ export class ExplorerCamera {
               0.38,
               this.heightAboveGround
             );
+            this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
           }
           const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
           if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {

@@ -40,6 +40,12 @@
             <button id="hunting-mode-toggle" type="button" title="Equip Bow &amp; Arrow from Backpack (H)">
               🏹 Hunt (H)
             </button>
+            <button id="quarry-place-btn" type="button" title="Set Up a Stone Quarry on Level Ground (Q)">
+              ⛏️ Quarry (Q)
+            </button>
+            <button id="castle-place-btn" type="button" title="Start Building a Castle on Level Ground (K)">
+              🏰 Castle (K)
+            </button>
             <button id="world-map-toggle" type="button" title="Open Discovered World Map (M)">
               🗺️ Map (M)
             </button>
@@ -48,6 +54,8 @@
             <span id="chests-value">0 Chests</span>
             <span class="dot-sep">•</span>
             <span id="artefacts-value">0 Artefacts</span>
+            <span class="dot-sep">•</span>
+            <span id="castle-milestone-pill">🏰 Castles: 0 • Milestones: 0</span>
             <span class="dot-sep">•</span>
             <span id="nearest-chest-hint">Scanning...</span>
           </div>
@@ -68,6 +76,37 @@
 
       <!-- Active Dwarven Hut Proximity / Interior HUD Banner -->
       <div id="hut-banner" class="hidden"></div>
+
+      <!-- Active Stone Quarry & Castle Block-by-Block Hint Banner -->
+      <div id="masonry-banner" class="hidden"></div>
+
+      <!-- Dwarven House Equipment Shop (Visible when inside a Dwarven House) -->
+      <div id="house-equipment-shop" class="hidden">
+        <div class="relic-shop-header">
+          <span>🏠 HOUSE EQUIPMENT SHOP</span>
+          <span class="relic-shop-sub">Keys 5–8</span>
+        </div>
+        <div id="house-equipment-list"></div>
+      </div>
+
+      <!-- Bottom-Left Backpack, Energy Bar & Food Rations HUD (matching art/castle.jpg & art/quarry.jpg) -->
+      <div id="energy-survival-hud" title="Energy &amp; Food Rations (Catch Fish with F or Hunt Deer with H for Food)">
+        <div class="backpack-badge">🎒</div>
+        <div class="energy-bars-wrap">
+          <div class="energy-top-row">
+            <span id="energy-bar-text">⚡ 100/100</span>
+            <span class="food-pill" title="Food Rations from Fishing &amp; Deer Hunting">
+              <span id="food-count-value">🍖 2</span>
+            </span>
+            <button id="eat-food-btn" type="button" title="Eat Food Ration to Restore Energy (G)">
+              🍖 Eat (<kbd>G</kbd>)
+            </button>
+          </div>
+          <div class="energy-bar-track">
+            <div id="energy-bar-fill" style="width: 100%"></div>
+          </div>
+        </div>
+      </div>
 
       <!-- Dwarven Relic Upgrades Shop (collapsed by default so it never clutters the screen) -->
       <div id="relic-shop" class="collapsed">
@@ -158,11 +197,14 @@
           <span><kbd>Shift</kbd> Sprint</span>
           <span><kbd>Space</kbd> Jump / Glide</span>
           <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
-          <span><kbd>E</kbd> Enter/Exit Hut</span>
+          <span><kbd>E</kbd> Lift Stone / Chisel / Build / House</span>
+          <span><kbd>Q</kbd> Set Up Quarry</span>
+          <span><kbd>K</kbd> Start Castle</span>
+          <span><kbd>G</kbd> Eat Food</span>
           <span><kbd>M</kbd> World Map</span>
-          <span><kbd>F</kbd> Fish Rod</span>
-          <span><kbd>H</kbd> Bow Hunt</span>
-          <span><kbd>1</kbd>-<kbd>4</kbd> Buy Relic</span>
+          <span><kbd>F</kbd> Fish (Food)</span>
+          <span><kbd>H</kbd> Hunt (Food)</span>
+          <span><kbd>5</kbd>-<kbd>8</kbd> House Shop</span>
           <span><kbd>B</kbd> Forge</span>
           <span><kbd>T</kbd> Waypoint</span>
           <span><kbd>N</kbd> Day/Night</span>
