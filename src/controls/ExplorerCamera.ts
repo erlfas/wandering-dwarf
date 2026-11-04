@@ -129,45 +129,18 @@ export class ExplorerCamera {
   }
 
   public getMovementStatus(): string {
-    if (this.castleInteriorManager?.isInsideCastle()) {
-      const visit = this.castleInteriorManager.getActiveCastleVisit();
-      const tierName =
-        visit?.tier === 3
-          ? 'Grand Citadel'
-          : visit?.tier === 2
-            ? 'Stonewall Stronghold'
-            : 'Border Keep';
-      return `🏰 Inside ${tierName} • 🛡️ Sanctuary`;
+    if (this.castleInteriorManager?.isInsideCastle() || this.hutManager?.isInsideHut()) {
+      return '';
     }
-    if (this.hutManager?.isInsideHut()) {
-      const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
-      return hasWarmth ? '🏠 Inside Hut • 🔥 Hearth Warmth' : '🏠 Inside Dwarven Hut';
-    }
-    if (this.fishingManager?.isFishingActive()) {
-      return `🎣 Fishing (${this.fishingManager.fishCaughtCount} Caught)`;
-    }
-    if (this.huntingManager?.isHuntingActive()) {
-      return `🏹 Hunting (${this.huntingManager.deerHuntedCount} Hunted)`;
-    }
-    if (this.castleManager && this.castleManager.carriedChiseledBlocks > 0) {
-      return `🧱 Carrying ${this.castleManager.carriedChiseledBlocks} Castle Block${this.castleManager.carriedChiseledBlocks > 1 ? 's' : ''}`;
-    }
-    if (this.castleManager && this.castleManager.carriedRawStones > 0) {
-      return `🪨 Carrying ${this.castleManager.carriedRawStones} Natural Stone${this.castleManager.carriedRawStones > 1 ? 's' : ''}`;
-    }
-    if (this.isGliding) return '🪂 Wind Gliding';
-    if (this.isSliding) return `🛡️ Slope Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
-    if (this.heightAboveGround > 0.35) return '⏫ Airborne';
+    if (this.isGliding) return '🪂 Gliding';
+    if (this.isSliding) return `🛡️ Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
     const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
     if (this.isTrailblazing && this.currentSpeed > 4.0) {
       const pct = this.relicStore?.has('strider_boots') ? '+45%' : '+25%';
-      return hasWarmth ? `⚡ Trailblazer (${pct}) • 🔥 Warmth` : `⚡ Trailblazer Path (${pct})`;
+      return hasWarmth ? `⚡ Trail (${pct}) • 🔥` : `⚡ Trail (${pct})`;
     }
     if (hasWarmth) {
-      return `🔥 Campfire Warmth (+20% Speed • ${Math.ceil(this.landmarkManager!.campfireBuffTimer)}s)`;
-    }
-    if (this.relicStore?.has('strider_boots') && this.currentSpeed > 10.0) {
-      return '🥾 Strider Sprint';
+      return `🔥 Warmth (${Math.ceil(this.landmarkManager!.campfireBuffTimer)}s)`;
     }
     return '';
   }

@@ -579,6 +579,12 @@ export class HutManager {
         }
       }
     });
+
+    document.getElementById('house-shop-exit-btn')?.addEventListener('click', () => {
+      if (this.activeHut) {
+        this.exitCurrentHut();
+      }
+    });
   }
 
   public setOnEnterHutCallback(cb: () => void): void {
@@ -1195,27 +1201,22 @@ export class HutManager {
       return;
     }
 
-    // 6. Update HUD banner while inside the hut
+    // 6. Update HUD banner while inside the hut (only show when artefact is still on pedestal; shop on right handles exit)
     const def = this.currentArtefactDef;
     if (!this.artefactCollectedInVisit) {
       this.setBanner(
         true,
-        `<span>🏠 <strong>Inside Dwarven House</strong> • <span class="hut-tag">${def.icon} ${def.name} (+${def.gold}g)</span> • 🛒 <strong>Buy Equipment (Keys 5–8)</strong></span>` +
-          `<button type="button" class="hut-action-pill exit">🚪 Exit House (E)</button>`
+        `<span>🏠 <strong>Dwarven House</strong> • Walk to pedestal to attune <span class="hut-tag">${def.icon} ${def.name} (+${def.gold}g)</span></span>`
       );
     } else {
-      this.setBanner(
-        true,
-        `<span>🏠 <strong>Inside Dwarven House</strong> • <span class="hut-tag collected">✅ ${def.name} Collected!</span> • 🛒 <strong>Buy Equipment (Keys 5–8)</strong></span>` +
-          `<button type="button" class="hut-action-pill exit">🚪 Exit House (E)</button>`
-      );
+      this.setBanner(false, '');
     }
   }
 
   public getNearestHutHint(playerPos: THREE.Vector3): string | null {
     if (this.activeHut) {
       return this.artefactCollectedInVisit
-        ? '🚪 Step to Door or Press E to Exit'
+        ? '🏠 Inside Dwarven House'
         : `✨ Collect ${this.currentArtefactDef.name}!`;
     }
     if (!this.nearestHut || !Number.isFinite(this.nearestHutDist)) return null;
@@ -1227,7 +1228,8 @@ export class HutManager {
 
   private syncArtefactHUD(): void {
     if (this.artefactsCountEl) {
-      this.artefactsCountEl.textContent = `${this.artefactsCollected} ${
+      this.artefactsCountEl.classList.toggle('hidden', this.artefactsCollected === 0);
+      this.artefactsCountEl.textContent = `• ✨ ${this.artefactsCollected} ${
         this.artefactsCollected === 1 ? 'Artefact' : 'Artefacts'
       }`;
     }

@@ -35,10 +35,28 @@ import {
 
 const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
+const timeReadout = document.getElementById('time-readout');
+const controlsHelpToggleBtn = document.getElementById('controls-help-toggle');
+const controlsHelpPopoverEl = document.getElementById('controls-help-popover');
+const controlsPopoverCloseBtn = document.getElementById('controls-popover-close');
 const compassNeedle = document.getElementById('compass-needle')!;
 const compassChestPointer = document.getElementById('compass-chest-pointer')!;
 const nearestChestHint = document.getElementById('nearest-chest-hint')!;
 const movementStatusPill = document.getElementById('movement-status-pill')!;
+
+function toggleControlsHelpPopover(forceState?: boolean): void {
+  if (!controlsHelpPopoverEl) return;
+  const isHidden = controlsHelpPopoverEl.classList.contains('hidden');
+  const nextOpen = forceState !== undefined ? forceState : isHidden;
+  controlsHelpPopoverEl.classList.toggle('hidden', !nextOpen);
+  controlsHelpToggleBtn?.classList.toggle('active', nextOpen);
+}
+controlsHelpToggleBtn?.addEventListener('click', () => {
+  toggleControlsHelpPopover();
+});
+controlsPopoverCloseBtn?.addEventListener('click', () => {
+  toggleControlsHelpPopover(false);
+});
 
 // 1. Scene & Atmospheric Mist (matching distant misty hills in the concept art)
 const scene = new THREE.Scene();
@@ -1078,6 +1096,9 @@ window.addEventListener('keydown', (e) => {
     setGameMenuOpen(!isGameMenuOpen());
   } else if (e.code === 'KeyJ') {
     assignmentManager.togglePanelExpanded();
+  } else if (e.code === 'Slash' || e.code === 'F1') {
+    if (e.code === 'F1') e.preventDefault();
+    toggleControlsHelpPopover();
   } else if (e.code === 'KeyV' && !e.shiftKey) {
     assignmentManager.tryBlowWarhorn();
   } else if (e.code === 'Escape') {
@@ -1165,6 +1186,10 @@ function animate(): void {
     explorer.isSprintingNow()
   );
   trollCombatManager.update(dt, elapsedTime, explorer.playerPos, camera.position);
+  bgm.setNightDangerMode(
+    !insideInterior && (trollCombatManager.isNightNow() || trollCombatManager.hasActiveTrolls()),
+    !insideInterior && trollCombatManager.isTrollAggroOnPlayer(explorer.playerPos)
+  );
   assignmentManager.update(dt);
 
   if (!insideInterior) {
@@ -1240,9 +1265,9 @@ function animate(): void {
     const hutHint = hutManager.getNearestHutHint(explorer.playerPos);
     const activeCastleVisit = castleInteriorManager.getActiveCastleVisit();
     const nextHint = activeCastleVisit
-      ? `🏰 Inside ${activeCastleVisit.name} (Tier ${activeCastleVisit.tier}) — Safe Sanctuary!`
+      ? `🏰 ${activeCastleVisit.name} (Tier ${activeCastleVisit.tier})`
       : hutManager.isInsideHut()
-        ? (hutHint ?? 'Inside Dwarven Hut')
+        ? (hutHint ?? '🏠 Inside Dwarven House')
         : nearest
           ? hutHint
             ? `${nearest.label} • ${hutHint}`
@@ -1300,8 +1325,13 @@ function animate(): void {
       lastActiveChunks = activeChunks;
       const hrs = Math.floor(qTimeMins / 60) % 24;
       const mins = qTimeMins % 60;
-      const timeIcon = hrs >= 6 && hrs < 19 ? '☀️' : '🌙';
+      const isTrollNight = trollCombatManager.isNightNow();
+      const timeIcon = isTrollNight ? '👹🌙' : hrs >= 6 && hrs < 19 ? '☀️' : '🌙';
       const timeStr = `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')} ${timeIcon}`;
+      if (timeReadout) {
+        timeReadout.textContent = timeStr;
+        timeReadout.classList.toggle('night-danger', isTrollNight);
+      }
       const nextCoords = `${timeStr} | Pos: (${(qPx * 0.1).toFixed(1)}, ${(qPz * 0.1).toFixed(1)}) | Elev: ${(qPy * 0.1).toFixed(1)}m | Chunks: ${activeChunks}`;
       if (nextCoords !== lastCoordsText) {
         lastCoordsText = nextCoords;

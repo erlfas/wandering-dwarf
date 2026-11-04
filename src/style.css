@@ -324,26 +324,23 @@ body {
   transform: translateY(-1px);
 }
 
-/* Active Traversal Status Pill */
+/* Active Traversal Status Pill (inline inside #treasure-hud .sub-row) */
 #movement-status-pill {
-  position: absolute;
-  top: 20px;
-  left: 530px;
+  display: inline-flex;
+  align-items: center;
   background: rgba(22, 34, 24, 0.92);
-  border: 1px solid rgba(134, 239, 172, 0.5);
+  border: 1px solid rgba(134, 239, 172, 0.55);
   color: #bbf7d0;
-  font-size: 11px;
+  font-size: 9.5px;
   font-weight: 700;
-  padding: 4px 10px;
+  padding: 0 7px;
   border-radius: 999px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  margin-left: 4px;
 }
 
-#movement-status-pill.hidden {
-  opacity: 0;
-  transform: translateY(-6px);
-  pointer-events: none;
+#movement-status-pill.hidden,
+.sub-row .hidden {
+  display: none !important;
 }
 
 /* Compact Dwarven Relic Forge Popover (hidden by default, toggle with B) */
@@ -461,12 +458,12 @@ body {
 /* Unlocked Watchtower Beacon Fast-Travel Bar */
 #waypoint-bar {
   position: absolute;
-  bottom: 162px;
-  left: 22px;
+  bottom: 98px;
+  left: 16px;
   background: rgba(20, 25, 31, 0.92);
   border: 1px solid rgba(255, 183, 3, 0.38);
   border-radius: 10px;
-  padding: 7px 11px;
+  padding: 6px 10px;
   color: #fff6e0;
   pointer-events: auto;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
@@ -507,17 +504,87 @@ body {
   transform: translateY(-1px);
 }
 
-/* Bottom-left status & controls badge */
+/* Compact Bottom-Right Time, Music & Controls Toggle Badge */
 #stats-badge {
   position: absolute;
-  bottom: 20px;
-  left: 22px;
-  background: rgba(20, 25, 31, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
+  bottom: 14px;
+  right: 16px;
+  left: auto;
+  z-index: 16;
+  pointer-events: auto;
+}
+
+.stats-compact-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(20, 25, 31, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: #f0f4f8;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.time-pill {
+  font-family: 'Consolas', 'SF Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffe89e;
+  padding: 0 4px;
+}
+
+.time-pill.night-danger {
+  color: #ff99ac;
+  text-shadow: 0 0 8px rgba(239, 35, 60, 0.55);
+}
+
+.controls-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: min(520px, calc(100vw - 32px));
+  background: rgba(18, 23, 29, 0.96);
+  border: 1px solid rgba(255, 212, 82, 0.4);
+  border-radius: 11px;
   padding: 10px 14px;
   color: #f0f4f8;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.controls-popover.hidden {
+  display: none;
+}
+
+.controls-close-btn {
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#controls-help-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #e2e8f0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+#controls-help-toggle:hover,
+#controls-help-toggle.active {
+  background: rgba(255, 212, 82, 0.24);
+  border-color: rgba(255, 212, 82, 0.6);
+  color: #ffffff;
 }
 
 .badge-header {
@@ -552,6 +619,18 @@ body {
   background: rgba(111, 207, 124, 0.3);
 }
 
+#music-toggle.night-danger {
+  background: rgba(239, 35, 60, 0.24);
+  border-color: rgba(255, 117, 143, 0.72);
+  color: #ffccd5;
+  box-shadow: 0 0 10px rgba(239, 35, 60, 0.28);
+}
+
+#music-toggle.night-danger:hover {
+  background: rgba(239, 35, 60, 0.42);
+  color: #ffffff;
+}
+
 #music-toggle.paused {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.22);
@@ -560,16 +639,16 @@ body {
 
 #coords-readout {
   font-family: 'Consolas', 'SF Mono', monospace;
-  font-size: 12px;
-  color: #ffffff;
+  font-size: 11px;
+  color: #a8e6b0;
   margin-bottom: 8px;
 }
 
 .controls-hint {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  font-size: 11px;
+  gap: 6px 10px;
+  font-size: 10.5px;
   color: #cbd5e1;
 }
 
@@ -1126,25 +1205,25 @@ kbd {
 /* Active Stone Quarry & Castle Block-by-Block Hint Banner (Docked at Top-Right so it never blocks the center view) */
 #masonry-banner {
   position: absolute;
-  top: 44px;
+  top: 46px;
   right: 16px;
   left: auto;
   transform: none;
-  width: min(415px, 44vw);
+  width: min(335px, 38vw);
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 5px;
-  background: linear-gradient(135deg, rgba(24, 30, 38, 0.95), rgba(16, 20, 26, 0.95));
-  border: 1.5px solid rgba(114, 239, 221, 0.68);
+  gap: 4px;
+  background: linear-gradient(135deg, rgba(24, 30, 38, 0.94), rgba(16, 20, 26, 0.95));
+  border: 1px solid rgba(114, 239, 221, 0.6);
   color: #f8f9fa;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 8px 12px;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.44), 0 0 14px rgba(72, 202, 228, 0.18);
+  padding: 6px 10px;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   white-space: normal;
-  line-height: 1.35;
+  line-height: 1.3;
   pointer-events: auto;
 }
 
@@ -1156,7 +1235,7 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
 
 .masonry-main-row > span {
@@ -1172,33 +1251,32 @@ kbd {
 .castle-progress-strip {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 5px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  gap: 3px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .castle-progress-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  font-size: 10.5px;
+  gap: 6px;
+  font-size: 10px;
   color: #e9ecef;
 }
 
 .castle-left-highlight {
   color: #ffd166;
   background: rgba(255, 209, 102, 0.16);
-  border: 1px solid rgba(255, 209, 102, 0.5);
+  border: 1px solid rgba(255, 209, 102, 0.45);
   border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 10px;
+  padding: 0 6px;
+  font-size: 9.5px;
 }
 
 .castle-progress-track {
   width: 100%;
-  height: 6px;
+  height: 5px;
   background: rgba(10, 14, 18, 0.85);
   border: 1px solid rgba(144, 224, 239, 0.35);
   border-radius: 999px;
@@ -1212,52 +1290,13 @@ kbd {
   transition: width 0.22s ease;
 }
 
-.castle-tier-roadmap {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px;
-  font-size: 9.5px;
-  margin-top: 1px;
-}
-
-.castle-tier-step {
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-weight: 700;
-}
-
-.castle-tier-step.done {
-  background: rgba(82, 183, 136, 0.24);
-  border: 1px solid rgba(149, 213, 178, 0.65);
-  color: #b7e4c7;
-}
-
-.castle-tier-step.active {
-  background: rgba(72, 202, 228, 0.24);
-  border: 1px solid rgba(144, 224, 239, 0.85);
-  color: #caf0f8;
-}
-
-.castle-tier-step.locked {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #adb5bd;
-}
-
-.tier-arrow {
-  color: rgba(255, 209, 102, 0.7);
-  font-size: 10px;
-}
-
 .masonry-tag {
   display: inline-block;
-  padding: 1px 8px;
+  padding: 0 6px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  margin: 0 3px;
+  margin: 0 2px;
   background: rgba(255, 209, 102, 0.22);
   border: 1px solid rgba(255, 209, 102, 0.65);
   color: #ffe066;
@@ -1284,13 +1323,13 @@ kbd {
 /* Dwarven House Equipment Shop (Visible inside Dwarven Houses) */
 #house-equipment-shop {
   position: absolute;
-  top: 108px;
-  right: 22px;
-  width: 265px;
+  top: 48px;
+  right: 16px;
+  width: 250px;
   background: rgba(26, 20, 14, 0.95);
   border: 1.5px solid rgba(255, 209, 102, 0.58);
   border-radius: 10px;
-  padding: 9px 10px;
+  padding: 8px 9px;
   color: #fff6e0;
   pointer-events: auto;
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.48), 0 0 18px rgba(255, 183, 3, 0.2);
@@ -1303,23 +1342,27 @@ kbd {
 #house-equipment-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
-.eq-sub-desc {
-  font-size: 8.5px;
-  font-weight: 500;
-  color: #d8ccb8;
-  white-space: normal;
-  line-height: 1.2;
-  margin-top: 1px;
+.interior-shop-actions {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  justify-content: flex-end;
 }
 
-/* Bottom-Left Backpack, Health Bar, Strength/Energy Bar & Food Rations HUD (matching art/gameplay_protect_against_enemy.jpg) */
+.interior-shop-actions .hut-action-pill {
+  width: 100%;
+  text-align: center;
+}
+
+/* Bottom-Left Backpack, Health Bar, Strength/Energy Bar & Food Rations HUD */
 #energy-survival-hud {
   position: absolute;
-  bottom: 148px;
-  left: 22px;
+  bottom: 14px;
+  left: 16px;
   z-index: 15;
   display: flex;
   align-items: center;
@@ -1327,7 +1370,7 @@ kbd {
   background: rgba(24, 20, 15, 0.94);
   border: 1.5px solid rgba(149, 213, 178, 0.65);
   border-radius: 11px;
-  padding: 7px 12px;
+  padding: 6px 11px;
   color: #fff8e7;
   pointer-events: auto;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
@@ -1351,12 +1394,12 @@ kbd {
 }
 
 .backpack-badge {
-  font-size: 22px;
+  font-size: 20px;
   background: radial-gradient(circle, rgba(138, 90, 54, 0.55), rgba(68, 42, 24, 0.75));
   border: 1.5px solid rgba(255, 209, 102, 0.55);
   border-radius: 8px;
-  width: 38px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1366,16 +1409,16 @@ kbd {
 .energy-bars-wrap {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 245px;
+  gap: 3px;
+  min-width: 230px;
 }
 
 .energy-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
+  gap: 6px;
+  font-size: 10.5px;
   font-weight: 800;
 }
 
@@ -1393,7 +1436,7 @@ kbd {
   border-radius: 999px;
   padding: 1px 7px;
   color: #ffe89e;
-  font-size: 10.5px;
+  font-size: 10px;
 }
 
 #eat-food-btn {
@@ -1416,7 +1459,7 @@ kbd {
 .health-bar-track,
 .energy-bar-track {
   width: 100%;
-  height: 7px;
+  height: 6px;
   background: rgba(15, 18, 22, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
@@ -1438,7 +1481,7 @@ kbd {
 }
 
 #combat-gear-badge {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #ffe89e;
   letter-spacing: 0.2px;
@@ -1450,62 +1493,94 @@ kbd {
   font-weight: 800;
 }
 
-/* Castle Armory & Tavern Shop (Visible inside Tier I / II / III Castles) */
+/* Castle Armory & Tavern Shop (Unified Single Panel inside Tier I / II / III Castles) */
 #castle-armory-shop {
   position: absolute;
-  top: 96px;
-  right: 22px;
-  width: 295px;
-  max-height: calc(100vh - 205px);
+  top: 48px;
+  right: 16px;
+  width: 268px;
+  max-height: calc(100vh - 100px);
   overflow-y: auto;
-  background: rgba(24, 19, 15, 0.96);
-  border: 1.5px solid rgba(255, 209, 102, 0.68);
+  background: rgba(24, 19, 15, 0.95);
+  border: 1.5px solid rgba(255, 209, 102, 0.62);
   border-radius: 11px;
-  padding: 9px 10px;
+  padding: 8px 10px;
   color: #fff6e0;
   pointer-events: auto;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 22px rgba(255, 183, 3, 0.22);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.52);
 }
 
 #castle-armory-shop.hidden {
   display: none;
 }
 
+.castle-sanctuary-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sanctuary-pill {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #b7e4c7;
+  background: rgba(82, 183, 136, 0.18);
+  border: 1px solid rgba(149, 213, 178, 0.5);
+  border-radius: 6px;
+  padding: 2px 7px;
+  text-align: center;
+}
+
+.castle-sanctuary-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.castle-sanctuary-btns .hut-action-pill {
+  padding: 3px 6px;
+  font-size: 10px;
+  text-align: center;
+}
+
 #castle-armory-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
-.armory-tier-badge {
-  display: inline-block;
-  font-size: 8px;
-  font-weight: 800;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: rgba(72, 202, 228, 0.22);
-  border: 1px solid rgba(144, 224, 239, 0.55);
-  color: #caf0f8;
-  margin-left: 3px;
+.armory-locked-hint {
+  font-size: 9.5px;
+  color: #adb5bd;
+  text-align: center;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  margin-top: 2px;
 }
 
-/* Nighttime Troll-Beast Defeat Tracker Banner (Top-Center HUD) */
+.armory-locked-hint.hidden {
+  display: none;
+}
+
+/* Compact Single-Line Nighttime Troll-Beast Combat Pill (Top-Center HUD) */
 #troll-combat-banner {
   position: absolute;
-  top: 72px;
+  top: 66px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(690px, 92vw);
-  background: linear-gradient(160deg, rgba(42, 14, 18, 0.96), rgba(22, 14, 18, 0.97));
-  border: 1.5px solid rgba(239, 35, 60, 0.78);
-  border-radius: 12px;
-  padding: 8px 14px;
+  width: auto;
+  max-width: 92vw;
+  background: rgba(34, 14, 18, 0.92);
+  border: 1px solid rgba(239, 35, 60, 0.72);
+  border-radius: 999px;
+  padding: 5px 12px;
   color: #fff0f3;
   pointer-events: auto;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 20px rgba(239, 35, 60, 0.28);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   z-index: 18;
 }
 
@@ -1513,51 +1588,50 @@ kbd {
   display: none;
 }
 
-.troll-tracker-header {
+.troll-tracker-compact {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 12px;
+  gap: 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.troll-compact-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .troll-dist-badge {
   display: inline-block;
-  padding: 1px 7px;
+  padding: 0 6px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
   background: rgba(255, 183, 3, 0.2);
   border: 1px solid rgba(255, 209, 102, 0.6);
   color: #ffd166;
-  margin-left: 4px;
-}
-
-.troll-hp-readout {
-  font-size: 11.5px;
-  color: #ffccd5;
 }
 
 .troll-hits-left-pill {
   display: inline-block;
-  padding: 1px 8px;
+  padding: 0 7px;
   border-radius: 999px;
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 800;
-  background: rgba(239, 35, 60, 0.32);
-  border: 1px solid rgba(255, 117, 143, 0.8);
+  background: rgba(239, 35, 60, 0.28);
+  border: 1px solid rgba(255, 117, 143, 0.75);
   color: #ffffff;
-  margin-left: 4px;
 }
 
 .troll-hp-bar-track {
-  width: 100%;
-  height: 10px;
+  width: 78px;
+  height: 7px;
   background: rgba(10, 10, 14, 0.9);
   border: 1px solid rgba(255, 117, 143, 0.5);
   border-radius: 999px;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .troll-hp-bar-fill {
@@ -1565,26 +1639,6 @@ kbd {
   background: linear-gradient(90deg, #d90429, #ef233c, #ff758f);
   border-radius: 999px;
   transition: width 0.14s ease;
-}
-
-.troll-combat-hint-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 11px;
-  color: #f8f9fa;
-}
-
-.troll-warning-tag {
-  color: #ffd166;
-  font-weight: 800;
-}
-
-.troll-ok-tag {
-  color: #95d5b2;
-  font-weight: 700;
 }
 
 /* Game Menu Toggle Button & Modal (Save Game, Load Game, Restart Game) */
@@ -1863,21 +1917,41 @@ kbd {
 
 #assignment-hud {
   position: absolute;
-  top: 120px;
+  top: 72px;
   left: 16px;
-  width: min(315px, calc(100vw - 32px));
-  background: linear-gradient(155deg, rgba(26, 20, 14, 0.92), rgba(16, 13, 10, 0.94));
+  width: min(295px, calc(100vw - 32px));
+  background: linear-gradient(155deg, rgba(26, 20, 14, 0.90), rgba(16, 13, 10, 0.92));
   border: 1.5px solid rgba(255, 209, 102, 0.58);
   border-radius: 12px;
-  padding: 9px 11px;
+  padding: 7px 10px;
   color: #fff6e0;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.48);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(5px);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 5px;
   z-index: 18;
+  transition: width 0.16s ease, padding 0.16s ease;
+}
+
+#assignment-hud.collapsed {
+  width: min(235px, calc(100vw - 32px));
+  padding: 6px 9px;
+  gap: 4px;
+}
+
+.assignment-compact-summary {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #f1e6d2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assignment-compact-summary.hidden {
+  display: none;
 }
 
 .assignment-hud-header {
@@ -2069,6 +2143,12 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.assignment-blessings-box.hidden,
+.assignment-warhorn-btn.hidden,
+.assignment-hud-body.hidden {
+  display: none;
 }
 
 .assignment-blessings-label {

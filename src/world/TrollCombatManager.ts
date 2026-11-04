@@ -590,6 +590,27 @@ export class TrollCombatManager {
     return hour >= 19.5 || hour < 5.5;
   }
 
+  public hasActiveTrolls(): boolean {
+    for (let i = 0; i < this.trollPool.length; i++) {
+      const t = this.trollPool[i];
+      if (t.active && t.state !== 'dying') return true;
+    }
+    return false;
+  }
+
+  public isTrollAggroOnPlayer(playerPos: THREE.Vector3): boolean {
+    for (let i = 0; i < this.trollPool.length; i++) {
+      const t = this.trollPool[i];
+      if (!t.active || t.state === 'dying') continue;
+      if (t.state === 'chase' || t.state === 'attack') {
+        const dx = playerPos.x - t.pos.x;
+        const dz = playerPos.z - t.pos.z;
+        if (dx * dx + dz * dz <= 40 * 40) return true;
+      }
+    }
+    return false;
+  }
+
   public spawnNightTrollsAroundPlayer(playerPos: THREE.Vector3, announce = false): void {
     this.loadTrollGlbModel();
     const minLandY = this.config.enableWater ? this.config.waterLevel + 0.45 : -999;
@@ -1195,7 +1216,9 @@ export class TrollCombatManager {
   }
 
   private updateTrackerBanner(nearestTroll: TrollInstance | null, dist: number): void {
-    if (!nearestTroll || dist > 38.0) {
+    const isAggro =
+      nearestTroll !== null && (nearestTroll.state === 'chase' || nearestTroll.state === 'attack');
+    if (!nearestTroll || dist > 28.0 || (!isAggro && dist > 14.0)) {
       this.setBanner(false, '');
       return;
     }
@@ -1207,31 +1230,18 @@ export class TrollCombatManager {
     const hpPct = Math.max(0, Math.min(100, Math.round((nearestTroll.hp / nearestTroll.maxHp) * 100)));
 
     const isLowStrength = stats.energy < 15;
-    const strengthBadge = isLowStrength
-      ? `<span class="troll-strength-pill danger">⚠️ LOW STRENGTH (${Math.round(stats.energy)}⚡) — Easily Defeated! Eat Food (G)!</span>`
-      : `<span class="troll-strength-pill ok">💪 Strength: ${Math.round(stats.energy)}⚡ • ${stats.weaponIcon} ${stats.weaponName} (${effDmg} DMG)</span>`;
-
-    const stateLabel =
-      nearestTroll.state === 'attack'
-        ? '💥 SMASHING!'
-        : nearestTroll.state === 'chase'
-          ? `🏃 Charging (${TROLL_RUN_SPEED}m/s — You Run Faster!)`
-          : '🐾 Prowling';
+    const stateIcon =
+      nearestTroll.state === 'attack' ? '💥' : nearestTroll.state === 'chase' ? '🏃' : '👹';
 
     const html =
-      `<div class="troll-tracker-wrap">` +
-      `<div class="troll-tracker-top">` +
-      `<span>👹 <strong>${nearestTroll.title}</strong> (${Math.round(dist)}m • ${stateLabel})</span>` +
-      `<span class="troll-hits-badge">🎯 <strong>${hitsLeft} Hit${hitsLeft === 1 ? '' : 's'} Left</strong> (${nearestTroll.hp}/${nearestTroll.maxHp} HP • ${hpPct}%)</span>` +
-      `<div class="troll-tracker-actions">` +
-      `<button type="button" class="hut-action-pill troll-action-attack">⚔️ Strike (Click / X)</button>` +
-      (stats.foodCount > 0 && stats.energy < stats.maxEnergy - 5
-        ? `<button type="button" class="hut-action-pill troll-action-eat">🍖 Eat Food (G)</button>`
+      `<div class="troll-tracker-compact">` +
+      `<span class="troll-compact-name">${stateIcon} <strong>${nearestTroll.title}</strong> <span class="troll-dist-badge">${Math.round(dist)}m</span></span>` +
+      `<div class="troll-hp-bar-track" title="${nearestTroll.hp}/${nearestTroll.maxHp} HP (${hitsLeft} hits left)"><div class="troll-hp-bar-fill" style="width:${hpPct}%"></div></div>` +
+      `<span class="troll-hits-left-pill">${hitsLeft} hit${hitsLeft === 1 ? '' : 's'}</span>` +
+      `<button type="button" class="hut-action-pill troll-action-attack">⚔️ Strike (X)</button>` +
+      (isLowStrength && stats.foodCount > 0
+        ? `<button type="button" class="hut-action-pill troll-action-eat">🍖 Eat (G)</button>`
         : '') +
-      `</div>` +
-      `</div>` +
-      `<div class="troll-hp-bar-track"><div class="troll-hp-bar-fill" style="width:${hpPct}%"></div></div>` +
-      `<div class="troll-tracker-sub">${strengthBadge}<span>🏃 Escape Tip: You walk (6m/s) &amp; sprint (11m/s) faster than the Troll — Enter any Castle (<kbd>E</kbd>) for safety!</span></div>` +
       `</div>`;
 
     this.setBanner(true, html);
@@ -1251,7 +1261,8 @@ export class TrollCombatManager {
 
   public syncTrollsSlainHUD(): void {
     if (!this.trollsSlainHudEl) return;
-    const text = `👹 ${this.trollsSlain} Troll${this.trollsSlain === 1 ? '' : 's'}`;
+    this.trollsSlainHudEl.classList.toggle('hidden', this.trollsSlain === 0);
+    const text = `• 👹 ${this.trollsSlain} Troll${this.trollsSlain === 1 ? '' : 's'}`;
     if (text !== this.lastTrollsSlainText) {
       this.lastTrollsSlainText = text;
       this.trollsSlainHudEl.textContent = text;

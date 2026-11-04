@@ -2542,6 +2542,13 @@ export class CastleAndQuarryManager {
       this.eatFood(false);
     });
 
+    document.getElementById('castle-shop-rest-btn')?.addEventListener('click', () => {
+      this.onRequestRestUntilDawn?.();
+    });
+    document.getElementById('castle-shop-exit-btn')?.addEventListener('click', () => {
+      this.onRequestExitCastle?.();
+    });
+
     this.masonryBannerEl?.addEventListener('click', (e) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
@@ -3716,22 +3723,7 @@ export class CastleAndQuarryManager {
         this.health = Math.min(maxH, this.health + 4.0 * dt);
         this.syncEnergyAndFoodHUD();
       }
-
-      const visit = this.getActiveCastleVisitFn();
-      const tierLabel =
-        visit?.tier === 3
-          ? "Tier III Mountain King's Grand Citadel"
-          : visit?.tier === 2
-            ? 'Tier II Stonewall Stronghold'
-            : 'Tier I Dwarven Border Keep';
-      const bannerHtml =
-        `<div class="masonry-main-row">` +
-        `<span>🏰 <strong>Inside ${visit?.name ?? 'Castle'} (${tierLabel})</strong> • 🛡️ <span class="masonry-tag level-ok">Sanctuary Safe from Night Trolls</span> • Buy Weapons, Shields &amp; Food (<kbd>5</kbd>–<kbd>=</kbd>)</span>` +
-        `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
-        `<button type="button" class="hut-action-pill masonry-action-rest-dawn">☀️ Rest Until Dawn (R)</button>` +
-        `<button type="button" class="hut-action-pill masonry-action-exit-castle">🚪 Step Outside (E / Esc)</button>` +
-        `</div></div>`;
-      this.setBanner(true, bannerHtml);
+      this.setBanner(false, '');
       return;
     }
 
@@ -4075,35 +4067,15 @@ export class CastleAndQuarryManager {
     const tierTotal = activeM.blocksRequired - prevReq;
     const tierDone = Math.max(0, Math.min(tierTotal, b - prevReq));
     const blocksLeftInTier = Math.max(0, activeM.blocksRequired - b);
-    const blocksLeftTotal = Math.max(0, 30 - b);
     const tierPct = Math.round((tierDone / Math.max(1, tierTotal)) * 100);
-
-    const t1Done = b >= 8;
-    const t2Done = b >= 18;
-    const t3Done = b >= 30;
-
-    const pill1 = t1Done
-      ? `<span class="castle-tier-step done">✅ Tier I Keep (8/8)</span>`
-      : `<span class="castle-tier-step active">🔨 Tier I Keep (${b}/8 • ${8 - b} left)</span>`;
-    const pill2 = t2Done
-      ? `<span class="castle-tier-step done">✅ Tier II Stronghold (18/18)</span>`
-      : t1Done
-        ? `<span class="castle-tier-step active">🔨 Tier II Stronghold (${b - 8}/10 • ${18 - b} left)</span>`
-        : `<span class="castle-tier-step locked">🔒 Tier II Stronghold (+10)</span>`;
-    const pill3 = t3Done
-      ? `<span class="castle-tier-step done">👑 Tier III Citadel (30/30)</span>`
-      : t2Done
-        ? `<span class="castle-tier-step active">🔨 Tier III Citadel (${b - 18}/12 • ${30 - b} left)</span>`
-        : `<span class="castle-tier-step locked">🔒 Tier III Citadel (+12)</span>`;
 
     return (
       `<div class="castle-progress-strip">` +
       `<div class="castle-progress-header">` +
-      `<span>🏗️ <strong>${activeM.title}:</strong> ${tierDone}/${tierTotal} Tier Blocks (${b}/30 Total)</span>` +
-      `<span class="castle-left-highlight">⏳ <strong>${blocksLeftInTier} Block${blocksLeftInTier === 1 ? '' : 's'} Left</strong> for ${activeM.title} (${blocksLeftTotal} left for Grand Citadel)</span>` +
+      `<span>🏗️ <strong>${activeM.title}:</strong> ${b}/${activeM.blocksRequired} Blocks</span>` +
+      `<span class="castle-left-highlight">${blocksLeftInTier} left</span>` +
       `</div>` +
       `<div class="castle-progress-track"><div class="castle-progress-fill" style="width:${tierPct}%"></div></div>` +
-      `<div class="castle-tier-roadmap">${pill1}<span class="tier-arrow">➔</span>${pill2}<span class="tier-arrow">➔</span>${pill3}</div>` +
       `</div>`
     );
   }
@@ -4131,11 +4103,11 @@ export class CastleAndQuarryManager {
         if (!activeCastle) {
           const levelHere = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
           const levelBadge = levelHere.isLevel
-            ? `<span class="masonry-tag level-ok">✅ Level Ground</span>`
-            : `<span class="masonry-tag level-steep">⛰️ Sloped Ground</span>`;
+            ? `<span class="masonry-tag level-ok">✅ Level</span>`
+            : `<span class="masonry-tag level-steep">⛰️ Steep</span>`;
           bannerHtml =
-            `<div class="masonry-main-row"><span>🧱 <strong>Carrying ${this.carriedChiseledBlocks} Castle Block${this.carriedChiseledBlocks > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to a Level Place &amp; Press <kbd>K</kbd> to Start Building a Castle!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
+            `<div class="masonry-main-row"><span>🧱 <strong>${this.carriedChiseledBlocks} Block${this.carriedChiseledBlocks > 1 ? 's' : ''}</strong> • ${levelBadge} Press <kbd>K</kbd> to Start Castle</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Castle (K)</button></div>`;
         } else {
           const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
           const dropX = activeCastle.x + nextSlot.groundDropLocal.x;
@@ -4145,19 +4117,16 @@ export class CastleAndQuarryManager {
           guideColor = 0x48cae4;
           const dist = Math.hypot(dropX - px, dropZ - pz);
           const dir = formatCompassDir(dropX - px, dropZ - pz);
-          const milestone =
-            CASTLE_MILESTONES.find((m) => activeCastle.blocksPlaced < m.blocksRequired) ??
-            CASTLE_MILESTONES[CASTLE_MILESTONES.length - 1];
 
           if (dist <= 4.8 || Math.hypot(activeCastle.x - px, activeCastle.z - pz) <= 8.8) {
             bannerHtml =
-              `<div class="masonry-main-row"><span>🏰 <strong>${activeCastle.name}</strong> • <span class="masonry-tag hint">📍 NEXT BLOCK (#${activeCastle.blocksPlaced + 1}/${milestone.blocksRequired}): ${nextSlot.label} (${nextSlot.hintLocation})</span></span>` +
-              `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block Now (E)</button></div>` +
+              `<div class="masonry-main-row"><span>🏰 <strong>${nextSlot.label}</strong></span>` +
+              `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block (E)</button></div>` +
               this.buildCastleProgressStripHtml(activeCastle);
           } else {
             bannerHtml =
-              `<div class="masonry-main-row"><span>🧭 <strong>BLOCK PLACEMENT HINT:</strong> Carry Block <strong>${dist.toFixed(0)}m ${dir}</strong> to <span class="masonry-tag hint">📍 ${nextSlot.label} (${nextSlot.hintLocation})</span> on ${activeCastle.name}</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-castle">🏰 New Castle (K)</button></div>` +
+              `<div class="masonry-main-row"><span>🧭 Carry Block <strong>${dist.toFixed(0)}m ${dir}</strong> → <span class="masonry-tag hint">${nextSlot.label}</span></span>` +
+              `</div>` +
               this.buildCastleProgressStripHtml(activeCastle);
           }
         }
@@ -4167,11 +4136,11 @@ export class CastleAndQuarryManager {
         if (!nearestQuarry) {
           const levelHere = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
           const levelBadge = levelHere.isLevel
-            ? `<span class="masonry-tag level-ok">✅ Level Ground</span>`
-            : `<span class="masonry-tag level-steep">⛰️ Sloped Ground</span>`;
+            ? `<span class="masonry-tag level-ok">✅ Level</span>`
+            : `<span class="masonry-tag level-steep">⛰️ Steep</span>`;
           bannerHtml =
-            `<div class="masonry-main-row"><span>🪨 <strong>Carrying ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to any Level Place &amp; Press <kbd>Q</kbd> to Set Up a Quarry!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button></div>`;
+            `<div class="masonry-main-row"><span>🪨 <strong>${this.carriedRawStones} Stone${this.carriedRawStones > 1 ? 's' : ''}</strong> • ${levelBadge} Press <kbd>Q</kbd> for Quarry</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Quarry (Q)</button></div>`;
         } else {
           guideTargetX = nearestQuarry.x;
           guideTargetZ = nearestQuarry.z;
@@ -4180,77 +4149,57 @@ export class CastleAndQuarryManager {
           const dir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
           if (dist <= 4.8) {
             bannerHtml =
-              `<div class="masonry-main-row"><span>⛏️ <strong>At Stone Quarry Workbench</strong> • Ready to chisel ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''} into Castle Blocks!</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel into Blocks (E)</button></div>` +
+              `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Workbench</strong> (${this.carriedRawStones}🪨)</span>` +
+              `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel (E)</button></div>` +
               (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
           } else {
             bannerHtml =
-              `<div class="masonry-main-row"><span>🧭 <strong>QUARRY HINT:</strong> Carry Stone <strong>${dist.toFixed(0)}m ${dir}</strong> to your <span class="masonry-tag">⛏️ Quarry Workbench</span> and press <kbd>E</kbd> to chisel into Blocks!</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ New Quarry Here (Q)</button></div>` +
-              (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
+              `<div class="masonry-main-row"><span>🧭 Carry Stone <strong>${dist.toFixed(0)}m ${dir}</strong> → <span class="masonry-tag">⛏️ Quarry</span></span>` +
+              `</div>`;
           }
         }
       }
-      // Case 3: Empty-handed -> Check if standing at a Castle Drawbridge, Quarry with blocks, a Natural Stone, or show Castle/Quarry hint
+      // Case 3: Empty-handed -> Only show banner when actually near a Castle door, Quarry, Rock, or within 18m of an active Castle
       else {
         const enterable = this.getNearestEnterableCastle(px, pz);
+        const quarryDist = nearestQuarry ? Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz) : Infinity;
+        const castleDist = activeCastle ? Math.hypot(activeCastle.x - px, activeCastle.z - pz) : Infinity;
+        const nearestRock = this.getNearestNaturalRock(px, pz);
+
         if (enterable && enterable.doorDist <= 6.2) {
           const tier = this.getCompletedMilestoneTier(enterable.castle.blocksPlaced);
-          const tierTitle =
-            tier === 3
-              ? "Mountain King's Grand Citadel"
-              : tier === 2
-                ? 'Stonewall Stronghold'
-                : 'Dwarven Border Keep';
           bannerHtml =
-            `<div class="masonry-main-row"><span>🏰 <strong>${enterable.castle.name} (${tierTitle})</strong> • 🛡️ <span class="masonry-tag level-ok">Sanctuary &amp; Armory Ready</span> • Enter to buy Weapons, Shields &amp; Food or shelter from Trolls!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-enter-castle">🏰 Enter Castle &amp; Armory (E)</button></div>` +
+            `<div class="masonry-main-row"><span>🏰 <strong>${enterable.castle.name} (Tier ${tier})</strong> • 🛡️ Sanctuary</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-enter-castle">🏰 Enter (E)</button></div>` +
             (enterable.castle.blocksPlaced < 30 ? this.buildCastleProgressStripHtml(enterable.castle) : '');
-        } else if (nearestQuarry && Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz) <= 4.8 && nearestQuarry.stockpiledBlocks > 0) {
+        } else if (nearestQuarry && quarryDist <= 5.5 && nearestQuarry.stockpiledBlocks > 0) {
           bannerHtml =
-            `<div class="masonry-main-row"><span>⛏️ <strong>Stone Quarry Stockpile</strong> • <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Chiseled Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🧱 Pick Up Blocks (E)</button></div>` +
+            `<div class="masonry-main-row"><span>⛏️ <strong>Quarry:</strong> <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">🧱 Take (E)</button></div>` +
             (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
-        } else {
-          const nearestRock = this.getNearestNaturalRock(px, pz);
-          if (nearestRock && nearestRock.dist <= 3.6) {
+        } else if (nearestRock && nearestRock.dist <= 3.6 && (activeCastle || this.quarries.length > 0)) {
+          bannerHtml =
+            `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone</strong> (${Math.round(nearestRock.dist)}m)</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift (E)</button></div>` +
+            (activeCastle && castleDist <= 22.0 ? this.buildCastleProgressStripHtml(activeCastle) : '');
+        } else if (activeCastle && castleDist <= 18.0) {
+          const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
+          if (nearestQuarry && nearestQuarry.stockpiledBlocks > 0) {
+            guideTargetX = nearestQuarry.x;
+            guideTargetZ = nearestQuarry.z;
+            guideColor = 0xffd166;
+            const qDir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
             bannerHtml =
-              `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone Nearby</strong> (${Math.round(nearestRock.dist)}m) • Lift stone to carry to a Quarry &amp; chisel into Castle Blocks!</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift Natural Stone (E)</button></div>` +
-              (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
-          } else if (activeCastle) {
-            const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
-            if (nearestQuarry && nearestQuarry.stockpiledBlocks > 0) {
-              guideTargetX = nearestQuarry.x;
-              guideTargetZ = nearestQuarry.z;
-              guideColor = 0xffd166;
-              const qDist = Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz);
-              const qDir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
-              bannerHtml =
-                `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block:</strong> <span class="masonry-tag hint">${nextSlot.label}</span> • Pick up stockpiled blocks at Quarry (<strong>${qDist.toFixed(0)}m ${qDir}</strong>)!</span>` +
-                `<button type="button" class="hut-action-pill masonry-action-work">🪨 Or Lift Nearest Stone (E)</button></div>` +
-                this.buildCastleProgressStripHtml(activeCastle);
-            } else if (nearestRock) {
-              guideTargetX = nearestRock.rock.wx;
-              guideTargetZ = nearestRock.rock.wz;
-              guideColor = 0xffe066;
-              const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
-              bannerHtml =
-                `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block (#${activeCastle.blocksPlaced + 1}):</strong> <span class="masonry-tag hint">${nextSlot.label} (${nextSlot.hintLocation})</span> • Gather Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>)!</span>` +
-                (nearestQuarry
-                  ? ''
-                  : `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`) +
-                `</div>` +
-                this.buildCastleProgressStripHtml(activeCastle);
-            }
-          } else if (this.quarries.length > 0 && nearestRock) {
+              `<div class="masonry-main-row"><span>🏰 Next: <span class="masonry-tag hint">${nextSlot.label}</span> • Blocks at Quarry (${quarryDist.toFixed(0)}m ${qDir})</span></div>` +
+              this.buildCastleProgressStripHtml(activeCastle);
+          } else if (nearestRock) {
             guideTargetX = nearestRock.rock.wx;
             guideTargetZ = nearestRock.rock.wz;
             guideColor = 0xffe066;
             const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
             bannerHtml =
-              `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Ready!</strong> Gather a Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>) or press <kbd>K</kbd> on level ground to start a Castle!</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
+              `<div class="masonry-main-row"><span>🏰 Next: <span class="masonry-tag hint">${nextSlot.label}</span> • 🪨 ${nearestRock.dist.toFixed(0)}m ${rDir} (<kbd>E</kbd>)</span></div>` +
+              this.buildCastleProgressStripHtml(activeCastle);
           }
         }
       }
@@ -4607,7 +4556,7 @@ export class CastleAndQuarryManager {
 
       const nameSpan = document.createElement('span');
       nameSpan.className = 'relic-name';
-      nameSpan.innerHTML = `<kbd class="relic-key">${def.keyHint}</kbd> ${def.name}<div class="eq-sub-desc">${def.shortDesc}</div>`;
+      nameSpan.innerHTML = `<kbd class="relic-key">${def.keyHint}</kbd> ${def.name}`;
 
       const costSpan = document.createElement('span');
       costSpan.className = 'relic-cost';
@@ -4709,11 +4658,9 @@ export class CastleAndQuarryManager {
       iconSpan.className = 'relic-icon';
       iconSpan.textContent = def.icon;
 
-      const tierTag =
-        def.minTier === 3 ? 'Tier III' : def.minTier === 2 ? 'Tier II+' : 'Tier I+';
       const nameSpan = document.createElement('span');
       nameSpan.className = 'relic-name';
-      nameSpan.innerHTML = `<kbd class="relic-key">${def.keyHint}</kbd> ${def.name} <span class="armory-tier-badge">${tierTag}</span><div class="eq-sub-desc">${def.shortDesc}</div>`;
+      nameSpan.innerHTML = `<kbd class="relic-key">${def.keyHint}</kbd> ${def.name}`;
 
       const costSpan = document.createElement('span');
       costSpan.className = 'relic-cost';
@@ -4729,6 +4676,9 @@ export class CastleAndQuarryManager {
 
       this.castleShopListEl.appendChild(btn);
     }
+    const lockedHint = document.createElement('div');
+    lockedHint.className = 'armory-locked-hint hidden';
+    this.castleShopListEl.appendChild(lockedHint);
     this.renderCastleArmoryShop();
   }
 
@@ -4752,13 +4702,14 @@ export class CastleAndQuarryManager {
     if (this.castleShopTitleEl) {
       const tierTitle =
         currentTier === 3
-          ? "👑 Grand Citadel Royal Armory & Feast Hall"
+          ? '👑 Grand Citadel Armory'
           : currentTier === 2
-            ? '🏯 Stonewall Stronghold Armory & Banquet'
-            : '🏰 Border Keep Armory & Hearth Provisions';
+            ? '🏯 Stronghold Armory'
+            : '🏰 Border Keep Armory';
       this.castleShopTitleEl.textContent = tierTitle;
     }
 
+    let hiddenHigherTierCount = 0;
     const buttons = this.castleShopListEl.querySelectorAll<HTMLButtonElement>(
       'button[data-armory-id]'
     );
@@ -4774,6 +4725,14 @@ export class CastleAndQuarryManager {
         (def.shieldId && this.equippedShieldId === def.shieldId);
       const tierLocked = currentTier < def.minTier;
       const canAfford = !owned && !tierLocked && gold >= def.cost;
+
+      // Hide higher-tier locked items unless already owned, keeping the shop compact
+      if (tierLocked && !owned) {
+        btn.style.display = 'none';
+        hiddenHigherTierCount++;
+        return;
+      }
+      btn.style.display = 'flex';
 
       const state = owned
         ? 'owned'
@@ -4798,6 +4757,17 @@ export class CastleAndQuarryManager {
         }
       }
     });
+
+    const lockedHintEl = this.castleShopListEl.querySelector<HTMLElement>('.armory-locked-hint');
+    if (lockedHintEl) {
+      if (hiddenHigherTierCount > 0) {
+        const nextTier = currentTier === 1 ? 'Tier II (18 Blocks)' : 'Tier III (30 Blocks)';
+        lockedHintEl.textContent = `🔒 +${hiddenHigherTierCount} stronger items unlock at ${nextTier}`;
+        lockedHintEl.classList.remove('hidden');
+      } else {
+        lockedHintEl.classList.add('hidden');
+      }
+    }
   }
 
   public tryBuyCastleArmoryItem(id: CastleArmoryItemId): boolean {
@@ -4988,25 +4958,22 @@ export class CastleAndQuarryManager {
 
   private syncMilestoneHUD(): void {
     if (!this.milestoneHudEl) return;
-    let totalMilestones = 0;
     let bestBlocks = 0;
     for (const c of this.castles) {
       if (c.blocksPlaced > bestBlocks) bestBlocks = c.blocksPlaced;
-      for (const m of CASTLE_MILESTONES) {
-        if (c.blocksPlaced >= m.blocksRequired) totalMilestones++;
-      }
     }
+
+    this.milestoneHudEl.classList.toggle('hidden', this.castles.length === 0);
 
     const nextM =
       CASTLE_MILESTONES.find((m) => bestBlocks < m.blocksRequired) ??
       CASTLE_MILESTONES[CASTLE_MILESTONES.length - 1];
-    const blocksLeft = Math.max(0, nextM.blocksRequired - bestBlocks);
     const text =
       this.castles.length === 0
-        ? `🏰 Castles: 0 • Milestones: 0`
+        ? ''
         : bestBlocks >= 30
-          ? `🏰 30/30 Blocks (Complete!) • 🏆 ${totalMilestones} Milestones`
-          : `🏰 ${bestBlocks}/${nextM.blocksRequired} Blocks (${blocksLeft} left) • 🏆 ${totalMilestones} Milestone${totalMilestones === 1 ? '' : 's'}`;
+          ? `• 🏰 30/30 Citadel`
+          : `• 🏰 ${bestBlocks}/${nextM.blocksRequired} Blocks`;
 
     if (text !== this.lastMilestoneText) {
       this.lastMilestoneText = text;

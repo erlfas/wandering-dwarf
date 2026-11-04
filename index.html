@@ -57,23 +57,17 @@
             </button>
           </div>
           <div class="sub-row">
-            <span id="top-food-hud-pill" class="top-food-pill" title="Available Food Rations in Backpack — Click or Press G to Eat for +45⚡ Strength &amp; +25❤️ Health!">🍖 2 Food (<kbd>G</kbd>)</span>
-            <span class="dot-sep">•</span>
+            <span id="top-food-hud-pill" class="top-food-pill hidden" title="Available Food Rations in Backpack — Click or Press G to Eat for +45⚡ Strength &amp; +25❤️ Health!">🍖 2 Food (<kbd>G</kbd>)</span>
             <span id="chests-value">0 Chests</span>
-            <span class="dot-sep">•</span>
-            <span id="artefacts-value">0 Artefacts</span>
-            <span class="dot-sep">•</span>
-            <span id="trolls-slain-value" title="Troll Slayer Trophies (+10 Max HP &amp; +5% Melee DMG per Troll)">👹 0 Trolls</span>
-            <span class="dot-sep">•</span>
-            <span id="castle-milestone-pill">🏰 Castles: 0 • Milestones: 0</span>
+            <span id="artefacts-value" class="hidden">0 Artefacts</span>
+            <span id="trolls-slain-value" class="hidden" title="Troll Slayer Trophies (+10 Max HP &amp; +5% Melee DMG per Troll)">👹 0 Trolls</span>
+            <span id="castle-milestone-pill" class="hidden">🏰 Castles: 0</span>
             <span class="dot-sep">•</span>
             <span id="nearest-chest-hint">Scanning...</span>
+            <span id="movement-status-pill" class="hidden"></span>
           </div>
         </div>
       </div>
-
-      <!-- Active Traversal Status Pill (Trailblazer / Gliding / Slope Surfing) -->
-      <div id="movement-status-pill" class="hidden"></div>
 
       <!-- Active Timed Waypoint Ring Challenge Banner (hidden unless a challenge is running) -->
       <div id="challenge-banner" class="hidden"></div>
@@ -96,17 +90,27 @@
       <!-- Dwarven House Equipment Shop (Visible when inside a Dwarven House) -->
       <div id="house-equipment-shop" class="hidden">
         <div class="relic-shop-header">
-          <span>🏠 HOUSE EQUIPMENT SHOP</span>
+          <span>🏠 HOUSE EQUIPMENT</span>
           <span class="relic-shop-sub">Keys 5–8</span>
         </div>
         <div id="house-equipment-list"></div>
+        <div class="interior-shop-actions">
+          <button id="house-shop-exit-btn" type="button" class="hut-action-pill exit">🚪 Step Outside (E)</button>
+        </div>
       </div>
 
       <!-- Castle Armory & Tavern Provisions Shop (Visible when inside a Tier I / II / III Castle) -->
       <div id="castle-armory-shop" class="hidden">
         <div class="relic-shop-header">
           <span id="castle-armory-title">🏰 CASTLE ARMORY &amp; TAVERN</span>
-          <span class="relic-shop-sub">Keys 5–0, -, =</span>
+          <span class="relic-shop-sub">Keys 5–=</span>
+        </div>
+        <div class="castle-sanctuary-bar">
+          <span class="sanctuary-pill">🛡️ Safe Sanctuary (+HP/⚡)</span>
+          <div class="castle-sanctuary-btns">
+            <button id="castle-shop-rest-btn" type="button" class="hut-action-pill">☀️ Rest Dawn (R)</button>
+            <button id="castle-shop-exit-btn" type="button" class="hut-action-pill exit">🚪 Exit (E)</button>
+          </div>
         </div>
         <div id="castle-armory-list"></div>
       </div>
@@ -147,13 +151,17 @@
       </div>
 
       <!-- Royal Decrees, Dwarven Rank & Guild Contracts HUD -->
-      <div id="assignment-hud">
-        <div class="assignment-hud-header">
+      <div id="assignment-hud" class="collapsed">
+        <div id="assignment-hud-header" class="assignment-hud-header" title="Click or press J to toggle Royal Decrees &amp; Guild Contracts">
           <div class="assignment-rank-row">
             <span id="assignment-rank-badge" class="assignment-rank-badge">⛏️ Rank I</span>
             <span id="assignment-rank-title" class="assignment-rank-title">Outcast Prospector</span>
           </div>
-          <button id="assignment-hud-toggle" type="button" title="Collapse / Expand Royal Decrees (J)">▾</button>
+          <button id="assignment-hud-toggle" type="button" title="Collapse / Expand Royal Decrees (J)">▸</button>
+        </div>
+
+        <div id="assignment-compact-summary" class="assignment-compact-summary" title="Click or press J to view full Decree &amp; Contract details">
+          🔥 Ch.1: 0/2 • 🪨 Quota: 0/3
         </div>
 
         <div class="assignment-renown-track" title="Dwarven Renown XP — Complete Decrees &amp; Guild Contracts to earn promotions &amp; permanent stat buffs!">
@@ -161,7 +169,7 @@
           <span id="assignment-renown-text">0 / 200 🎖️ → 🪖 Rank II</span>
         </div>
 
-        <div id="assignment-hud-body" class="assignment-hud-body">
+        <div id="assignment-hud-body" class="assignment-hud-body" style="display: none">
           <!-- Story Chronicle Assignment -->
           <div class="assignment-card chronicle-card">
             <div class="assignment-card-top">
@@ -199,7 +207,7 @@
           </div>
 
           <!-- Attuned Sacred Artefact Blessings & Rank Strengths -->
-          <div class="assignment-blessings-box">
+          <div id="assignment-blessings-box" class="assignment-blessings-box hidden">
             <div class="assignment-blessings-label">✨ ATTUNED STRENGTHS &amp; ARTEFACT BLESSINGS</div>
             <div id="assignment-blessings-list" class="assignment-blessings-list"></div>
           </div>
@@ -325,34 +333,43 @@
       </div>
 
       <div id="stats-badge">
-        <div class="badge-header">
-          <div class="badge-title">PHASE 3: FOREST GROVES, PONDS &amp; RIVERS</div>
-          <button id="music-toggle" type="button" title="Toggle Background Music (P)">
-            ♪ Wandering Through the Pines
-          </button>
+        <div id="controls-help-popover" class="controls-popover hidden">
+          <div class="badge-header">
+            <div class="badge-title">CONTROLS &amp; WORLD TELEMETRY</div>
+            <button id="controls-popover-close" type="button" class="controls-close-btn" title="Close Controls (?)">✕</button>
+          </div>
+          <div id="coords-readout">Pos: (0, 0) | Elev: 0.0m | Chunks: 0</div>
+          <div class="controls-hint">
+            <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
+            <span><kbd>Shift</kbd> Sprint</span>
+            <span><kbd>Space</kbd> Jump / Glide</span>
+            <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
+            <span><kbd>E</kbd> Lift / Build / Enter</span>
+            <span><kbd>X</kbd>/<kbd>Click</kbd> Fight Troll</span>
+            <span><kbd>R-Click</kbd> Parry / Block</span>
+            <span><kbd>V</kbd> Warhorn</span>
+            <span><kbd>J</kbd> Decrees</span>
+            <span><kbd>Q</kbd> Quarry</span>
+            <span><kbd>K</kbd> Castle</span>
+            <span><kbd>G</kbd> Eat Food</span>
+            <span><kbd>R</kbd> Rest Dawn</span>
+            <span><kbd>M</kbd> Map</span>
+            <span><kbd>O</kbd> Menu</span>
+            <span><kbd>F</kbd> Fish</span>
+            <span><kbd>H</kbd> Hunt</span>
+            <span><kbd>5</kbd>-<kbd>=</kbd> Shops</span>
+            <span><kbd>B</kbd> Forge</span>
+            <span><kbd>N</kbd> Day/Night</span>
+          </div>
         </div>
-        <div id="coords-readout">Pos: (0, 0) | Elev: 0.0m | Chunks: 0</div>
-        <div class="controls-hint">
-          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move</span>
-          <span><kbd>Shift</kbd> Sprint</span>
-          <span><kbd>Space</kbd> Jump / Glide</span>
-          <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
-          <span><kbd>E</kbd> Lift / Build / Enter Castle &amp; House</span>
-          <span><kbd>X</kbd>/<kbd>Click</kbd> Fight Troll</span>
-          <span><kbd>R-Click</kbd> Parry / Block</span>
-          <span><kbd>V</kbd> Warhorn</span>
-          <span><kbd>J</kbd> Decrees</span>
-          <span><kbd>Q</kbd> Quarry</span>
-          <span><kbd>K</kbd> Castle</span>
-          <span><kbd>G</kbd> Eat Food</span>
-          <span><kbd>R</kbd> Rest Dawn</span>
-          <span><kbd>M</kbd> Map</span>
-          <span><kbd>O</kbd> Menu</span>
-          <span><kbd>F</kbd> Fish</span>
-          <span><kbd>H</kbd> Hunt</span>
-          <span><kbd>5</kbd>-<kbd>=</kbd> Shops</span>
-          <span><kbd>B</kbd> Forge</span>
-          <span><kbd>N</kbd> Day/Night</span>
+        <div class="stats-compact-bar">
+          <span id="time-readout" class="time-pill" title="Time of Day (Press N to toggle Day/Night)">10:30 ☀️</span>
+          <button id="music-toggle" type="button" title="Toggle Background Music (P)">
+            ♪ Music (P)
+          </button>
+          <button id="controls-help-toggle" type="button" title="Toggle Controls &amp; Coordinates (?)">
+            ⌨️ Controls (<kbd>?</kbd>)
+          </button>
         </div>
       </div>
     </div>

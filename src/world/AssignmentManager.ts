@@ -489,7 +489,7 @@ export class AssignmentManager {
   private currentRank = 1
   private activeContract: ActiveGuildContract | null = null
   private contractCycleIndex = 0
-  private isPanelExpanded = true
+  private isPanelExpanded = false
 
   // Warhorn of Khazad (V key) state
   private warhornCooldown = 0
@@ -501,6 +501,7 @@ export class AssignmentManager {
   private hudRoot: HTMLElement | null = null
   private rankBadgeEl: HTMLElement | null = null
   private rankTitleEl: HTMLElement | null = null
+  private compactSummaryEl: HTMLElement | null = null
   private renownFillEl: HTMLElement | null = null
   private renownTextEl: HTMLElement | null = null
   private chronicleTitleEl: HTMLElement | null = null
@@ -514,6 +515,7 @@ export class AssignmentManager {
   private contractFillEl: HTMLElement | null = null
   private contractProgressTextEl: HTMLElement | null = null
   private contractRewardEl: HTMLElement | null = null
+  private blessingsBoxEl: HTMLElement | null = null
   private blessingsListEl: HTMLElement | null = null
   private warhornBtnEl: HTMLButtonElement | null = null
   private bodySectionEl: HTMLElement | null = null
@@ -531,6 +533,7 @@ export class AssignmentManager {
     this.hudRoot = document.getElementById('assignment-hud')
     this.rankBadgeEl = document.getElementById('assignment-rank-badge')
     this.rankTitleEl = document.getElementById('assignment-rank-title')
+    this.compactSummaryEl = document.getElementById('assignment-compact-summary')
     this.renownFillEl = document.getElementById('assignment-renown-fill')
     this.renownTextEl = document.getElementById('assignment-renown-text')
     this.chronicleTitleEl = document.getElementById('assignment-chronicle-title')
@@ -544,10 +547,21 @@ export class AssignmentManager {
     this.contractFillEl = document.getElementById('assignment-contract-fill')
     this.contractProgressTextEl = document.getElementById('assignment-contract-progress')
     this.contractRewardEl = document.getElementById('assignment-contract-reward')
+    this.blessingsBoxEl = document.getElementById('assignment-blessings-box')
     this.blessingsListEl = document.getElementById('assignment-blessings-list')
     this.warhornBtnEl = document.getElementById('assignment-warhorn-btn') as HTMLButtonElement | null
     this.bodySectionEl = document.getElementById('assignment-hud-body')
     this.toggleBtnEl = document.getElementById('assignment-hud-toggle') as HTMLButtonElement | null
+
+    const headerEl = document.getElementById('assignment-hud-header')
+    headerEl?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement | null)?.closest('#assignment-hud-toggle')) return
+      this.togglePanelExpanded()
+    })
+
+    this.compactSummaryEl?.addEventListener('click', () => {
+      this.togglePanelExpanded()
+    })
 
     this.toggleBtnEl?.addEventListener('click', () => {
       this.togglePanelExpanded()
@@ -570,8 +584,12 @@ export class AssignmentManager {
 
   public togglePanelExpanded(): void {
     this.isPanelExpanded = !this.isPanelExpanded
+    this.hudRoot?.classList.toggle('collapsed', !this.isPanelExpanded)
     if (this.bodySectionEl) {
       this.bodySectionEl.style.display = this.isPanelExpanded ? 'flex' : 'none'
+    }
+    if (this.compactSummaryEl) {
+      this.compactSummaryEl.style.display = this.isPanelExpanded ? 'none' : 'block'
     }
     if (this.toggleBtnEl) {
       this.toggleBtnEl.textContent = this.isPanelExpanded ? '▾' : '▸'
@@ -872,7 +890,24 @@ export class AssignmentManager {
       }
     }
 
-    // Blessings & Rank Perks pills
+    // Compact Summary (shown when collapsed)
+    if (this.compactSummaryEl) {
+      const chronPart = activeChronicle
+        ? `${activeChronicle.icon} Ch.${activeChronicle.chapter}: ${chronProg.current}/${chronProg.target}`
+        : '👑 Ch.12/12'
+      const contractPart = this.activeContract
+        ? ` • ${this.activeContract.icon} ${contractDelta}/${this.activeContract.targetDelta}`
+        : ''
+      const warhornPart =
+        warhornBuffInt > 0
+          ? ` • 📯 ${warhornBuffInt}s`
+          : warhornUnlocked && warhornCdInt === 0
+            ? ' • 📯 Ready (V)'
+            : ''
+      this.compactSummaryEl.textContent = `${chronPart}${contractPart}${warhornPart}`
+    }
+
+    // Blessings & Rank Perks pills (auto-hide box when empty)
     if (this.blessingsListEl) {
       const pills: string[] = []
       if (this.currentRank > 1) {
@@ -888,16 +923,13 @@ export class AssignmentManager {
           )
         }
       }
-      if (pills.length === 0) {
-        this.blessingsListEl.innerHTML =
-          '<span class="blessing-empty">Delve Dwarven Huts (E) & earn Renown to attune permanent Dwarf Strengths</span>'
-      } else {
-        this.blessingsListEl.innerHTML = pills.join('')
-      }
+      this.blessingsBoxEl?.classList.toggle('hidden', pills.length === 0)
+      this.blessingsListEl.innerHTML = pills.join('')
     }
 
     // Warhorn Button
     if (this.warhornBtnEl) {
+      this.warhornBtnEl.style.display = warhornUnlocked ? 'block' : 'none'
       if (!warhornUnlocked) {
         this.warhornBtnEl.disabled = true
         this.warhornBtnEl.textContent = '🔒 Warhorn of Khazad (Rank II / Armory)'
