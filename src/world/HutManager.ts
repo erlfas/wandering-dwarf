@@ -529,6 +529,7 @@ export class HutManager {
   private onEnterHutCallback?: () => void;
   private onExitHutCallback?: () => void;
   private onWarmHearthCallback?: () => void;
+  private isChallengeActiveFn: () => boolean = () => false;
 
   private readonly interiorBgColor = new THREE.Color(0x23262e);
   private savedBgColor: THREE.Color | THREE.Texture | null = null;
@@ -590,6 +591,10 @@ export class HutManager {
 
   public setOnWarmHearthCallback(cb: () => void): void {
     this.onWarmHearthCallback = cb;
+  }
+
+  public setIsChallengeActiveFn(fn: () => boolean): void {
+    this.isChallengeActiveFn = fn;
   }
 
   public isInsideHut(): boolean {
@@ -1095,7 +1100,13 @@ export class HutManager {
     }
 
     // Automatically enter the hut if the dwarf walks onto the glowing front doorway ring
-    if (bestHut && this.exitCooldown <= 0 && this.nearestDoorDist <= 1.48) {
+    // (unless a timed Hillside Ring Sprint Challenge is actively running!)
+    if (
+      bestHut &&
+      this.exitCooldown <= 0 &&
+      this.nearestDoorDist <= 1.48 &&
+      !this.isChallengeActiveFn()
+    ) {
       this.enterHut(bestHut);
       return;
     }

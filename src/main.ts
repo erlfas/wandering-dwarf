@@ -188,6 +188,7 @@ const livingWorldManager = new LivingWorldManager(
 scene.add(livingWorldManager.group);
 
 const challengeManager = new ChallengeManager(config, noise, treasureManager);
+challengeManager.setChunkManager(chunkManager);
 scene.add(challengeManager.group);
 
 const fishingManager = new FishingAndFishManager(
@@ -345,6 +346,7 @@ hutManager.setOnEnterHutCallback(() => {
 hutManager.setOnExitHutCallback(() => {
   syncBeaconFog();
 });
+hutManager.setIsChallengeActiveFn(() => challengeManager.isChallengeActive());
 hutManager.setOnWarmHearthCallback(() => {
   const wasActive = landmarkManager.campfireBuffTimer > 50.0;
   landmarkManager.campfireBuffTimer = 60.0;

@@ -440,4 +440,95 @@ export class ChunkManager {
       }
     }
   }
+
+  /**
+   * Pushes a world position `(pos.x, pos.z)` clear of any Dwarven Hut (both its body and front
+   * doorway ring) and any tree/boulder colliders in the 3x3 chunk neighborhood.
+   * Returns `true` if `pos` was moved.
+   */
+  public resolveStructureClearance(
+    pos: THREE.Vector3,
+    minHutClearance = 9.5,
+    minTreeClearance = 2.6
+  ): boolean {
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(pos.x / size);
+    const centerCz = Math.round(pos.z / size);
+    let moved = false;
+
+    for (let pass = 0; pass < 2; pass++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const chunk = this.chunks.get(this.getKey(centerCx + dx, centerCz + dz));
+          if (!chunk) continue;
+
+          // 1. Keep well clear of Dwarven Huts and their front doorway rings
+          const huts = chunk.getHuts();
+          for (let i = 0; i < huts.length; i++) {
+            const h = huts[i];
+            const diffX = pos.x - h.worldX;
+            const diffZ = pos.z - h.worldZ;
+            const distSq = diffX * diffX + diffZ * diffZ;
+            if (distSq < minHutClearance * minHutClearance) {
+              const dist = Math.sqrt(distSq);
+              if (dist > 0.001) {
+                const push = (minHutClearance - dist) / dist;
+                pos.x += diffX * push;
+                pos.z += diffZ * push;
+              } else {
+                // Push perpendicular to the hut doorway so we don't block the entrance
+                pos.x += Math.cos(h.rotationY) * minHutClearance;
+                pos.z -= Math.sin(h.rotationY) * minHutClearance;
+              }
+              moved = true;
+            }
+
+            const doorClearance = Math.max(5.5, minHutClearance * 0.75);
+            const dDiffX = pos.x - h.doorWorldX;
+            const dDiffZ = pos.z - h.doorWorldZ;
+            const dDistSq = dDiffX * dDiffX + dDiffZ * dDiffZ;
+            if (dDistSq < doorClearance * doorClearance) {
+              const dDist = Math.sqrt(dDistSq);
+              if (dDist > 0.001) {
+                const push = (doorClearance - dDist) / dDist;
+                pos.x += dDiffX * push;
+                pos.z += dDiffZ * push;
+              } else {
+                pos.x += Math.cos(h.rotationY) * doorClearance;
+                pos.z -= Math.sin(h.rotationY) * doorClearance;
+              }
+              moved = true;
+            }
+          }
+
+          // 2. Keep clear of tree trunks and boulders
+          if (minTreeClearance > 0) {
+            const colliders = chunk.getColliders();
+            if (!colliders || colliders.length === 0) continue;
+            for (let i = 0; i < colliders.length; i += 3) {
+              const ox = colliders[i];
+              const oz = colliders[i + 1];
+              const minDist = colliders[i + 2] + minTreeClearance;
+              const diffX = pos.x - ox;
+              const diffZ = pos.z - oz;
+              const distSq = diffX * diffX + diffZ * diffZ;
+              if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                if (dist > 0.0001) {
+                  const push = (minDist - dist) / dist;
+                  pos.x += diffX * push;
+                  pos.z += diffZ * push;
+                } else {
+                  pos.x += minDist;
+                }
+                moved = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return moved;
+  }
 }

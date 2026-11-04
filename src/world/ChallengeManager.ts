@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
+import { ChunkManager } from './ChunkManager';
 import { TerrainNoise, createSeededRandom } from './TerrainNoise';
 import { TreasureManager } from './TreasureManager';
 
@@ -231,9 +232,11 @@ export class ChallengeManager {
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
+  private lastActiveChunkCount = -1;
   private coinPitchStep = 0;
   private coinPitchResetTimer = 0;
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
+  private chunkManager?: ChunkManager;
 
   private challengeBannerEl: HTMLElement | null;
   private toastContainer: HTMLElement | null;
@@ -277,6 +280,14 @@ export class ChallengeManager {
 
   public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
     this.getSurfaceHeightFn = fn;
+  }
+
+  public setChunkManager(chunkManager: ChunkManager): void {
+    this.chunkManager = chunkManager;
+  }
+
+  public isChallengeActive(): boolean {
+    return this.currentTrialArch !== null;
   }
 
   public getCompletedCount(): number {
@@ -348,6 +359,16 @@ export class ChallengeManager {
           }
           this.activeArches.delete(key);
         }
+      }
+    }
+
+    // Reconcile archways, checkpoint rings, and coins whenever ChunkManager finishes building a queued chunk
+    // so no Trial Archway or Ring ever overlaps a newly streamed Dwarven Hut or tree collider!
+    if (this.chunkManager) {
+      const activeChunks = this.chunkManager.getActiveChunkCount();
+      if (activeChunks !== this.lastActiveChunkCount) {
+        this.lastActiveChunkCount = activeChunks;
+        this.reconcileChallengesWithLoadedChunks();
       }
     }
 
@@ -757,10 +778,13 @@ export class ChallengeManager {
         for (let i = 0; i < coinCount; i++) {
           const coinId = `coin_${cx}_${cz}_${i}`;
           if (!this.collectedCoinIds.has(coinId)) {
-            const wy = this.sampleGroundHeight(curX, curZ);
+            const coinPos = new THREE.Vector3(curX, 0, curZ);
+            this.chunkManager?.resolveStructureClearance(coinPos, 5.2, 1.1);
+            const wy = this.sampleGroundHeight(coinPos.x, coinPos.z);
+            coinPos.y = wy;
             if (!this.config.enableWater || wy >= this.config.waterLevel + 0.35) {
               const root = new THREE.Group();
-              root.position.set(curX, wy, curZ);
+              root.position.set(coinPos.x, wy, coinPos.z);
               root.updateMatrix();
               root.matrixAutoUpdate = false;
 
@@ -782,7 +806,7 @@ export class ChallengeManager {
 
               coins.push({
                 id: coinId,
-                worldPos: new THREE.Vector3(curX, wy, curZ),
+                worldPos: coinPos,
                 baseY: wy,
                 phase: i * 0.55,
                 collected: false,
@@ -823,9 +847,12 @@ export class ChallengeManager {
       const archId = `arch_${cx}_${cz}`;
       const lx = isStarterArchChunk ? -6.0 : (rng() - 0.5) * (size * 0.55);
       const lz = isStarterArchChunk ? 12.0 : (rng() - 0.5) * (size * 0.55);
-      const wx = cx * size + lx;
-      const wz = cz * size + lz;
+      const archPos = new THREE.Vector3(cx * size + lx, 0, cz * size + lz);
+      this.chunkManager?.resolveStructureClearance(archPos, 10.5, 2.8);
+      const wx = archPos.x;
+      const wz = archPos.z;
       const wy = this.sampleGroundHeight(wx, wz);
+      archPos.y = wy;
 
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.5) {
         // Orient the archway toward a downhill or scenic trail direction
@@ -852,12 +879,17 @@ export class ChallengeManager {
           const stepDist = 14.5;
           rx += Math.sin(curYaw) * stepDist;
           rz += Math.cos(curYaw) * stepDist;
+          const rPos = new THREE.Vector3(rx, 0, rz);
+          this.chunkManager?.resolveStructureClearance(rPos, 8.5, 2.2);
+          rx = rPos.x;
+          rz = rPos.z;
           const ry = Math.max(
             this.sampleGroundHeight(rx, rz),
             this.config.enableWater ? this.config.waterLevel + 0.4 : -999
           );
+          rPos.y = ry;
           ringSpecs.push({
-            worldPos: new THREE.Vector3(rx, ry, rz),
+            worldPos: rPos,
             yaw: curYaw,
           });
         }
@@ -902,7 +934,7 @@ export class ChallengeManager {
           id: archId,
           cx,
           cz,
-          worldPos: new THREE.Vector3(wx, wy, wz),
+          worldPos: archPos,
           yaw: bestYaw,
           completed: isCompleted,
           cooldown: 0,
@@ -916,6 +948,58 @@ export class ChallengeManager {
 
     this.activeCoins.set(chunkKey, coins);
     this.activeArches.set(chunkKey, arches);
+  }
+
+  /**
+   * Re-checks all active Trial Archways, Checkpoint Rings, and Footpath Coins against newly
+   * built terrain chunks so nothing ever overlaps a Dwarven Hut, its front doorway ring, or a tree.
+   */
+  private reconcileChallengesWithLoadedChunks(): void {
+    if (!this.chunkManager) return;
+
+    for (const arches of this.activeArches.values()) {
+      for (const arch of arches) {
+        if (this.chunkManager.resolveStructureClearance(arch.worldPos, 10.5, 2.8)) {
+          arch.worldPos.y = this.sampleGroundHeight(arch.worldPos.x, arch.worldPos.z);
+          arch.root.position.copy(arch.worldPos);
+          arch.root.updateMatrix();
+          arch.root.updateMatrixWorld(true);
+        }
+        for (const spec of arch.ringSpecs) {
+          if (this.chunkManager.resolveStructureClearance(spec.worldPos, 8.5, 2.2)) {
+            spec.worldPos.y = Math.max(
+              this.sampleGroundHeight(spec.worldPos.x, spec.worldPos.z),
+              this.config.enableWater ? this.config.waterLevel + 0.4 : -999
+            );
+          }
+        }
+      }
+    }
+
+    for (const ring of this.activeRings) {
+      if (this.chunkManager.resolveStructureClearance(ring.worldPos, 8.5, 2.2)) {
+        ring.worldPos.y = Math.max(
+          this.sampleGroundHeight(ring.worldPos.x, ring.worldPos.z),
+          this.config.enableWater ? this.config.waterLevel + 0.4 : -999
+        );
+        ring.root.position.copy(ring.worldPos);
+        ring.root.updateMatrix();
+        ring.root.updateMatrixWorld(true);
+      }
+    }
+
+    for (const coins of this.activeCoins.values()) {
+      for (const c of coins) {
+        if (c.collected) continue;
+        if (this.chunkManager.resolveStructureClearance(c.worldPos, 5.2, 1.1)) {
+          c.baseY = this.sampleGroundHeight(c.worldPos.x, c.worldPos.z);
+          c.worldPos.y = c.baseY;
+          c.root.position.set(c.worldPos.x, c.baseY, c.worldPos.z);
+          c.root.updateMatrix();
+          c.root.updateMatrixWorld(true);
+        }
+      }
+    }
   }
 
   public rebuildAll(): void {
@@ -943,6 +1027,7 @@ export class ChallengeManager {
 
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
+    this.lastActiveChunkCount = -1;
   }
 
   public reset(): void {
