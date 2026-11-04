@@ -1168,13 +1168,15 @@ export class WorldMap {
     if (!this.isOpen) return;
     this.resizeCanvasToContainer();
 
-    const dpr = this.canvas.width / Math.max(1, this.canvas.getBoundingClientRect().width);
-    const width = this.canvas.width / dpr;
-    const height = this.canvas.height / dpr;
+    const rect = this.canvas.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
+    const scaleX = this.canvas.width / width;
+    const scaleY = this.canvas.height / height;
     const ctx = this.ctx;
 
     ctx.save();
-    ctx.scale(dpr, dpr);
+    ctx.scale(scaleX, scaleY);
 
     // 1. Aged Dwarven Parchment Background (Uncharted Lands)
     const bgGrad = ctx.createRadialGradient(
