@@ -1011,13 +1011,30 @@ function buildCastleSlotsAndGeometries(): {
     finalGeo.computeBoundingSphere();
     const index = slots.length;
     geos.push(finalGeo);
+
+    // Keep the South Gate drawbridge entrance (x = 0, z = +5.6m) completely clear for entering the Castle!
+    // Any slot whose drop zone would overlap the front drawbridge lane (|dropX| < 3.6 && dropZ > 3.2)
+    // is placed at the East or West Mason Scaffolding Staging Area (x = ±4.5m, z = 4.6m).
+    let safeDropX = dropX;
+    let safeDropZ = dropZ;
+    if (Math.abs(safeDropX) < 3.6 && safeDropZ > 3.2) {
+      if (localX < -0.2) {
+        safeDropX = -4.5;
+      } else if (localX > 0.2) {
+        safeDropX = 4.5;
+      } else {
+        safeDropX = index % 2 === 0 ? 4.5 : -4.5;
+      }
+      safeDropZ = 4.6;
+    }
+
     slots.push({
       index,
       tier,
       label,
       hintLocation,
       localPos: new THREE.Vector3(localX, localY, localZ),
-      groundDropLocal: new THREE.Vector3(dropX, 0.08, dropZ),
+      groundDropLocal: new THREE.Vector3(safeDropX, 0.08, safeDropZ),
       geoIndex: index,
       matKeys,
     });
@@ -2810,6 +2827,8 @@ export class CastleAndQuarryManager {
         this.tryTriggerCastleSiege();
       } else if (e.code === 'KeyT' && this.isInsideCastleFn()) {
         this.tryTemperEquippedWeapon();
+      } else if (e.code === 'Enter' && !this.isInsideCastleFn() && !this.isInsideHutFn()) {
+        this.tryEnterNearestCastle();
       } else if (e.code === 'KeyE') {
         if (!this.isInsideHutFn()) {
           this.tryInteractAtPlayerPos();
@@ -3845,6 +3864,8 @@ export class CastleAndQuarryManager {
     }
 
     const nextSlot = assets.castleSlots[castle.blocksPlaced];
+    const showBuildRingAndBeacon = castle.blocksPlaced < 8 || this.carriedChiseledBlocks > 0;
+
     castle.ghostMesh.geometry = assets.castleSlotGeos[nextSlot.geoIndex];
     castle.ghostMesh.position.copy(nextSlot.localPos);
     castle.ghostMesh.updateMatrix();
@@ -3856,10 +3877,14 @@ export class CastleAndQuarryManager {
       nextSlot.localPos.z
     );
     castle.beaconArrowGroup.updateMatrix();
-    castle.beaconArrowGroup.visible = true;
+    castle.beaconArrowGroup.visible = showBuildRingAndBeacon;
 
-    const dropWorldX = castle.x + nextSlot.groundDropLocal.x;
-    const dropWorldZ = castle.z + nextSlot.groundDropLocal.z;
+    const cos = Math.cos(castle.rotationY);
+    const sin = Math.sin(castle.rotationY);
+    const dropWorldX =
+      castle.x + nextSlot.groundDropLocal.x * cos + nextSlot.groundDropLocal.z * sin;
+    const dropWorldZ =
+      castle.z - nextSlot.groundDropLocal.x * sin + nextSlot.groundDropLocal.z * cos;
     const dropGroundY = this.getWalkableSurfaceHeight(
       dropWorldX,
       dropWorldZ,
@@ -3871,7 +3896,7 @@ export class CastleAndQuarryManager {
       nextSlot.groundDropLocal.z
     );
     castle.groundTargetRing.updateMatrix();
-    castle.groundTargetRing.visible = true;
+    castle.groundTargetRing.visible = showBuildRingAndBeacon;
   }
 
   public tryEnterNearestCastle(): boolean {
@@ -3905,8 +3930,8 @@ export class CastleAndQuarryManager {
     let bestDoorZ = 0;
     for (const c of this.castles) {
       if (c.blocksPlaced < 8) continue;
-      const doorX = c.x + Math.sin(c.rotationY) * 6.0;
-      const doorZ = c.z + Math.cos(c.rotationY) * 6.0;
+      const doorX = c.x + Math.sin(c.rotationY) * 5.8;
+      const doorZ = c.z + Math.cos(c.rotationY) * 5.8;
       const d = Math.hypot(wx - doorX, wz - doorZ);
       if (d < bestDoorDist) {
         bestDoorDist = d;
@@ -3928,13 +3953,27 @@ export class CastleAndQuarryManager {
     };
   }
 
+  private getSlotDropWorldPos(
+    castle: CastleInstance,
+    slot: CastleSlotSpec,
+    out: THREE.Vector3
+  ): THREE.Vector3 {
+    const cos = Math.cos(castle.rotationY);
+    const sin = Math.sin(castle.rotationY);
+    const lx = slot.groundDropLocal.x;
+    const lz = slot.groundDropLocal.z;
+    out.set(castle.x + lx * cos + lz * sin, castle.y, castle.z - lx * sin + lz * cos);
+    return out;
+  }
+
   /**
    * Context-sensitive `E` interaction for:
-   * 0. If inside a Castle: Exit Castle (when near door) or Rest Until Dawn (when near Throne/Hearth)
-   * 1. Placing carried Chiseled Block(s) onto the active Castle Slot
-   * 2. Entering a completed Tier I / II / III Castle (`blocksPlaced >= 8`) at its lowered drawbridge
-   * 3. Chiseling carried Raw Stone(s) at a Quarry Workbench (or picking up stockpiled blocks)
-   * 4. Picking up a nearby Natural Stone (`natural rock 3d model.glb`)
+   * 0. If inside a Castle: Temper at Anvil, Rest Until Dawn at Hearth, or Exit Castle at Door
+   * 1. If standing directly on the Golden Drawbridge Door Ring (`doorDist <= 2.6m` and closer than the Side Build Ring): Enter Castle
+   * 2. Placing carried Chiseled Block(s) onto the active Castle Slot (at the Cyan Side Mason Ring)
+   * 3. Entering a completed Tier I / II / III Castle (`blocksPlaced >= 8`) at its lowered drawbridge
+   * 4. Chiseling carried Raw Stone(s) at a Quarry Workbench (or picking up stockpiled blocks)
+   * 5. Picking up a nearby Natural Stone (`natural rock 3d model.glb`)
    */
   public tryInteractAtPlayerPos(): boolean {
     if (this.isInsideCastleFn()) {
@@ -3951,6 +3990,7 @@ export class CastleAndQuarryManager {
 
     const px = this.dwarf.root.position.x;
     const pz = this.dwarf.root.position.z;
+    const enterable = this.getNearestEnterableCastle(px, pz);
 
     // 1. Check if near an unfinished Castle while carrying Chiseled Blocks
     const activeCastle = this.getActiveCastle(px, pz);
@@ -3958,13 +3998,14 @@ export class CastleAndQuarryManager {
       const assets = getSharedMasonryAssets();
       const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
       if (nextSlot) {
-        tempDropWorld.set(
-          activeCastle.x + nextSlot.groundDropLocal.x,
-          activeCastle.y,
-          activeCastle.z + nextSlot.groundDropLocal.z
-        );
+        this.getSlotDropWorldPos(activeCastle, nextSlot, tempDropWorld);
         const distToDrop = Math.hypot(px - tempDropWorld.x, pz - tempDropWorld.z);
         const distToCastle = Math.hypot(px - activeCastle.x, pz - activeCastle.z);
+
+        // If the player specifically walked onto the Golden Drawbridge Door Ring (and not the Side Build Ring), enter the Castle!
+        if (enterable && enterable.doorDist <= 2.5 && enterable.doorDist + 0.8 < distToDrop) {
+          return this.tryEnterNearestCastle();
+        }
         if (distToDrop <= 4.8 || distToCastle <= 8.8) {
           return this.placeBlocksOnCastle(activeCastle);
         }
@@ -3972,7 +4013,6 @@ export class CastleAndQuarryManager {
     }
 
     // 2. Check if standing at the lowered drawbridge of any Tier I+ Castle (`blocksPlaced >= 8`) to enter its Interior!
-    const enterable = this.getNearestEnterableCastle(px, pz);
     if (enterable && enterable.doorDist <= 5.6) {
       return this.tryEnterNearestCastle();
     }
@@ -4667,6 +4707,13 @@ export class CastleAndQuarryManager {
 
       if (c.blocksPlaced >= totalSlots || dSq > 120 * 120) continue;
 
+      const wantBuildIndicators = c.blocksPlaced < 8 || this.carriedChiseledBlocks > 0;
+      if (c.groundTargetRing.visible !== wantBuildIndicators) {
+        c.groundTargetRing.visible = wantBuildIndicators;
+        c.beaconArrowGroup.visible = wantBuildIndicators;
+      }
+      if (!wantBuildIndicators) continue;
+
       const bob = Math.sin(elapsedTime * 4.2) * 0.28;
       const nextSlot = assets.castleSlots[c.blocksPlaced];
       c.beaconArrowGroup.position.y = nextSlot.localPos.y + 1.45 + bob;
@@ -4769,8 +4816,9 @@ export class CastleAndQuarryManager {
             `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Castle (K)</button></div>`;
         } else {
           const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
-          const dropX = activeCastle.x + nextSlot.groundDropLocal.x;
-          const dropZ = activeCastle.z + nextSlot.groundDropLocal.z;
+          this.getSlotDropWorldPos(activeCastle, nextSlot, tempDropWorld);
+          const dropX = tempDropWorld.x;
+          const dropZ = tempDropWorld.z;
           guideTargetX = dropX;
           guideTargetZ = dropZ;
           guideColor = 0x48cae4;
@@ -4778,9 +4826,13 @@ export class CastleAndQuarryManager {
           const dir = formatCompassDir(dropX - px, dropZ - pz);
 
           if (dist <= 4.8 || Math.hypot(activeCastle.x - px, activeCastle.z - pz) <= 8.8) {
+            const enterKeepBtn =
+              activeCastle.blocksPlaced >= 8
+                ? `<button type="button" class="hut-action-pill masonry-action-enter-castle" title="Enter Castle Interior (Enter)">🏰 Enter (Enter)</button>`
+                : '';
             bannerHtml =
               `<div class="masonry-main-row"><span>🏰 <strong>${nextSlot.label}</strong></span>` +
-              `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block (E)</button></div>` +
+              `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block (E)</button>${enterKeepBtn}</div>` +
               this.buildCastleProgressStripHtml(activeCastle);
           } else {
             bannerHtml =
@@ -4806,11 +4858,16 @@ export class CastleAndQuarryManager {
           guideColor = 0xffd166;
           const dist = Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz);
           const dir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
+          const enterableNear = this.getNearestEnterableCastle(px, pz);
           if (dist <= 4.8) {
             bannerHtml =
               `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Workbench</strong> (${this.carriedRawStones}🪨)</span>` +
               `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel (E)</button></div>` +
               (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
+          } else if (enterableNear && enterableNear.doorDist <= 5.2) {
+            bannerHtml =
+              `<div class="masonry-main-row"><span>🏰 <strong>${enterableNear.castle.name}</strong> • 🧭 Stone <strong>${dist.toFixed(0)}m ${dir}</strong> → <span class="masonry-tag">⛏️ Quarry</span></span>` +
+              `<button type="button" class="hut-action-pill masonry-action-enter-castle">🏰 Enter (E)</button></div>`;
           } else {
             bannerHtml =
               `<div class="masonry-main-row"><span>🧭 Carry Stone <strong>${dist.toFixed(0)}m ${dir}</strong> → <span class="masonry-tag">⛏️ Quarry</span></span>` +
