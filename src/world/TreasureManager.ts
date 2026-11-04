@@ -783,11 +783,11 @@ export class TreasureManager {
       const lidAngle = -Math.min(1, t / 0.32) * (Math.PI * 0.62);
       chest.lidPivot.rotation.x = lidAngle;
 
-      chest.glowRing.scale.setScalar(1.0 + t * 2.5);
-      (chest.glowRing.material as THREE.MeshBasicMaterial).opacity = Math.max(
-        0,
-        0.5 * (1 - t * 1.2)
-      );
+      if (t < 0.42) {
+        chest.glowRing.scale.setScalar(1.0 + t * 2.5);
+      } else {
+        chest.glowRing.visible = false;
+      }
 
       if (chest.sparkles) {
         chest.sparkles.position.y = 0.5 + t * 2.2;

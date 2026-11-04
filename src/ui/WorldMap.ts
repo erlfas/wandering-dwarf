@@ -328,6 +328,9 @@ export class WorldMap {
           if (e.code === 'KeyA' || e.code === 'ArrowLeft') this.viewCenterX -= panStep;
           if (e.code === 'KeyD' || e.code === 'ArrowRight') this.viewCenterX += panStep;
           this.render();
+        } else if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+          // Block all other 3D gameplay keys while the World Map modal is open
+          e.stopImmediatePropagation();
         }
       },
       true
@@ -576,21 +579,6 @@ export class WorldMap {
       this.onDiscoveryChanged?.();
       if (this.isOpen) {
         this.render();
-      } else {
-        // Pre-bake at most 1 uncached touched chunk while the map is closed so tiles are warm when pressing M
-        const playerCx = Math.round(worldX / this.config.chunkSize);
-        const playerCz = Math.round(worldZ / this.config.chunkSize);
-        const playerChunkKey = packCoord(playerCx, playerCz);
-        if (this.touchedChunks.has(playerChunkKey) && !this.chunkCache.has(playerChunkKey)) {
-          this.getOrBuildChunkCache(playerCx, playerCz);
-        } else {
-          for (const cKey of this.touchedChunks) {
-            if (!this.chunkCache.has(cKey)) {
-              this.getOrBuildChunkCache(unpackX(cKey), unpackZ(cKey));
-              break;
-            }
-          }
-        }
       }
     }
   }

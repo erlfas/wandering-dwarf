@@ -184,6 +184,17 @@ export class WaterReflectionController {
   private savedClearColor = new THREE.Color();
   private frameCounter = 0;
   private hasRenderedOnce = false;
+  private lastProbePx = Number.NaN;
+  private lastProbePz = Number.NaN;
+  private lastProbeDirX = Number.NaN;
+  private lastProbeDirZ = Number.NaN;
+  private lastProbeWaterY = Number.NaN;
+  private cachedHasNearbyWater = false;
+  private cachedBestWaterX = 0;
+  private cachedBestWaterZ = 0;
+  private cachedNeedForwardProjection = false;
+  public readonly excludeFromReflection: THREE.Object3D[] = [];
+  private readonly savedExcludedVis: boolean[] = [];
 
   constructor(private readonly waterUniforms: WaterUniforms) {
     this.renderTarget = new THREE.WebGLRenderTarget(512, 512, {
@@ -219,68 +230,94 @@ export class WaterReflectionController {
     // Check if there is any water near the player before running the reflection pass
     const px = dwarfRoot.position.x;
     const pz = dwarfRoot.position.z;
-    const groundAtPlayer = sampleGroundHeight(px, pz);
-
-    // Find whether water is right under/around the player so the dwarf's reflection lands on water
-    let hasNearbyWater = groundAtPlayer < waterY + 0.25;
-    let bestWaterX = px;
-    let bestWaterZ = pz;
-
     const camToDwarfX = px - this.cameraWorldPos.x;
     const camToDwarfZ = pz - this.cameraWorldPos.z;
     const camHorizDist = Math.hypot(camToDwarfX, camToDwarfZ) || 1.0;
     const dirX = camToDwarfX / camHorizDist;
     const dirZ = camToDwarfZ / camHorizDist;
 
-    // In a standard planar mirror from behind the dwarf, the unshifted ray hits between camera and dwarf
-    const naturalHitDist = -1.6;
-    const naturalHitX = px + dirX * naturalHitDist;
-    const naturalHitZ = pz + dirZ * naturalHitDist;
-    const naturalHitGround = sampleGroundHeight(naturalHitX, naturalHitZ);
+    const dxProbe = px - this.lastProbePx;
+    const dzProbe = pz - this.lastProbePz;
+    const dDirX = dirX - this.lastProbeDirX;
+    const dDirZ = dirZ - this.lastProbeDirZ;
+    const needReprobe =
+      !Number.isFinite(this.lastProbePx) ||
+      dxProbe * dxProbe + dzProbe * dzProbe > 0.35 * 0.35 ||
+      dDirX * dDirX + dDirZ * dDirZ > 0.025 * 0.025 ||
+      waterY !== this.lastProbeWaterY;
 
-    let needForwardProjection = false;
-    if (naturalHitGround < waterY - 0.05) {
-      // Camera is looking across water at the dwarf (or dwarf is swimming in water)
-      hasNearbyWater = true;
-      bestWaterX = naturalHitX;
-      bestWaterZ = naturalHitZ;
-    } else {
-      // Check in front of the dwarf (along camera view direction and dwarf facing direction) for shoreline water
-      const faceX = Math.sin(dwarfHeading);
-      const faceZ = Math.cos(dwarfHeading);
-      for (let d = 1.2; d <= 12.0; d += 1.4) {
-        const testX1 = px + dirX * d;
-        const testZ1 = pz + dirZ * d;
-        if (sampleGroundHeight(testX1, testZ1) < waterY - 0.08) {
-          hasNearbyWater = true;
-          bestWaterX = testX1;
-          bestWaterZ = testZ1;
-          needForwardProjection = d <= 7.5;
-          break;
-        }
-        const testX2 = px + faceX * d;
-        const testZ2 = pz + faceZ * d;
-        if (sampleGroundHeight(testX2, testZ2) < waterY - 0.08) {
-          hasNearbyWater = true;
-          bestWaterX = testX2;
-          bestWaterZ = testZ2;
-          needForwardProjection = d <= 7.5;
-          break;
-        }
-      }
-      // Also check radial directions within 18m so ponds in view still get environment reflections
-      if (!hasNearbyWater) {
-        for (let a = 0; a < 8; a++) {
-          const ang = (a * Math.PI) / 4;
-          const tx = px + Math.cos(ang) * 14.0;
-          const tz = pz + Math.sin(ang) * 14.0;
-          if (sampleGroundHeight(tx, tz) < waterY - 0.1) {
+    if (needReprobe) {
+      this.lastProbePx = px;
+      this.lastProbePz = pz;
+      this.lastProbeDirX = dirX;
+      this.lastProbeDirZ = dirZ;
+      this.lastProbeWaterY = waterY;
+
+      const groundAtPlayer = sampleGroundHeight(px, pz);
+      let hasNearbyWater = groundAtPlayer < waterY + 0.25;
+      let bestWaterX = px;
+      let bestWaterZ = pz;
+
+      // In a standard planar mirror from behind the dwarf, the unshifted ray hits between camera and dwarf
+      const naturalHitDist = -1.6;
+      const naturalHitX = px + dirX * naturalHitDist;
+      const naturalHitZ = pz + dirZ * naturalHitDist;
+      const naturalHitGround = sampleGroundHeight(naturalHitX, naturalHitZ);
+
+      let needForwardProjection = false;
+      if (naturalHitGround < waterY - 0.05) {
+        // Camera is looking across water at the dwarf (or dwarf is swimming in water)
+        hasNearbyWater = true;
+        bestWaterX = naturalHitX;
+        bestWaterZ = naturalHitZ;
+      } else {
+        // Check in front of the dwarf (along camera view direction and dwarf facing direction) for shoreline water
+        const faceX = Math.sin(dwarfHeading);
+        const faceZ = Math.cos(dwarfHeading);
+        for (let d = 1.2; d <= 12.0; d += 1.4) {
+          const testX1 = px + dirX * d;
+          const testZ1 = pz + dirZ * d;
+          if (sampleGroundHeight(testX1, testZ1) < waterY - 0.08) {
             hasNearbyWater = true;
+            bestWaterX = testX1;
+            bestWaterZ = testZ1;
+            needForwardProjection = d <= 7.5;
+            break;
+          }
+          const testX2 = px + faceX * d;
+          const testZ2 = pz + faceZ * d;
+          if (sampleGroundHeight(testX2, testZ2) < waterY - 0.08) {
+            hasNearbyWater = true;
+            bestWaterX = testX2;
+            bestWaterZ = testZ2;
+            needForwardProjection = d <= 7.5;
             break;
           }
         }
+        // Also check radial directions within 18m so ponds in view still get environment reflections
+        if (!hasNearbyWater) {
+          for (let a = 0; a < 8; a++) {
+            const ang = (a * Math.PI) / 4;
+            const tx = px + Math.cos(ang) * 14.0;
+            const tz = pz + Math.sin(ang) * 14.0;
+            if (sampleGroundHeight(tx, tz) < waterY - 0.1) {
+              hasNearbyWater = true;
+              break;
+            }
+          }
+        }
       }
+
+      this.cachedHasNearbyWater = hasNearbyWater;
+      this.cachedBestWaterX = bestWaterX;
+      this.cachedBestWaterZ = bestWaterZ;
+      this.cachedNeedForwardProjection = needForwardProjection;
     }
+
+    const hasNearbyWater = this.cachedHasNearbyWater;
+    const bestWaterX = this.cachedBestWaterX;
+    const bestWaterZ = this.cachedBestWaterZ;
+    const needForwardProjection = this.cachedNeedForwardProjection;
 
     if (!hasNearbyWater) {
       this.waterUniforms.uReflectionActive.value = 0.0;
@@ -307,7 +344,7 @@ export class WaterReflectionController {
     vCam.position.copy(this.view);
     vCam.up.set(0, 1, 0).applyMatrix4(this.rotationMatrix).reflect(this.normal);
     vCam.lookAt(this.target);
-    vCam.far = Math.min(camera.far, 140.0);
+    vCam.far = Math.min(camera.far, 78.0);
     vCam.near = camera.near;
     vCam.fov = camera.fov;
     vCam.aspect = camera.aspect;
@@ -389,6 +426,10 @@ export class WaterReflectionController {
     waterMaterial.visible = false;
     scene.background = null;
     renderer.shadowMap.autoUpdate = false;
+    for (let i = 0; i < this.excludeFromReflection.length; i++) {
+      this.savedExcludedVis[i] = this.excludeFromReflection[i].visible;
+      this.excludeFromReflection[i].visible = false;
+    }
     renderer.setRenderTarget(this.renderTarget);
     if (prevBg instanceof THREE.Color) {
       renderer.setClearColor(prevBg, 0.0);
@@ -399,6 +440,9 @@ export class WaterReflectionController {
     renderer.render(scene, vCam);
 
     // 6. Restore scene and dwarf state
+    for (let i = 0; i < this.excludeFromReflection.length; i++) {
+      this.excludeFromReflection[i].visible = this.savedExcludedVis[i];
+    }
     waterMaterial.visible = prevWaterVis;
     scene.background = prevBg;
     renderer.shadowMap.autoUpdate = prevShadowAuto;

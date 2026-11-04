@@ -514,6 +514,8 @@ export class HutManager {
   private lastHearthWarmthTime = -999;
   private nextArtefactCursor = 0;
   private collectedArtefactIds = new Set<string>();
+  private cachedCollectedArtefactIds: string[] = [];
+  private collectedArtefactIdsDirty = true;
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -525,6 +527,7 @@ export class HutManager {
   private lastBannerHtml = '';
   private lastBannerVisible = false;
   private onEnterHutCallback?: () => void;
+  private onExitHutCallback?: () => void;
   private onWarmHearthCallback?: () => void;
 
   private readonly interiorBgColor = new THREE.Color(0x23262e);
@@ -553,7 +556,6 @@ export class HutManager {
     this.artefactsCountEl = document.getElementById('artefacts-value');
     this.toastContainer = document.getElementById('pickup-toasts');
 
-    loadDwarvenHutInteriorModel();
     this.buildInteriorStage();
     this.syncArtefactHUD();
 
@@ -582,12 +584,47 @@ export class HutManager {
     this.onEnterHutCallback = cb;
   }
 
+  public setOnExitHutCallback(cb: () => void): void {
+    this.onExitHutCallback = cb;
+  }
+
   public setOnWarmHearthCallback(cb: () => void): void {
     this.onWarmHearthCallback = cb;
   }
 
   public isInsideHut(): boolean {
     return this.activeHut !== null;
+  }
+
+  public getActiveHut(): HutPlacement | null {
+    return this.activeHut;
+  }
+
+  public getOutdoorSavePose(): {
+    x: number;
+    y: number;
+    z: number;
+    heading: number;
+    yaw: number;
+    pitch: number;
+    distance: number;
+  } | null {
+    const hut = this.activeHut;
+    if (!hut) return null;
+    const outDist = 2.85 * hut.scale;
+    return {
+      x: hut.worldX + Math.sin(hut.rotationY) * outDist,
+      y: hut.worldY,
+      z: hut.worldZ + Math.cos(hut.rotationY) * outDist,
+      heading: hut.rotationY,
+      yaw: hut.rotationY + Math.PI,
+      pitch: 0.46,
+      distance: 11.5,
+    };
+  }
+
+  public getCollectedArtefactCount(): number {
+    return this.collectedArtefactIds.size;
   }
 
   public getInteriorFloorHeight(fallbackY: number): number {
@@ -599,7 +636,11 @@ export class HutManager {
   }
 
   public getCollectedArtefactIds(): string[] {
-    return Array.from(this.collectedArtefactIds);
+    if (this.collectedArtefactIdsDirty) {
+      this.cachedCollectedArtefactIds = Array.from(this.collectedArtefactIds);
+      this.collectedArtefactIdsDirty = false;
+    }
+    return this.cachedCollectedArtefactIds;
   }
 
   public restoreProgress(
@@ -611,6 +652,7 @@ export class HutManager {
         ? Math.floor(artefactsCollected)
         : 0;
     this.collectedArtefactIds.clear();
+    this.collectedArtefactIdsDirty = true;
     if (Array.isArray(collectedArtefactIds) && collectedArtefactIds.length > 0) {
       for (const id of collectedArtefactIds) {
         if (typeof id === 'string') {
@@ -633,6 +675,7 @@ export class HutManager {
     }
     this.artefactsCollected = 0;
     this.collectedArtefactIds.clear();
+    this.collectedArtefactIdsDirty = true;
     this.nextArtefactCursor = 0;
     this.syncArtefactHUD();
     this.rebuildAll();
@@ -765,6 +808,7 @@ export class HutManager {
 
   public enterHut(hut: HutPlacement): void {
     if (this.activeHut) return;
+    loadDwarvenHutInteriorModel();
     this.onEnterHutCallback?.();
 
     this.activeHut = hut;
@@ -850,6 +894,7 @@ export class HutManager {
       this.dwarf.spawnBurst(outX, hut.worldY, outZ, 10);
       this.playDoorSound(false);
     }
+    this.onExitHutCallback?.();
   }
 
   private collectCurrentArtefact(): void {
@@ -858,6 +903,7 @@ export class HutManager {
     this.artefactsCollected += 1;
     const def = this.currentArtefactDef;
     this.collectedArtefactIds.add(def.id);
+    this.collectedArtefactIdsDirty = true;
     this.artefactFloatingGroup.visible = false;
     this.artefactRingMesh.visible = false;
     this.syncArtefactHUD();
@@ -1043,6 +1089,10 @@ export class HutManager {
     this.nearestHut = bestHut;
     this.nearestHutDist = bestHut ? Math.sqrt(bestHutDistSq) : Infinity;
     this.nearestDoorDist = bestHut ? Math.sqrt(bestDoorDistSq) : Infinity;
+
+    if (this.nearestHutDist <= 28.0) {
+      loadDwarvenHutInteriorModel();
+    }
 
     // Automatically enter the hut if the dwarf walks onto the glowing front doorway ring
     if (bestHut && this.exitCooldown <= 0 && this.nearestDoorDist <= 1.48) {

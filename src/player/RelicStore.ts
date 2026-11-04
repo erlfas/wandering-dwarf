@@ -125,6 +125,10 @@ export class RelicStore {
     return this.unlocked.has(id);
   }
 
+  public getUnlockedCount(): number {
+    return this.unlocked.size;
+  }
+
   public getUnlockedIds(): string[] {
     return Array.from(this.unlocked);
   }

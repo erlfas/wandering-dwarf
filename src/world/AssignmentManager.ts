@@ -175,8 +175,8 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     chapter: 2,
     title: 'Tools of the Ancestors',
     icon: '⚒️',
-    description: 'Unlock 1 Ancient Relic (1-4) OR purchase 1 Dwarven House Tool (B near a Hut).',
-    hint: 'Spend Gold on Relic 1 (Runic Boots) or press B near any Dwarven Hut.',
+    description: 'Unlock 1 Ancient Relic (1-4) OR purchase 1 Dwarven House Tool (E to enter Hut, Keys 5-8).',
+    hint: 'Spend Gold on Relic 1 (Runic Boots) or enter any Dwarven Hut (E) and buy a House Tool (5-8).',
     rewardGold: 60,
     rewardRenown: 90,
     getProgress: (s) => ({
@@ -204,8 +204,8 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     chapter: 4,
     title: 'Strike the Living Rock',
     icon: '⛏️',
-    description: 'Set up a Stone Quarry (Q near boulders) and chisel 2 Castle Blocks (R).',
-    hint: 'Gather raw boulders with E, drop them in your Quarry, and hold/press R to chisel blocks.',
+    description: 'Set up a Stone Quarry (Q near boulders) and chisel 2 Castle Blocks (E).',
+    hint: 'Gather raw boulders with E, carry them to your Quarry, and press E to chisel blocks.',
     rewardGold: 95,
     rewardRenown: 120,
     getProgress: (s) => ({
@@ -218,8 +218,8 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     chapter: 5,
     title: 'Raise the Border Keep (Tier I)',
     icon: '🏰',
-    description: 'Stake a Castle Site (C) and deliver 8 Chiseled Blocks to complete a Tier I Keep.',
-    hint: 'Use the Architect Pulley Crane (G) or carry blocks to your Castle foundation.',
+    description: 'Stake a Castle Site (K) and deliver 8 Chiseled Blocks to complete a Tier I Keep.',
+    hint: 'Press K on level ground to stake a Castle, then carry Chiseled Blocks there and press E.',
     rewardGold: 130,
     rewardRenown: 150,
     rewardFood: 3,
@@ -233,8 +233,8 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     chapter: 6,
     title: 'Steel & Oak of the Armory',
     icon: '🛡️',
-    description: 'Forge or equip 1 Melee Weapon AND 1 Shield at your Keep Armory (B near Castle).',
-    hint: 'Walk up to your completed Keep and press B (or enter the Keep Hall with E) to open the Armory.',
+    description: 'Forge or equip 1 Melee Weapon AND 1 Shield at your Keep Armory (E to enter Castle, Keys 5-9).',
+    hint: 'Walk to your completed Keep drawbridge, press E to enter the Hall, and buy a Weapon (5-8) & Shield (9).',
     rewardGold: 110,
     rewardRenown: 130,
     getProgress: (s) => ({
@@ -262,8 +262,8 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     chapter: 8,
     title: 'Bounty of Forest & Fjord',
     icon: '🏹',
-    description: 'Harvest 3 wild game or fish using your Hunting Bow (I) or Fishing Rod (K).',
-    hint: 'Press I to draw your Bow and hunt stags (O to shoot), or press K near water to cast a line.',
+    description: 'Harvest 3 wild game or fish using your Hunting Bow (H) or Fishing Rod (F).',
+    hint: 'Press H to draw your Bow and hunt stags (Click/Space to shoot), or press F near water to cast a line.',
     rewardGold: 140,
     rewardRenown: 150,
     getProgress: (s) => ({
@@ -277,7 +277,7 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     title: 'Stonewall Stronghold (Tier II)',
     icon: '🧱',
     description: 'Expand a Castle to 18 Blocks to raise the Tier II Stonewall Stronghold & Twin Towers.',
-    hint: 'Upgrade your Chisel & Stone Hauler at a Hut (B) to haul and chisel stone twice as fast!',
+    hint: 'Upgrade your Chisel & Stone Hauler inside a Hut (E, Keys 5-6) to haul and chisel stone twice as fast!',
     rewardGold: 190,
     rewardRenown: 200,
     rewardFood: 4,
@@ -373,7 +373,7 @@ const CONTRACT_TEMPLATES: ContractTemplate[] = [
     rewardGold: 75,
     rewardRenown: 75,
     rewardFood: 1,
-    formatDesc: (n) => `Chisel ${n} new stone blocks at any Quarry (R).`,
+    formatDesc: (n) => `Chisel ${n} new stone blocks at any Quarry (E).`,
     extractMetric: (s) => s.blocksChiseledTotal,
   },
   {
@@ -384,7 +384,7 @@ const CONTRACT_TEMPLATES: ContractTemplate[] = [
     rewardGold: 95,
     rewardRenown: 85,
     rewardFood: 2,
-    formatDesc: (n) => `Deliver ${n} Chiseled Blocks to any Castle site.`,
+    formatDesc: (n) => `Deliver ${n} Chiseled Blocks to any Castle site (E).`,
     extractMetric: (s) => s.totalBlocksPlaced,
   },
   {
@@ -406,7 +406,7 @@ const CONTRACT_TEMPLATES: ContractTemplate[] = [
     rewardGold: 85,
     rewardRenown: 75,
     rewardFood: 2,
-    formatDesc: (n) => `Catch ${n} fresh fish with your Dwarven Fishing Rod (K).`,
+    formatDesc: (n) => `Catch ${n} fresh fish with your Dwarven Fishing Rod (F).`,
     extractMetric: (s) => s.fishCaughtTotal,
   },
   {
@@ -417,7 +417,7 @@ const CONTRACT_TEMPLATES: ContractTemplate[] = [
     rewardGold: 90,
     rewardRenown: 80,
     rewardFood: 2,
-    formatDesc: (n) => `Hunt ${n} wild stags with your Dwarven Bow (I & O).`,
+    formatDesc: (n) => `Hunt ${n} wild stags with your Dwarven Bow (H & Click/Space).`,
     extractMetric: (s) => s.deerHuntedTotal,
   },
   {
@@ -595,7 +595,7 @@ export class AssignmentManager {
   }
 
   public getActiveContract(): ActiveGuildContract | null {
-    return this.activeContract
+    return this.activeContract ? { ...this.activeContract } : null
   }
 
   public isWarhornBuffActive(): boolean {
@@ -938,8 +938,13 @@ export class AssignmentManager {
         ? Math.max(0, Math.floor(saved.renownXp))
         : this.completedChronicleIds.size * 110
 
+    this.warhornCooldown = 0
+    this.warhornBuffTimer = 0
     if (saved.activeContract && typeof saved.activeContract.type === 'string') {
-      this.activeContract = saved.activeContract
+      this.activeContract = { ...saved.activeContract }
+    } else {
+      this.activeContract = null
+      this.contractCycleIndex = 0
     }
     this.recalculateRank(false)
     this.lastHudSignature = ''

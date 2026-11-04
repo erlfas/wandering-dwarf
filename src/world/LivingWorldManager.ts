@@ -204,6 +204,7 @@ export class LivingWorldManager {
   private isNight = false;
   private hazardHitCooldown = 0;
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
+  private readonly skyHorizonColor: THREE.Color;
 
   constructor(
     private config: WorldConfig,
@@ -217,6 +218,10 @@ export class LivingWorldManager {
     private onSyncGui?: () => void
   ) {
     this.group.matrixAutoUpdate = false;
+    this.skyHorizonColor =
+      this.scene.background instanceof THREE.Color
+        ? this.scene.background
+        : new THREE.Color(0xd7e3ec);
     this.buildStarfieldDome();
     this.attachDwarfLantern();
 
@@ -540,7 +545,7 @@ export class LivingWorldManager {
     }
   }
 
-  private updateAtmosphereAndLantern(
+  public updateAtmosphereAndLantern(
     elapsedTime: number,
     playerPos: THREE.Vector3,
     sunOffsetOut: THREE.Vector3
@@ -561,7 +566,7 @@ export class LivingWorldManager {
     this.isNight = nightFactor > 0.45;
 
     // 1. Sky & Fog Color
-    const skyCol = this.scene.background as THREE.Color;
+    const skyCol = this.skyHorizonColor;
     skyCol.copy(SKY_DAY).lerp(SKY_NIGHT, nightFactor);
     if (twilightFactor > 0.01) {
       skyCol.lerp(isDawn ? SKY_DAWN : SKY_SUNSET, twilightFactor * 0.78);

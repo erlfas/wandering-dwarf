@@ -266,10 +266,12 @@ export class TrollCombatManager {
     this.defeatedAudio.preload = 'auto';
 
     this.initTrollPool();
-    this.loadTrollGlbModel();
     this.bindCombatEvents();
     this.syncTrollsSlainHUD();
   }
+
+  private trollGlbLoadStarted = false;
+  private bannerUpdateAccum = 999;
 
   private initTrollPool(): void {
     const assets = getSharedTrollFallbackAssets();
@@ -393,6 +395,8 @@ export class TrollCombatManager {
    * - Attaches a 3D spiked war-club to the right hand bone
    */
   private loadTrollGlbModel(): void {
+    if (this.trollGlbLoadStarted) return;
+    this.trollGlbLoadStarted = true;
     const loader = createOptimizedGlbLoader();
     loader.load(
       trollModelUrl,
@@ -587,6 +591,7 @@ export class TrollCombatManager {
   }
 
   public spawnNightTrollsAroundPlayer(playerPos: THREE.Vector3, announce = false): void {
+    this.loadTrollGlbModel();
     const minLandY = this.config.enableWater ? this.config.waterLevel + 0.45 : -999;
     let spawnedAny = false;
 
@@ -723,8 +728,9 @@ export class TrollCombatManager {
     troll.pos.y = this.sampleGroundHeight(troll.pos.x, troll.pos.z);
 
     if (!isExhaustedStrike && troll.state !== 'attack') {
-      troll.staggerTimer = 0.28;
+      troll.staggerTimer = Math.max(troll.staggerTimer, 0.28);
     }
+    this.bannerUpdateAccum = 999;
 
     this.dwarf.spawnBurst(troll.pos.x, troll.pos.y + 1.25, troll.pos.z, isExhaustedStrike ? 6 : 16);
     this.playOneShotPool(this.hitAudioPool, isExhaustedStrike ? 0.45 : 0.85, () =>
@@ -820,7 +826,11 @@ export class TrollCombatManager {
     }
 
     const insideSanctuary = this.isPlayerInsideSanctuary();
-    const wantNight = this.isNightNow();
+    const hour = ((this.config.timeOfDay % 24) + 24) % 24;
+    if (!this.trollGlbLoadStarted && (hour >= 18.0 || hour < 6.0)) {
+      this.loadTrollGlbModel();
+    }
+    const wantNight = hour >= 19.5 || hour < 5.5;
 
     if (wantNight && !this.isNightActive) {
       this.isNightActive = true;
@@ -1045,8 +1055,17 @@ export class TrollCombatManager {
     // Update ElevenLabs Ominous Troll Proximity Audio (louder & higher-pitched the nearer the troll gets!)
     this.updateOminousProximityAudio(insideSanctuary ? Infinity : nearestLivingDist);
 
-    // Update Visible Troll Defeat Tracker HUD Banner
-    this.updateTrackerBanner(insideSanctuary ? null : nearestTroll, nearestLivingDist);
+    // Update Visible Troll Defeat Tracker HUD Banner (throttled to ~10 Hz while active)
+    const bannerTroll = insideSanctuary ? null : nearestTroll;
+    if (!bannerTroll || nearestLivingDist > 38.0) {
+      this.setBanner(false, '');
+    } else {
+      this.bannerUpdateAccum += dt;
+      if (this.bannerUpdateAccum >= 0.1) {
+        this.bannerUpdateAccum = 0;
+        this.updateTrackerBanner(bannerTroll, nearestLivingDist);
+      }
+    }
   }
 
   private resolveTrollStrikeOnDwarf(troll: TrollInstance): void {

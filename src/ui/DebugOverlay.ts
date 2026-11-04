@@ -204,7 +204,7 @@ export class DebugOverlay {
 
     const camCtrl = debugFolder
       .add(config, 'cameraMode', ['dwarf', 'free'])
-      .name('Camera Mode (V)');
+      .name('Camera Mode (Shift+V)');
 
     debugFolder
       .add(config, 'showDwarfProxy')

@@ -144,6 +144,9 @@ const landmarkManager = new LandmarkManager(
   (tx, tz, label) => {
     hutManager.exitCurrentHut(true);
     castleInteriorManager.exitCurrentCastle(true);
+    fishingManager.exitFishingMode();
+    huntingManager.exitHuntingMode();
+    syncBeaconFog();
     explorer.setPose(tx, tz, explorer.getHeading(), explorer.yaw, explorer.pitch, explorer.distance);
     chunkManager.update(
       explorer.playerPos.x,
@@ -339,6 +342,9 @@ hutManager.setOnEnterHutCallback(() => {
   fishingManager.exitFishingMode();
   huntingManager.exitHuntingMode();
 });
+hutManager.setOnExitHutCallback(() => {
+  syncBeaconFog();
+});
 hutManager.setOnWarmHearthCallback(() => {
   const wasActive = landmarkManager.campfireBuffTimer > 50.0;
   landmarkManager.campfireBuffTimer = 60.0;
@@ -372,11 +378,13 @@ castleInteriorManager.setCallbacks(
     persistCurrentProgress(true);
   },
   () => {
+    syncBeaconFog();
     castleAndQuarryManager.renderCastleArmoryShop();
     persistCurrentProgress(true);
   },
   (visit) => {
     config.timeOfDay = 6.5;
+    livingWorldManager.updateAtmosphereAndLantern(clock.elapsedTime, explorer.playerPos, sunOffset);
     castleAndQuarryManager.healAndRestoreFull();
     trollCombatManager.despawnAllTrolls(false);
     debugOverlay?.syncDisplay();
@@ -389,6 +397,11 @@ castleInteriorManager.setCallbacks(
 );
 
 castleAndQuarryManager.isInsideCastleFn = () => castleInteriorManager.isInsideCastle();
+castleAndQuarryManager.isActionBlockedFn = () =>
+  isGameMenuOpen() ||
+  (worldMap?.isMapOpen() ?? false) ||
+  fishingManager.isFishingActive() ||
+  huntingManager.isHuntingActive();
 castleAndQuarryManager.getActiveCastleVisitFn = () => castleInteriorManager.getActiveCastleVisit();
 castleAndQuarryManager.onRequestEnterCastle = (visit) => {
   if (!castleInteriorManager.canEnterNow()) return;
@@ -405,6 +418,12 @@ castleAndQuarryManager.onRequestRestUntilDawn = () => {
 };
 
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
+waterReflection.excludeFromReflection.push(
+  dwarf.trailPoints,
+  treasureManager.group,
+  challengeManager.group,
+  fishingManager.group
+);
 
 treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 landmarkManager.setSurfaceHeightSampler(sampleSurfaceHeight);
@@ -448,9 +467,9 @@ const assignmentManager = new AssignmentManager({
     reusableAssignmentSnapshot.chestsOpened = treasureManager.chestsCollected;
     reusableAssignmentSnapshot.beaconsLit = landmarkManager.getLitBeaconCount();
     reusableAssignmentSnapshot.foodCollectedTotal = castleAndQuarryManager.foodCount;
-    reusableAssignmentSnapshot.relicsUnlocked = relicStore.getUnlockedIds().length;
+    reusableAssignmentSnapshot.relicsUnlocked = relicStore.getUnlockedCount();
     reusableAssignmentSnapshot.houseToolsOwned =
-      castleAndQuarryManager.getUnlockedEquipmentIds().length;
+      castleAndQuarryManager.getUnlockedEquipmentCount();
     reusableAssignmentSnapshot.artefactsCollected = hutManager.artefactsCollected;
     reusableAssignmentSnapshot.collectedArtefactIds = hutManager.getCollectedArtefactIds();
     reusableAssignmentSnapshot.quarriesBuilt = castleAndQuarryManager.getQuarryCount();
@@ -528,6 +547,19 @@ if (savedProgress) {
   trollCombatManager.restoreProgress(savedProgress.trollsSlain);
   fishingManager.fishCaughtCount = savedProgress.fishCaughtTotal ?? 0;
   huntingManager.setDeerHuntedCount(savedProgress.deerHuntedTotal ?? 0);
+  assignmentManager.loadState({
+    completedChronicleIds: savedProgress.completedChronicleIds,
+    renownXp: savedProgress.renownXp,
+    activeContract: savedProgress.activeContract,
+  });
+  const rankDef = assignmentManager.getRankDef();
+  castleAndQuarryManager.setRankBonuses(
+    rankDef.maxHpBonus,
+    rankDef.maxEnergyBonus,
+    rankDef.damageMult,
+    rankDef.carrySpeedBonus,
+    false
+  );
   castleAndQuarryManager.restoreProgress(
     savedProgress.quarries,
     savedProgress.castles,
@@ -542,18 +574,6 @@ if (savedProgress) {
     savedProgress.equippedShield,
     savedProgress.trollsSlain,
     savedProgress.blocksChiseledTotal
-  );
-  assignmentManager.loadState({
-    completedChronicleIds: savedProgress.completedChronicleIds,
-    renownXp: savedProgress.renownXp,
-    activeContract: savedProgress.activeContract,
-  });
-  const rankDef = assignmentManager.getRankDef();
-  castleAndQuarryManager.setRankBonuses(
-    rankDef.maxHpBonus,
-    rankDef.maxEnergyBonus,
-    rankDef.damageMult,
-    rankDef.carrySpeedBonus
   );
   dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
   syncBeaconFog();
@@ -593,23 +613,24 @@ const reusableSaveState: SavedProgress = {
 };
 
 function populateSaveState(): SavedProgress {
-  const activeCastle = castleInteriorManager.getActiveCastleVisit();
-  const saveX = activeCastle
-    ? activeCastle.worldX + Math.sin(activeCastle.rotationY) * 6.6
-    : explorer.playerPos.x;
-  const saveY = activeCastle ? activeCastle.worldY + 0.45 : explorer.playerPos.y;
-  const saveZ = activeCastle
-    ? activeCastle.worldZ + Math.cos(activeCastle.rotationY) * 6.6
-    : explorer.playerPos.z;
+  const outdoorPose =
+    castleInteriorManager.getOutdoorSavePose() ?? hutManager.getOutdoorSavePose();
+  const saveX = outdoorPose ? outdoorPose.x : explorer.playerPos.x;
+  const saveY = outdoorPose ? outdoorPose.y : explorer.playerPos.y;
+  const saveZ = outdoorPose ? outdoorPose.z : explorer.playerPos.z;
+  const saveHeading = outdoorPose ? outdoorPose.heading : explorer.getHeading();
+  const saveYaw = outdoorPose ? outdoorPose.yaw : explorer.yaw;
+  const savePitch = outdoorPose ? outdoorPose.pitch : explorer.pitch;
+  const saveDistance = outdoorPose ? outdoorPose.distance : explorer.distance;
 
   reusableSaveState.seed = config.seed;
   reusableSaveState.playerPos.x = Math.round(saveX * 100) / 100;
   reusableSaveState.playerPos.y = Math.round(saveY * 100) / 100;
   reusableSaveState.playerPos.z = Math.round(saveZ * 100) / 100;
-  reusableSaveState.heading = Math.round(explorer.getHeading() * 1000) / 1000;
-  reusableSaveState.yaw = Math.round(explorer.yaw * 1000) / 1000;
-  reusableSaveState.pitch = Math.round(explorer.pitch * 1000) / 1000;
-  reusableSaveState.distance = Math.round(explorer.distance * 100) / 100;
+  reusableSaveState.heading = Math.round(saveHeading * 1000) / 1000;
+  reusableSaveState.yaw = Math.round(saveYaw * 1000) / 1000;
+  reusableSaveState.pitch = Math.round(savePitch * 1000) / 1000;
+  reusableSaveState.distance = Math.round(saveDistance * 100) / 100;
   reusableSaveState.score = treasureManager.score;
   reusableSaveState.chestsCollected = treasureManager.chestsCollected;
   reusableSaveState.artefactsCollected = hutManager.artefactsCollected;
@@ -799,6 +820,19 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   livingWorldManager.rebuildAll();
   fishingManager.rebuildAll();
   huntingManager.rebuildAll();
+  assignmentManager.loadState({
+    completedChronicleIds: loaded.completedChronicleIds,
+    renownXp: loaded.renownXp,
+    activeContract: loaded.activeContract,
+  });
+  const rankDef = assignmentManager.getRankDef();
+  castleAndQuarryManager.setRankBonuses(
+    rankDef.maxHpBonus,
+    rankDef.maxEnergyBonus,
+    rankDef.damageMult,
+    rankDef.carrySpeedBonus,
+    false
+  );
   castleAndQuarryManager.restoreProgress(
     loaded.quarries,
     loaded.castles,
@@ -813,18 +847,6 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.equippedShield,
     loaded.trollsSlain,
     loaded.blocksChiseledTotal
-  );
-  assignmentManager.loadState({
-    completedChronicleIds: loaded.completedChronicleIds,
-    renownXp: loaded.renownXp,
-    activeContract: loaded.activeContract,
-  });
-  const rankDef = assignmentManager.getRankDef();
-  castleAndQuarryManager.setRankBonuses(
-    rankDef.maxHpBonus,
-    rankDef.maxEnergyBonus,
-    rankDef.damageMult,
-    rankDef.carrySpeedBonus
   );
   dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
   worldMap.reset();
@@ -1003,13 +1025,58 @@ gameMenuRestartBtn?.addEventListener('click', () => {
   setGameMenuOpen(false);
 });
 
+window.addEventListener(
+  'keydown',
+  (e) => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+    ) {
+      return;
+    }
+
+    // 1. When Game Menu modal is open, only allow Escape or KeyO to close it; block all background 3D actions
+    if (isGameMenuOpen()) {
+      if (e.code === 'Escape' || e.code === 'KeyO') {
+        if (!e.repeat) {
+          setGameMenuOpen(false);
+        }
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.stopImmediatePropagation();
+      }
+      return;
+    }
+
+    // 2. Prevent equipping Fishing Rod (F) or Hunting Bow (H) while inside a Hut or Castle Interior
+    if (
+      (e.code === 'KeyF' || e.code === 'KeyH') &&
+      (hutManager.isInsideHut() || castleInteriorManager.isInsideCastle())
+    ) {
+      e.stopImmediatePropagation();
+      return;
+    }
+
+    // 3. Prevent KeyE from triggering Hut/Castle entry or Quarry work while actively Fishing or Hunting
+    if (
+      e.code === 'KeyE' &&
+      (fishingManager.isFishingActive() || huntingManager.isHuntingActive())
+    ) {
+      e.stopImmediatePropagation();
+      return;
+    }
+  },
+  true
+);
+
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'KeyO') {
     setGameMenuOpen(!isGameMenuOpen());
   } else if (e.code === 'KeyJ') {
     assignmentManager.togglePanelExpanded();
-  } else if (e.code === 'KeyV') {
+  } else if (e.code === 'KeyV' && !e.shiftKey) {
     assignmentManager.tryBlowWarhorn();
   } else if (e.code === 'Escape') {
     if (isGameMenuOpen()) {

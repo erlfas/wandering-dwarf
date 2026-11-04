@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { createOptimizedGlbLoader } from '../world/ForestField';
 import dwarfModelUrl from '../../3dmodels/dwarf front t-pose 3d model.glb?url';
 
 type AnimState = 'idle' | 'walk' | 'run' | 'swim';
@@ -885,6 +885,23 @@ export class DwarfCharacter {
     this.warhornWaveRing.position.y = 0.35;
     this.warhornWaveRing.visible = false;
     this.root.add(this.warhornWaveRing);
+
+    // Freeze static child meshes on equipment/armor groups so updateMatrixWorld skips Euler/Quat recomputation
+    const freezeStaticMeshes = (group: THREE.Object3D) => {
+      group.traverse((child) => {
+        if (child !== group && child instanceof THREE.Mesh) {
+          child.updateMatrix();
+          child.matrixAutoUpdate = false;
+        }
+      });
+    };
+    freezeStaticMeshes(this.helmetGroup);
+    freezeStaticMeshes(this.pauldronsGroup);
+    freezeStaticMeshes(this.crownGroup);
+    freezeStaticMeshes(this.warhornGroup);
+    freezeStaticMeshes(this.backpackGroup);
+    freezeStaticMeshes(this.equippedWeaponGroup);
+    freezeStaticMeshes(this.equippedShieldGroup);
   }
 
   public setNaturalRockAsset(
@@ -1123,7 +1140,7 @@ export class DwarfCharacter {
   }
 
   private loadModel(): void {
-    const loader = new GLTFLoader();
+    const loader = createOptimizedGlbLoader();
     loader.load(
       dwarfModelUrl,
       (gltf) => {
@@ -1142,29 +1159,27 @@ export class DwarfCharacter {
             }
             obj.frustumCulled = true;
 
-            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-            for (const mat of mats) {
-              if (mat instanceof THREE.MeshStandardMaterial) {
-                const baseMap = mat.map;
-                const secondaryMaps = [
-                  mat.normalMap,
-                  mat.roughnessMap,
-                  mat.metalnessMap,
-                  mat.aoMap,
-                  mat.emissiveMap,
-                ];
-                mat.normalMap = null;
-                mat.roughnessMap = null;
-                mat.metalnessMap = null;
-                mat.aoMap = null;
-                mat.emissiveMap = null;
-                for (const tex of secondaryMaps) {
-                  if (tex && tex !== baseMap) {
-                    tex.dispose();
-                  }
+            const origMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+            if (origMat instanceof THREE.MeshStandardMaterial) {
+              const baseMap = origMat.map;
+              const secondaryMaps = [
+                origMat.normalMap,
+                origMat.roughnessMap,
+                origMat.metalnessMap,
+                origMat.aoMap,
+                origMat.emissiveMap,
+              ];
+              for (const tex of secondaryMaps) {
+                if (tex && tex !== baseMap) {
+                  tex.dispose();
                 }
-                mat.needsUpdate = true;
               }
+              obj.material = new THREE.MeshStandardMaterial({
+                map: baseMap,
+                roughness: 0.78,
+                metalness: 0.08,
+              });
+              origMat.dispose();
             }
           }
         });

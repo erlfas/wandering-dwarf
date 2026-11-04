@@ -410,6 +410,29 @@ export class CastleInteriorManager {
     return this.activeVisit;
   }
 
+  public getOutdoorSavePose(): {
+    x: number;
+    y: number;
+    z: number;
+    heading: number;
+    yaw: number;
+    pitch: number;
+    distance: number;
+  } | null {
+    const visit = this.activeVisit;
+    if (!visit) return null;
+    const outDist = 6.6;
+    return {
+      x: visit.worldX + Math.sin(visit.rotationY) * outDist,
+      y: visit.worldY + 0.45,
+      z: visit.worldZ + Math.cos(visit.rotationY) * outDist,
+      heading: visit.rotationY,
+      yaw: visit.rotationY + Math.PI,
+      pitch: 0.46,
+      distance: 11.5,
+    };
+  }
+
   public getInteriorFloorHeight(fallbackY: number): number {
     return this.activeVisit ? this.interiorFloorY : fallbackY;
   }

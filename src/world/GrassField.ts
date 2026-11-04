@@ -614,6 +614,11 @@ export class ChunkGrass {
   private primaryTallGrassCount = 0;
   private fullTallGrassCount = 0;
   private fullFlowerCount = 0;
+  private pendingClumpCount = 0;
+  private pendingClumpMat?: Float32Array;
+  private pendingClumpCol?: Float32Array;
+  private chunkBoundSphere?: THREE.Sphere;
+  private fallbackGrassMat?: THREE.Material;
 
   constructor(
     cx: number,
@@ -1033,17 +1038,11 @@ export class ChunkGrass {
     }
 
     if (clumpIdx > 0) {
-      this.clumpInstanced = buildPopulatedGrassInstancedMesh(
-        sharedClumpGeo ?? sharedTuftGeo,
-        sharedClumpMat ?? grassMaterial,
-        clumpIdx,
-        clumpMatBuf,
-        clumpColBuf,
-        chunkBoundSphere,
-        false
-      );
-      activeClumpMeshes.add(this.clumpInstanced);
-      this.group.add(this.clumpInstanced);
+      this.pendingClumpCount = clumpIdx;
+      this.pendingClumpMat = clumpMatBuf.slice(0, clumpIdx * 16);
+      this.pendingClumpCol = clumpColBuf.slice(0, clumpIdx * 3);
+      this.chunkBoundSphere = chunkBoundSphere;
+      this.fallbackGrassMat = grassMaterial;
     }
 
     if (flowerIdx > 0) {
@@ -1080,6 +1079,21 @@ export class ChunkGrass {
     }
     if (this.flowerInstanced) {
       this.flowerInstanced.count = Math.floor(this.fullFlowerCount * ratio);
+    }
+    if (densityMultiplier >= 0.9 && !this.clumpInstanced && this.pendingClumpCount > 0 && this.pendingClumpMat && this.pendingClumpCol && this.chunkBoundSphere && this.fallbackGrassMat) {
+      this.clumpInstanced = buildPopulatedGrassInstancedMesh(
+        sharedClumpGeo ?? sharedTuftGeo!,
+        sharedClumpMat ?? this.fallbackGrassMat,
+        this.pendingClumpCount,
+        this.pendingClumpMat,
+        this.pendingClumpCol,
+        this.chunkBoundSphere,
+        false
+      );
+      activeClumpMeshes.add(this.clumpInstanced);
+      this.group.add(this.clumpInstanced);
+      this.pendingClumpMat = undefined;
+      this.pendingClumpCol = undefined;
     }
     if (this.clumpInstanced) {
       this.clumpInstanced.visible = densityMultiplier >= 0.9;

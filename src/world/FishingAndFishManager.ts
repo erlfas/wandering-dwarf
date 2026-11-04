@@ -839,6 +839,8 @@ export class FishingAndFishManager {
     mesh.scale.setScalar(species.scale);
 
     const bodyMesh = new THREE.Mesh(this.fishBodyGeo, this.speciesBodyMats[speciesIdx]);
+    bodyMesh.updateMatrix();
+    bodyMesh.matrixAutoUpdate = false;
     mesh.add(bodyMesh);
 
     const tailMesh = new THREE.Mesh(this.fishTailGeo, this.speciesFinMats[speciesIdx]);
@@ -871,7 +873,7 @@ export class FishingAndFishManager {
 
   private updateSwimmingFish(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
     const waterY = this.config.waterLevel;
-    const maxSimDistSq = 68 * 68;
+    const maxSimDistSq = 38 * 38;
     const playerGroundY = this.sampleGroundHeight(playerPos.x, playerPos.z);
     const isPlayerInWater =
       this.config.enableWater && !this.config.blankClayMode && playerGroundY < waterY - 0.08;

@@ -235,8 +235,8 @@ export class ExplorerCamera {
         const code = e.code;
         this.keys.add(code);
 
-        // Use V (instead of C, which is easy to hit accidentally next to D/S) to toggle camera mode
-        if (code === 'KeyV') {
+        // Use Shift+V (so plain V is dedicated to the Warhorn of Khazad) to toggle camera mode
+        if (code === 'KeyV' && e.shiftKey) {
           this.config.cameraMode = this.config.cameraMode === 'dwarf' ? 'free' : 'dwarf';
           this.onToggleMode?.();
         } else if (code === 'Space') {
