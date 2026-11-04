@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import grassClumpUrl from '../../3dmodels/grass clump 3d model.glb?url';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
@@ -287,12 +288,10 @@ export function applyGrassWindShader(
       vec2 toBlade = instWorldXZ - uPlayerPos.xz;
       float distSq = dot(toBlade, toBlade);
 
-      // Smoothly taper grass height to 0 near the outer grass radius (only compute sqrt in outer fade ring)
+      // Smoothly taper grass height to 0 near the outer grass radius (branchless on squared distance)
       float fadeStart = uMaxDistance * 0.72;
-      if (distSq > fadeStart * fadeStart) {
-        float distFade = 1.0 - smoothstep(fadeStart, uMaxDistance, sqrt(distSq));
-        transformed *= distFade;
-      }
+      float distFade = 1.0 - smoothstep(fadeStart * fadeStart, uMaxDistance * uMaxDistance, distSq);
+      transformed *= distFade;
 
       // Rolling wind wave displacement (quadratic bend from root to tip)
       float bendFactor = vBladeFrac * vBladeFrac;
@@ -414,10 +413,15 @@ export function loadGrassClumpModel(uniforms: GrassUniforms): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      const geo = mesh.geometry;
+      let geo: THREE.BufferGeometry = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
 
       geo.computeBoundingBox();
       const box = geo.boundingBox!;
@@ -1010,7 +1014,7 @@ export class ChunkGrass {
         grassMatBuf,
         grassColBuf,
         chunkBoundSphere,
-        true
+        false
       );
       this.group.add(this.grassInstanced);
     }

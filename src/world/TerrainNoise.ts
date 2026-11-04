@@ -49,6 +49,7 @@ export class TerrainNoise {
   private trackNoiseB!: NoiseFunction2D;
   private trackOriginOffsetA = 0;
   private trackOriginOffsetB = 0;
+  private lastTrackMicro = 0;
   private config: WorldConfig;
   public lastTrackWeight = 0;
 
@@ -173,11 +174,13 @@ export class TerrainNoise {
       this.trackOriginOffsetA;
     let dA = Math.abs(coarseA - Math.round(coarseA / periodA) * periodA);
 
+    let microSample = 0;
     if (dA < 28.0) {
+      microSample = this.microNoise(x * 0.034, z * 0.034);
       const fineA =
         coarseA +
         this.trackNoiseB(x * 0.011 + 17.3, z * 0.011 - 29.1) * 18.0 +
-        this.microNoise(x * 0.034, z * 0.034) * 3.2;
+        microSample * 3.2;
       dA = Math.abs(fineA - Math.round(fineA / periodA) * periodA);
     }
 
@@ -196,10 +199,14 @@ export class TerrainNoise {
 
       // Only evaluate fineB if it can possibly beat dA or enter the k=3.2 junction smooth-min window
       if (dB < 27.0 && dB - 20.5 < dA + 3.2) {
+        const microB = this.microNoise(x * 0.032 + 11.4, z * 0.032 - 8.7);
+        if (dB < dA || microSample === 0) {
+          microSample = microB;
+        }
         const fineB =
           coarseB +
           this.trackNoiseA(x * 0.0105 - 19.8, z * 0.0105 + 63.4) * 17.5 +
-          this.microNoise(x * 0.032 + 11.4, z * 0.032 - 8.7) * 3.0;
+          microB * 3.0;
         dB = Math.abs(fineB - Math.round(fineB / periodB) * periodB);
       }
 
@@ -213,6 +220,7 @@ export class TerrainNoise {
       }
     }
 
+    this.lastTrackMicro = microSample;
     return Math.max(0.0, d);
   }
 
@@ -241,9 +249,10 @@ export class TerrainNoise {
     if (d >= maxRadius) return 0;
 
     // Organic edge undulation so the track width breathes and grass encroaches irregularly
+    // Reuses lastTrackMicro evaluated inside getTrackDistance to avoid a second microNoise call
     const edgeNoise =
       this.meadowNoise(x * 0.085 + 7.1, z * 0.085 - 13.4) * 0.34 +
-      this.microNoise(x * 0.22, z * 0.22) * 0.18;
+      this.lastTrackMicro * 0.18;
     const effHalfDirt = Math.max(0.85, halfDirt + edgeNoise);
     const effOuter = effHalfDirt + 1.45;
 

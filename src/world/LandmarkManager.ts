@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import stoneCircleModelUrl from '../../3dmodels/ancient stone circle asset.glb?url';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { SavedBeaconWaypoint } from './ProgressStorage';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
@@ -122,7 +123,7 @@ export function loadStoneCircleModel(): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      const geo = mesh.geometry;
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes if present
@@ -150,12 +151,33 @@ export function loadStoneCircleModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
       const origMat = (
         Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
       ) as THREE.MeshStandardMaterial;
+      if (origMat.normalMap) {
+        origMat.normalMap.dispose();
+        origMat.normalMap = null;
+      }
+      if (origMat.roughnessMap) {
+        origMat.roughnessMap.dispose();
+        origMat.roughnessMap = null;
+      }
+      if (origMat.metalnessMap) {
+        origMat.metalnessMap.dispose();
+        origMat.metalnessMap = null;
+      }
+      if (origMat.aoMap) {
+        origMat.aoMap.dispose();
+        origMat.aoMap = null;
+      }
       const mat = new THREE.MeshStandardMaterial({
         color: 0xffffff,
         map: origMat.map ?? null,
@@ -429,7 +451,7 @@ export class LandmarkManager {
   private litBeaconMap = new Map<string, SavedBeaconWaypoint>();
   private cachedLitBeacons: SavedBeaconWaypoint[] = [];
   private litBeaconsDirty = true;
-  private audioCtx: AudioContext | null = null;
+  private surfaceHeightSampler: ((wx: number, wz: number) => number) | null = null;
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
   private nextWaypointIndex = 0;
@@ -458,6 +480,16 @@ export class LandmarkManager {
     });
 
     this.renderWaypointBar();
+  }
+
+  public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
+    this.surfaceHeightSampler = fn;
+  }
+
+  private sampleGroundHeight(wx: number, wz: number): number {
+    return this.surfaceHeightSampler
+      ? this.surfaceHeightSampler(wx, wz)
+      : this.noise.getHeight(wx, wz);
   }
 
   private getKey(cx: number, cz: number): number {
@@ -914,7 +946,7 @@ export class LandmarkManager {
         const sampleZ = cz * size + (rng() - 0.5) * (size * 0.45);
         const distToTrack = this.noise.getTrackDistance(sampleX, sampleZ);
         if (distToTrack < 4.5) {
-          const wy = this.noise.getHeight(sampleX, sampleZ);
+          const wy = this.sampleGroundHeight(sampleX, sampleZ);
           if (wy < this.config.waterLevel - 0.15 && wy > this.config.waterLevel - 2.6) {
             const heading = this.noise.getTrackHeading(sampleX, sampleZ);
             const deckY = this.config.waterLevel + 0.55;
@@ -934,7 +966,7 @@ export class LandmarkManager {
       const lz = isStarterCampChunk ? -14.0 : (rng() - 0.5) * (size * 0.65);
       const wx = cx * size + lx;
       const wz = cz * size + lz;
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
 
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
         landmarks.campfire = this.buildStoneCircleCampfire(`${cx},${cz}`, wx, wy, wz);
@@ -951,7 +983,7 @@ export class LandmarkManager {
       for (let i = 0; i < 6; i++) {
         const tx = cx * size + (rng() - 0.5) * (size * 0.72);
         const tz = cz * size + (rng() - 0.5) * (size * 0.72);
-        const ty = this.noise.getHeight(tx, tz);
+        const ty = this.sampleGroundHeight(tx, tz);
         if (ty > bestY) {
           bestY = ty;
           bestX = tx;
@@ -1143,17 +1175,7 @@ export class LandmarkManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playBeaconFanfare(): void {

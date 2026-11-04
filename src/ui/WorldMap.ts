@@ -103,6 +103,8 @@ interface InteractiveMapMarker {
 }
 
 const tempMapNormal = new THREE.Vector3();
+const scratchHeights = new Float32Array((TILE_RES + 2) * (TILE_RES + 2));
+const scratchSubGrid = new Float32Array(25);
 
 /**
  * Interactive Cartographic World Map of the entire area discovered by our dwarf.
@@ -148,6 +150,7 @@ export class WorldMap {
   // Hover & interactive marker state
   private interactiveMarkers: InteractiveMapMarker[] = [];
   private hoveredMarker: InteractiveMapMarker | null = null;
+  private pendingBakeRaf = 0;
 
   // DOM Elements
   private modalEl: HTMLElement;
@@ -434,6 +437,10 @@ export class WorldMap {
     if (!this.isOpen) return;
     this.isOpen = false;
     this.isPanning = false;
+    if (this.pendingBakeRaf) {
+      cancelAnimationFrame(this.pendingBakeRaf);
+      this.pendingBakeRaf = 0;
+    }
     this.hideTooltip();
     this.modalEl.classList.add('hidden');
     this.toggleBtnEl?.classList.remove('active');
@@ -569,6 +576,21 @@ export class WorldMap {
       this.onDiscoveryChanged?.();
       if (this.isOpen) {
         this.render();
+      } else {
+        // Pre-bake at most 1 uncached touched chunk while the map is closed so tiles are warm when pressing M
+        const playerCx = Math.round(worldX / this.config.chunkSize);
+        const playerCz = Math.round(worldZ / this.config.chunkSize);
+        const playerChunkKey = packCoord(playerCx, playerCz);
+        if (this.touchedChunks.has(playerChunkKey) && !this.chunkCache.has(playerChunkKey)) {
+          this.getOrBuildChunkCache(playerCx, playerCz);
+        } else {
+          for (const cKey of this.touchedChunks) {
+            if (!this.chunkCache.has(cKey)) {
+              this.getOrBuildChunkCache(unpackX(cKey), unpackZ(cKey));
+              break;
+            }
+          }
+        }
       }
     }
   }
@@ -822,7 +844,7 @@ export class WorldMap {
 
     // Sample a (TILE_RES + 2) x (TILE_RES + 2) height grid so central-difference hillshade is O(1)
     const stride = TILE_RES + 2;
-    const heights = new Float32Array(stride * stride);
+    const heights = scratchHeights;
     for (let gz = 0; gz < stride; gz++) {
       const wz = baseWz + (gz - 0.5);
       const rowOffset = gz * stride;
@@ -946,7 +968,7 @@ export class WorldMap {
     const baseGz = entry.cz * CELLS_PER_CHUNK;
 
     // 5x5 grid of discovery states (subX in -1..3, subZ in -1..3)
-    const mask5x5 = new Float32Array(25);
+    const mask5x5 = scratchSubGrid;
     for (let sz = -1; sz <= 3; sz++) {
       for (let sx = -1; sx <= 3; sx++) {
         const discovered = this.discoveredCells.has(packCoord(baseGx + sx, baseGz + sz));
@@ -1191,14 +1213,14 @@ export class WorldMap {
 
     ctx.imageSmoothingEnabled = this.zoom < 2.2;
     const visibleCaches: ChunkMapCache[] = [];
+    const bakeStart = performance.now();
+    let bakedNewThisFrame = 0;
+    let hasPendingUncachedTiles = false;
 
     for (const chunkKey of this.touchedChunks) {
       const cx = unpackX(chunkKey);
       const cz = unpackZ(chunkKey);
       if (cx < minCx || cx > maxCx || cz < minCz || cz > maxCz) continue;
-
-      const cache = this.getOrBuildChunkCache(cx, cz);
-      visibleCaches.push(cache);
 
       const chunkLeftWx = cx * size - size * 0.5;
       const chunkTopWz = cz * size - size * 0.5;
@@ -1207,8 +1229,35 @@ export class WorldMap {
       const sw = size * this.zoom;
       const sh = size * this.zoom;
 
+      let cache = this.chunkCache.get(chunkKey);
+      if (!cache) {
+        if (bakedNewThisFrame === 0 || performance.now() - bakeStart <= 3.0) {
+          cache = this.getOrBuildChunkCache(cx, cz);
+          bakedNewThisFrame++;
+        } else {
+          hasPendingUncachedTiles = true;
+          ctx.fillStyle = 'rgba(196, 179, 146, 0.38)';
+          ctx.fillRect(sx, sy, sw, sh);
+          continue;
+        }
+      } else if (cache.dirty) {
+        cache.dirty = false;
+        this.compositeChunkFogMask(cache);
+      }
+
+      visibleCaches.push(cache);
+
       // Slight overlap (+0.4px) prevents subpixel hairline seams when zoomed
       ctx.drawImage(cache.canvas, sx - 0.2, sy - 0.2, sw + 0.4, sh + 0.4);
+    }
+
+    if (hasPendingUncachedTiles && !this.pendingBakeRaf) {
+      this.pendingBakeRaf = requestAnimationFrame(() => {
+        this.pendingBakeRaf = 0;
+        if (this.isOpen) {
+          this.render();
+        }
+      });
     }
 
     // 4. Overlay Coordinate Grid Labels on top of terrain

@@ -192,7 +192,7 @@ export function ensureCastleInteriorModelLoaded(
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes
@@ -215,7 +215,11 @@ export function ensureCastleInteriorModelLoaded(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -422,11 +426,13 @@ export class CastleInteriorManager {
     this.interiorMesh = new THREE.Mesh(assets.fallbackGeo, assets.fallbackMat);
     this.interiorMesh.castShadow = true;
     this.interiorMesh.receiveShadow = true;
+    this.interiorMesh.updateMatrix();
     this.interiorMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(this.interiorMesh);
 
     const plinthMesh = new THREE.Mesh(assets.plinthGeo, assets.plinthMat);
     plinthMesh.receiveShadow = true;
+    plinthMesh.updateMatrix();
     plinthMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(plinthMesh);
 

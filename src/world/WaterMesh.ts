@@ -182,6 +182,8 @@ export class WaterReflectionController {
   private readonly smoothedWaterAnchor = new THREE.Vector3();
   private hasSmoothedAnchor = false;
   private savedClearColor = new THREE.Color();
+  private frameCounter = 0;
+  private hasRenderedOnce = false;
 
   constructor(private readonly waterUniforms: WaterUniforms) {
     this.renderTarget = new THREE.WebGLRenderTarget(512, 512, {
@@ -210,6 +212,7 @@ export class WaterReflectionController {
 
     if (!config.enableWater || config.blankClayMode || this.cameraWorldPos.y <= waterY + 0.15) {
       this.waterUniforms.uReflectionActive.value = 0.0;
+      this.hasRenderedOnce = false;
       return;
     }
 
@@ -281,6 +284,7 @@ export class WaterReflectionController {
 
     if (!hasNearbyWater) {
       this.waterUniforms.uReflectionActive.value = 0.0;
+      this.hasRenderedOnce = false;
       return;
     }
 
@@ -303,18 +307,26 @@ export class WaterReflectionController {
     vCam.position.copy(this.view);
     vCam.up.set(0, 1, 0).applyMatrix4(this.rotationMatrix).reflect(this.normal);
     vCam.lookAt(this.target);
-    vCam.far = camera.far;
+    vCam.far = Math.min(camera.far, 140.0);
     vCam.near = camera.near;
     vCam.fov = camera.fov;
     vCam.aspect = camera.aspect;
     vCam.updateMatrixWorld();
-    vCam.projectionMatrix.copy(camera.projectionMatrix);
+    vCam.updateProjectionMatrix();
 
     // 2. Compute world-to-reflection-UV matrix before oblique near-plane modification
     this.waterUniforms.uReflectionMatrix.value
       .copy(BIAS_MATRIX)
       .multiply(vCam.projectionMatrix)
       .multiply(vCam.matrixWorldInverse);
+
+    // Throttle the 512x512 reflection render pass to 30 Hz (every 2nd frame) while keeping
+    // uReflectionMatrix and uReflectionActive updated every frame for smooth camera motion
+    this.frameCounter = (this.frameCounter + 1) & 1;
+    if (this.hasRenderedOnce && this.frameCounter !== 0) {
+      return;
+    }
+    this.hasRenderedOnce = true;
 
     // 3. Apply Lengyel oblique near-plane clipping so geometry below y = waterY is hardware-clipped
     this.reflectorPlane.setFromNormalAndCoplanarPoint(this.normal, this.planePoint);

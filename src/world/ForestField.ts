@@ -817,9 +817,14 @@ export function loadOakTreeModel(uniforms: GrassUniforms): void {
       let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
-      // Strip skinning attributes from the static instanced mesh if present
+      // Strip skinning attributes from the static instanced mesh if present and weld duplicate vertices
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
 
       // Normalize bounding box: center X/Z at 0, place root base at Y=0, and scale to 6.6m height
       geo.computeBoundingBox();
@@ -899,9 +904,14 @@ export function loadDwarvenHutModel(): void {
       let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
-      // Strip unused skinning attributes if present
+      // Strip unused skinning attributes if present and weld duplicate vertices
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
 
       // Normalize bounding box: center X/Z at 0, place foundation base at Y=0, and scale to ~3.85m height
       geo.computeBoundingBox();
@@ -1387,7 +1397,18 @@ export class ChunkForest {
       this.hutInstanced = new THREE.InstancedMesh(activeGeo, activeMat, hutCount);
       this.hutInstanced.castShadow = castShadow;
       this.hutInstanced.receiveShadow = !useHighPoly;
-      this.hutInstanced.boundingSphere = chunkBoundSphere;
+      const hutPlacement = placedHuts && placedHuts.length === 1 ? placedHuts[0] : null;
+      this.hutInstanced.boundingSphere =
+        hutCount === 1 && hutPlacement
+          ? new THREE.Sphere(
+              new THREE.Vector3(
+                hutPlacement.worldX - worldOffsetX,
+                hutPlacement.worldY + 2.0,
+                hutPlacement.worldZ - worldOffsetZ
+              ),
+              6.0
+            )
+          : chunkBoundSphere;
       this.hutInstanced.matrixAutoUpdate = false;
       applyShadowProxyHooks(this.hutInstanced);
       populateInstancedMesh(this.hutInstanced, hutMatBuf, hutColBuf, hutCount);
@@ -1435,7 +1456,7 @@ export class ChunkForest {
       sharedFernMat.onBeforeCompile = (
         this.treeMaterial as THREE.MeshStandardMaterial
       ).onBeforeCompile;
-      sharedFernMat.customProgramCacheKey = () => 'tree_wind_proc';
+      sharedFernMat.customProgramCacheKey = () => 'tree_wind_fern';
     }
     if (!sharedStaticPropMat) {
       sharedStaticPropMat = new THREE.MeshStandardMaterial({

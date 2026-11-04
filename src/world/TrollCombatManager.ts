@@ -38,8 +38,11 @@ interface TrollInstance {
   dyingTimer: number;
   roarCooldown: number;
   isNearLOD: boolean;
+  castShadowEnabled: boolean;
+  mixerAccum: number;
   root: THREE.Group;
   skinnedContainer: THREE.Group;
+  skinnedMeshes: THREE.Mesh[];
   fallbackMesh: THREE.Mesh;
   hpBarGroup: THREE.Group;
   hpFillMesh: THREE.Mesh;
@@ -169,6 +172,10 @@ export class TrollCombatManager {
 
   private trollPool: TrollInstance[] = [];
   private readonly maxPooledTrolls = 3;
+  private readonly nearestTrollResult = {
+    troll: null as unknown as TrollInstance,
+    dist: Infinity,
+  };
   private isNightActive = false;
   private nightSpawnTimer = 0;
   private playerAttackCooldown = 0;
@@ -334,8 +341,11 @@ export class TrollCombatManager {
         dyingTimer: 0,
         roarCooldown: 0,
         isNearLOD: true,
+        castShadowEnabled: true,
+        mixerAccum: 0,
         root,
         skinnedContainer,
+        skinnedMeshes: [],
         fallbackMesh,
         hpBarGroup,
         hpFillMesh,
@@ -345,6 +355,29 @@ export class TrollCombatManager {
         actions: {},
         currentAnim: 'walk',
       });
+    }
+  }
+
+  private pruneTrollAnimationClips(clips: THREE.AnimationClip[]): void {
+    const FINGER_RE = /(Index|Middle|Ring|Pinky|Thumb)[1-4]/i;
+    for (const clip of clips) {
+      clip.tracks = clip.tracks.filter((track) => {
+        if (track.name.endsWith('.scale')) return false;
+        if (track.name.endsWith('.position') && !track.name.includes('Hips')) return false;
+        if (FINGER_RE.test(track.name)) return false;
+        return true;
+      });
+      for (const track of clip.tracks) {
+        if (track.name.includes('Hips') && track.name.endsWith('.position')) {
+          const vals = track.values;
+          const initX = vals[0];
+          const initZ = vals[2];
+          for (let i = 0; i < vals.length; i += 3) {
+            vals[i] = initX;
+            vals[i + 2] = initZ;
+          }
+        }
+      }
     }
   }
 
@@ -363,26 +396,7 @@ export class TrollCombatManager {
         const clips = gltf.animations;
 
         // 1. Prune redundant animation tracks on the shared clips once
-        const FINGER_RE = /(Index|Middle|Ring|Pinky|Thumb)[1-4]/i;
-        for (const clip of clips) {
-          clip.tracks = clip.tracks.filter((track) => {
-            if (track.name.endsWith('.scale')) return false;
-            if (track.name.endsWith('.position') && !track.name.includes('Hips')) return false;
-            if (FINGER_RE.test(track.name)) return false;
-            return true;
-          });
-          for (const track of clip.tracks) {
-            if (track.name.includes('Hips') && track.name.endsWith('.position')) {
-              const vals = track.values;
-              const initX = vals[0];
-              const initZ = vals[2];
-              for (let i = 0; i < vals.length; i += 3) {
-                vals[i] = initX;
-                vals[i + 2] = initZ;
-              }
-            }
-          }
-        }
+        this.pruneTrollAnimationClips(clips);
 
         const walkClip = clips.find((c) => c.name.toLowerCase().includes('walk'));
         const runClip = clips.find((c) => c.name.toLowerCase().includes('run'));
@@ -399,9 +413,15 @@ export class TrollCombatManager {
           let rightHandBone: THREE.Object3D | null = null;
           clonedScene.traverse((obj) => {
             if (obj instanceof THREE.Mesh) {
-              obj.castShadow = true;
+              obj.castShadow = troll.castShadowEnabled;
               obj.receiveShadow = false;
-              obj.frustumCulled = false;
+              if (!obj.geometry.boundingSphere) {
+                obj.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 1.2, 0), 3.5);
+              } else {
+                obj.geometry.boundingSphere.set(new THREE.Vector3(0, 1.2, 0), 3.5);
+              }
+              obj.frustumCulled = true;
+              troll.skinnedMeshes.push(obj);
               const origMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
               if (origMat instanceof THREE.MeshStandardMaterial) {
                 origMat.roughness = 0.82;
@@ -418,7 +438,8 @@ export class TrollCombatManager {
             clubMesh.scale.setScalar(0.35);
             clubMesh.rotation.set(Math.PI * 0.45, 0, 0.15);
             clubMesh.position.set(0, 0.04, 0.04);
-            clubMesh.castShadow = true;
+            clubMesh.castShadow = troll.castShadowEnabled;
+            troll.skinnedMeshes.push(clubMesh);
             (rightHandBone as THREE.Object3D).add(clubMesh);
           }
 
@@ -544,7 +565,10 @@ export class TrollCombatManager {
         best = t;
       }
     }
-    return best ? { troll: best, dist: Math.sqrt(bestDistSq) } : null;
+    if (!best) return null;
+    this.nearestTrollResult.troll = best;
+    this.nearestTrollResult.dist = Math.sqrt(bestDistSq);
+    return this.nearestTrollResult;
   }
 
   public isNightNow(): boolean {
@@ -762,7 +786,15 @@ export class TrollCombatManager {
     }
 
     const nearLodDistSq = Math.pow(this.config.chunkSize * 1.5, 2); // 72m close-range GLB LOD
-    const castles = this.getCompletedCastlePositions();
+    let hasActiveTroll = false;
+    for (let i = 0; i < this.trollPool.length; i++) {
+      if (this.trollPool[i].active) {
+        hasActiveTroll = true;
+        break;
+      }
+    }
+    const castles =
+      this.isNightActive || hasActiveTroll ? this.getCompletedCastlePositions() : null;
     let nearestLivingDist = Infinity;
     let nearestTroll: TrollInstance | null = null;
 
@@ -793,12 +825,21 @@ export class TrollCombatManager {
         nearestTroll = t;
       }
 
-      // 1. Close-Range GLB LOD Swapping (dist <= 1.5 chunks / 72m)
+      // 1. Close-Range GLB LOD Swapping (dist <= 1.5 chunks / 72m) & Shadow Distance Gating (<= 42m)
       const wantNear = distSq <= nearLodDistSq && !insideSanctuary;
       if (wantNear !== t.isNearLOD) {
         t.isNearLOD = wantNear;
         t.skinnedContainer.visible = wantNear;
         t.fallbackMesh.visible = !wantNear;
+      }
+
+      const wantShadow = distSq <= 42 * 42 && !insideSanctuary;
+      if (wantShadow !== t.castShadowEnabled) {
+        t.castShadowEnabled = wantShadow;
+        t.fallbackMesh.castShadow = wantShadow;
+        for (let i = 0; i < t.skinnedMeshes.length; i++) {
+          t.skinnedMeshes[i].castShadow = wantShadow;
+        }
       }
 
       if (t.roarCooldown > 0) t.roarCooldown = Math.max(0, t.roarCooldown - dt);
@@ -905,16 +946,18 @@ export class TrollCombatManager {
       }
 
       // Keep Trolls outside Completed Castle Sanctuary Perimeters (`radius 9.5m`)
-      for (const c of castles) {
-        if (c.blocksPlaced < 8) continue;
-        const cdx = t.pos.x - c.x;
-        const cdz = t.pos.z - c.z;
-        const cDistSq = cdx * cdx + cdz * cdz;
-        const minR = c.blocksPlaced >= 18 ? 11.5 : 8.8;
-        if (cDistSq < minR * minR) {
-          const cDist = Math.sqrt(cDistSq) || 0.01;
-          t.pos.x = c.x + (cdx / cDist) * minR;
-          t.pos.z = c.z + (cdz / cDist) * minR;
+      if (castles) {
+        for (const c of castles) {
+          if (c.blocksPlaced < 8) continue;
+          const cdx = t.pos.x - c.x;
+          const cdz = t.pos.z - c.z;
+          const cDistSq = cdx * cdx + cdz * cdz;
+          const minR = c.blocksPlaced >= 18 ? 11.5 : 8.8;
+          if (cDistSq < minR * minR) {
+            const cDist = Math.sqrt(cDistSq) || 0.01;
+            t.pos.x = c.x + (cdx / cDist) * minR;
+            t.pos.z = c.z + (cdz / cDist) * minR;
+          }
         }
       }
 
@@ -923,7 +966,16 @@ export class TrollCombatManager {
       t.root.rotation.set(0, t.heading, 0);
 
       if (t.isNearLOD && t.mixer) {
-        t.mixer.update(dt);
+        if (distSq > 28 * 28) {
+          t.mixerAccum += dt;
+          if (t.mixerAccum >= 0.033) {
+            t.mixer.update(t.mixerAccum);
+            t.mixerAccum = 0;
+          }
+        } else {
+          t.mixer.update(dt + t.mixerAccum);
+          t.mixerAccum = 0;
+        }
       }
     }
 
@@ -1061,7 +1113,7 @@ export class TrollCombatManager {
     const html =
       `<div class="troll-tracker-wrap">` +
       `<div class="troll-tracker-top">` +
-      `<span>👹 <strong>${nearestTroll.title}</strong> (${dist.toFixed(1)}m • ${stateLabel})</span>` +
+      `<span>👹 <strong>${nearestTroll.title}</strong> (${Math.round(dist)}m • ${stateLabel})</span>` +
       `<span class="troll-hits-badge">🎯 <strong>${hitsLeft} Hit${hitsLeft === 1 ? '' : 's'} Left</strong> (${nearestTroll.hp}/${nearestTroll.maxHp} HP • ${hpPct}%)</span>` +
       `<div class="troll-tracker-actions">` +
       `<button type="button" class="hut-action-pill troll-action-attack">⚔️ Strike (Click / X)</button>` +
@@ -1169,6 +1221,10 @@ export class TrollCombatManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.16);
   }
@@ -1187,6 +1243,10 @@ export class TrollCombatManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.16);
   }
@@ -1205,6 +1265,10 @@ export class TrollCombatManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.19);
   }
@@ -1223,6 +1287,10 @@ export class TrollCombatManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.5);
   }
@@ -1241,6 +1309,10 @@ export class TrollCombatManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.27);
   }
@@ -1261,6 +1333,10 @@ export class TrollCombatManager {
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(t);
       osc.stop(t + 0.36);
     });

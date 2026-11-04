@@ -402,7 +402,7 @@ export function loadNaturalRockModel(
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes
@@ -425,7 +425,11 @@ export function loadNaturalRockModel(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -527,7 +531,7 @@ export function ensureCastleTierModelLoaded(
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes
@@ -552,7 +556,11 @@ export function ensureCastleTierModelLoaded(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -637,7 +645,7 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
@@ -655,7 +663,11 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -697,7 +709,7 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
@@ -715,7 +727,11 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
@@ -2185,6 +2201,12 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
 const tempNormal = new THREE.Vector3();
 const tempSlotWorld = new THREE.Vector3();
 const tempDropWorld = new THREE.Vector3();
+const LEVEL_EVAL_UNIT_DIRS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
 
 export class CastleAndQuarryManager {
   public readonly group = new THREE.Group();
@@ -2206,6 +2228,16 @@ export class CastleAndQuarryManager {
   private unlockedArmory = new Set<CastleArmoryItemId>();
   private quarries: QuarryInstance[] = [];
   private castles: CastleInstance[] = [];
+  private completedCastlesCache: Array<{ x: number; z: number; blocksPlaced: number }> = [];
+  private completedCastlesDirty = true;
+  private readonly levelEvalResult = { isLevel: true, groundY: 0, normalY: 1, reason: '' };
+  private readonly nearestRockResult = { rock: null as NaturalRockInstance | null, dist: Infinity };
+  private readonly enterableCastleResult = {
+    castle: null as CastleInstance | null,
+    doorDist: Infinity,
+    doorX: 0,
+    doorZ: 0,
+  };
   private activeChunkRocks = new Map<number, NaturalRockInstance[]>();
   private quarryBonusRocks: NaturalRockInstance[] = [];
   private desiredKeys = new Set<number>();
@@ -2223,6 +2255,7 @@ export class CastleAndQuarryManager {
   private energyFillEl: HTMLElement | null;
   private energyTextEl: HTMLElement | null;
   private foodCountEl: HTMLElement | null;
+  private topFoodHudEl: HTMLElement | null;
   private combatGearBadgeEl: HTMLElement | null;
   private eatFoodBtnEl: HTMLButtonElement | null;
   private masonryBannerEl: HTMLElement | null;
@@ -2268,6 +2301,7 @@ export class CastleAndQuarryManager {
     this.energyFillEl = document.getElementById('energy-bar-fill');
     this.energyTextEl = document.getElementById('energy-bar-text');
     this.foodCountEl = document.getElementById('food-count-value');
+    this.topFoodHudEl = document.getElementById('top-food-hud-pill');
     this.combatGearBadgeEl = document.getElementById('combat-gear-badge');
     this.eatFoodBtnEl = document.getElementById('eat-food-btn') as HTMLButtonElement | null;
     this.masonryBannerEl = document.getElementById('masonry-banner');
@@ -2289,15 +2323,9 @@ export class CastleAndQuarryManager {
     this.levelGuideRingMesh.visible = false;
     this.group.add(this.levelGuideRingMesh);
 
-    loadNaturalRockModel((geo, mat) => {
-      this.dwarf.setNaturalRockAsset(geo, mat);
+    loadNaturalRockModel(() => {
       for (const q of this.quarries) {
-        q.benchRockMesh.geometry = geo;
-        q.benchRockMesh.material = mat;
-      }
-      for (const r of this.quarryBonusRocks) {
-        r.mesh.geometry = geo;
-        r.mesh.material = mat;
+        this.syncQuarryPropVisuals(q);
       }
     });
 
@@ -2361,6 +2389,9 @@ export class CastleAndQuarryManager {
       this.setUpCastleAtPlayer();
     });
     this.eatFoodBtnEl?.addEventListener('click', () => {
+      this.eatFood(false);
+    });
+    this.topFoodHudEl?.addEventListener('click', () => {
       this.eatFood(false);
     });
 
@@ -2582,9 +2613,16 @@ export class CastleAndQuarryManager {
   }
 
   public getCompletedCastlePositions(): Array<{ x: number; z: number; blocksPlaced: number }> {
-    return this.castles
-      .filter((c) => c.blocksPlaced >= 8)
-      .map((c) => ({ x: c.x, z: c.z, blocksPlaced: c.blocksPlaced }));
+    if (this.completedCastlesDirty) {
+      this.completedCastlesCache.length = 0;
+      for (const c of this.castles) {
+        if (c.blocksPlaced >= 8) {
+          this.completedCastlesCache.push({ x: c.x, z: c.z, blocksPlaced: c.blocksPlaced });
+        }
+      }
+      this.completedCastlesDirty = false;
+    }
+    return this.completedCastlesCache;
   }
 
   /**
@@ -2597,37 +2635,30 @@ export class CastleAndQuarryManager {
     minNormalY = 0.85
   ): { isLevel: boolean; groundY: number; normalY: number; reason: string } {
     const groundY = this.chunkManager.getSurfaceHeight(wx, wz);
+    const res = this.levelEvalResult;
+    res.groundY = groundY;
     if (this.config.enableWater && !this.config.blankClayMode && groundY < this.config.waterLevel + 0.35) {
-      return {
-        isLevel: false,
-        groundY,
-        normalY: 1,
-        reason: 'Too close to water! Move onto dry ground.',
-      };
+      res.isLevel = false;
+      res.normalY = 1;
+      res.reason = 'Too close to water! Move onto dry ground.';
+      return res;
     }
 
     this.chunkManager.getSurfaceNormal(wx, wz, tempNormal);
     let minH = groundY;
     let maxH = groundY;
-    const dirs = [
-      [radius, 0],
-      [-radius, 0],
-      [0, radius],
-      [0, -radius],
-    ];
-    for (const [dx, dz] of dirs) {
-      const h = this.chunkManager.getSurfaceHeight(wx + dx, wz + dz);
+    for (let i = 0; i < LEVEL_EVAL_UNIT_DIRS.length; i++) {
+      const dir = LEVEL_EVAL_UNIT_DIRS[i];
+      const h = this.chunkManager.getSurfaceHeight(wx + dir[0] * radius, wz + dir[1] * radius);
       if (h < minH) minH = h;
       if (h > maxH) maxH = h;
     }
     const span = maxH - minH;
     const isLevel = tempNormal.y >= minNormalY && span <= radius * 0.58;
-    return {
-      isLevel,
-      groundY,
-      normalY: tempNormal.y,
-      reason: isLevel ? 'Level Ground Ready' : 'Slope is too steep! Follow the green ring to level ground.',
-    };
+    res.isLevel = isLevel;
+    res.normalY = tempNormal.y;
+    res.reason = isLevel ? 'Level Ground Ready' : 'Slope is too steep! Follow the green ring to level ground.';
+    return res;
   }
 
   /**
@@ -2688,6 +2719,7 @@ export class CastleAndQuarryManager {
 
     const levelCheck = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
     if (!levelCheck.isLevel) {
+      const failReason = levelCheck.reason;
       this.playDeniedSound();
       const nearSpot = this.highlightNearestLevelSpot(px, pz);
       if (nearSpot) {
@@ -2698,7 +2730,7 @@ export class CastleAndQuarryManager {
           false
         );
       } else {
-        this.showToast(`⛰️ ${levelCheck.reason}`, false);
+        this.showToast(`⛰️ ${failReason}`, false);
       }
       return false;
     }
@@ -2747,6 +2779,7 @@ export class CastleAndQuarryManager {
 
     const levelCheck = this.evaluateLevelPlace(px, pz, 4.2, 0.84);
     if (!levelCheck.isLevel) {
+      const failReason = levelCheck.reason;
       this.playDeniedSound();
       const nearSpot = this.highlightNearestLevelSpot(px, pz);
       if (nearSpot) {
@@ -2757,7 +2790,7 @@ export class CastleAndQuarryManager {
           false
         );
       } else {
-        this.showToast(`⛰️ ${levelCheck.reason}`, false);
+        this.showToast(`⛰️ ${failReason}`, false);
       }
       return false;
     }
@@ -2776,6 +2809,7 @@ export class CastleAndQuarryManager {
       blocksPlaced: 0,
     });
     this.castles.push(castle);
+    this.completedCastlesDirty = true;
 
     this.dwarf.spawnBurst(px, levelCheck.groundY + 0.5, pz, 20);
     this.playMilestoneFanfare();
@@ -2793,9 +2827,13 @@ export class CastleAndQuarryManager {
     const root = new THREE.Group();
     root.position.set(saved.x, saved.y, saved.z);
     root.rotation.y = saved.rotationY;
+    root.updateMatrix();
+    root.matrixAutoUpdate = false;
 
     const padMesh = new THREE.Mesh(assets.quarryPadGeo, assets.quarryPadMat);
     padMesh.receiveShadow = true;
+    padMesh.updateMatrix();
+    padMesh.matrixAutoUpdate = false;
     root.add(padMesh);
 
     // 1. Dwarven Workbench (`dwarven workbench 3d model.glb` at close range, procedural fallback at far range)
@@ -2803,6 +2841,8 @@ export class CastleAndQuarryManager {
     workbenchMesh.position.set(0, 0.24, -0.05);
     workbenchMesh.castShadow = true;
     workbenchMesh.receiveShadow = true;
+    workbenchMesh.updateMatrix();
+    workbenchMesh.matrixAutoUpdate = false;
     root.add(workbenchMesh);
 
     // 2. Wooden Jib Crane (`wooden jib crane 3d model.glb` at close range, procedural fallback at far range)
@@ -2811,20 +2851,28 @@ export class CastleAndQuarryManager {
     jibCraneMesh.rotation.y = 0.35;
     jibCraneMesh.castShadow = true;
     jibCraneMesh.receiveShadow = true;
+    jibCraneMesh.updateMatrix();
+    jibCraneMesh.matrixAutoUpdate = false;
     root.add(jibCraneMesh);
 
     // 3. Wooden Minecart & Iron Track
     const timberMesh = new THREE.Mesh(assets.quarryTimberGeo, assets.quarryTimberMat);
     timberMesh.castShadow = true;
     timberMesh.receiveShadow = true;
+    timberMesh.updateMatrix();
+    timberMesh.matrixAutoUpdate = false;
     root.add(timberMesh);
 
     const ironMesh = new THREE.Mesh(assets.quarryIronGeo, assets.quarryIronMat);
     ironMesh.castShadow = true;
+    ironMesh.updateMatrix();
+    ironMesh.matrixAutoUpdate = false;
     root.add(ironMesh);
 
     const craneWheelMesh = new THREE.Mesh(assets.craneWheelGeo, assets.quarryIronMat);
     craneWheelMesh.position.set(-0.65, 4.15, -1.25);
+    craneWheelMesh.updateMatrix();
+    craneWheelMesh.matrixAutoUpdate = false;
     root.add(craneWheelMesh);
 
     // Raw boulder resting on top of the chiseling workbench while being chiseled (Y = 0.24 pad + 0.76 bench = 1.00m)
@@ -2838,11 +2886,15 @@ export class CastleAndQuarryManager {
     benchRockMesh.castShadow = true;
     benchRockMesh.receiveShadow = false;
     benchRockMesh.visible = false;
+    benchRockMesh.updateMatrix();
+    benchRockMesh.matrixAutoUpdate = false;
     root.add(benchRockMesh);
 
     // Glowing work ring in front of the chiseling bench
     const workRingMesh = new THREE.Mesh(assets.workRingGeo, assets.workRingMat);
     workRingMesh.position.set(0, 0.26, 1.48);
+    workRingMesh.updateMatrix();
+    workRingMesh.matrixAutoUpdate = false;
     root.add(workRingMesh);
 
     // Visual stack of chiseled ashlar stone blocks on the left pallet (-2.15..-1.53, 0.39, +0.95..1.39)
@@ -2856,6 +2908,8 @@ export class CastleAndQuarryManager {
       bm.castShadow = true;
       bm.receiveShadow = true;
       bm.visible = i < saved.stockpiledBlocks;
+      bm.updateMatrix();
+      bm.matrixAutoUpdate = false;
       stockpileMeshes.push(bm);
       root.add(bm);
     }
@@ -2911,6 +2965,14 @@ export class CastleAndQuarryManager {
       q.jibCraneMesh.receiveShadow = true;
       q.craneWheelMesh.visible = true;
     }
+
+    if (q.isNearLOD && sharedNaturalRockGeo && sharedNaturalRockMat) {
+      q.benchRockMesh.geometry = sharedNaturalRockGeo;
+      q.benchRockMesh.material = sharedNaturalRockMat;
+    } else {
+      q.benchRockMesh.geometry = assets.fallbackRockGeo;
+      q.benchRockMesh.material = assets.fallbackRockMat;
+    }
   }
 
   private syncQuarryStockpileVisuals(q: QuarryInstance): void {
@@ -2935,7 +2997,7 @@ export class CastleAndQuarryManager {
         rz,
         0.92 + (i % 3) * 0.14,
         ang * 2.0,
-        true
+        false
       );
       this.quarryBonusRocks.push(rock);
     }
@@ -2946,6 +3008,8 @@ export class CastleAndQuarryManager {
     const root = new THREE.Group();
     root.position.set(saved.x, saved.y, saved.z);
     root.rotation.y = saved.rotationY;
+    root.updateMatrix();
+    root.matrixAutoUpdate = false;
 
     const resolveMat = (key: CastleMatKey): THREE.Material =>
       key === 'darkStone'
@@ -2977,6 +3041,8 @@ export class CastleAndQuarryManager {
       m.castShadow = true;
       m.receiveShadow = true;
       m.visible = i < saved.blocksPlaced;
+      m.updateMatrix();
+      m.matrixAutoUpdate = false;
       slotMeshes.push(m);
       slotMaterials.push(mat);
       root.add(m);
@@ -2988,30 +3054,44 @@ export class CastleAndQuarryManager {
     completedGlbMesh.castShadow = true;
     completedGlbMesh.receiveShadow = false;
     completedGlbMesh.visible = false;
+    completedGlbMesh.updateMatrix();
+    completedGlbMesh.matrixAutoUpdate = false;
     root.add(completedGlbMesh);
 
     // Translucent 3D Ghost Block highlighting the exact next block slot on the castle
     const ghostMesh = new THREE.Mesh(assets.castleSlotGeos[0], assets.ghostSlotMat);
     ghostMesh.visible = false;
+    ghostMesh.updateMatrix();
+    ghostMesh.matrixAutoUpdate = false;
     root.add(ghostMesh);
 
     // Floating Golden Beacon Arrow & Vertical Light Beam over the next block slot
     const beaconArrowGroup = new THREE.Group();
+    beaconArrowGroup.matrixAutoUpdate = false;
     const arrowMesh = new THREE.Mesh(assets.beaconArrowGeo, assets.bannerGoldMat);
     arrowMesh.position.y = 1.6;
+    arrowMesh.updateMatrix();
+    arrowMesh.matrixAutoUpdate = false;
     beaconArrowGroup.add(arrowMesh);
     const beamMesh = new THREE.Mesh(assets.beaconBeamGeo, assets.beaconBeamMat);
+    beamMesh.updateMatrix();
+    beamMesh.matrixAutoUpdate = false;
     beaconArrowGroup.add(beamMesh);
+    beaconArrowGroup.updateMatrix();
     root.add(beaconArrowGroup);
 
     // Glowing Ground Target Ring at the base of the active wall/tower slot
     const groundTargetRing = new THREE.Mesh(assets.targetRingGeo, assets.targetRingMat);
+    groundTargetRing.updateMatrix();
+    groundTargetRing.matrixAutoUpdate = false;
     root.add(groundTargetRing);
 
     // Glowing Sanctuary Doorway Ring on the lowered timber drawbridge (`z = +6.0m`) when Tier I+ (`blocksPlaced >= 8`)
     const doorRingMesh = new THREE.Mesh(assets.workRingGeo, assets.workRingMat);
     doorRingMesh.position.set(0, 0.48, 6.0);
     doorRingMesh.visible = saved.blocksPlaced >= 8;
+    doorRingMesh.updateMatrix();
+    doorRingMesh.matrixAutoUpdate = false;
     root.add(doorRingMesh);
 
     this.group.add(root);
@@ -3110,6 +3190,7 @@ export class CastleAndQuarryManager {
     const nextSlot = assets.castleSlots[castle.blocksPlaced];
     castle.ghostMesh.geometry = assets.castleSlotGeos[nextSlot.geoIndex];
     castle.ghostMesh.position.copy(nextSlot.localPos);
+    castle.ghostMesh.updateMatrix();
     castle.ghostMesh.visible = true;
 
     castle.beaconArrowGroup.position.set(
@@ -3117,6 +3198,7 @@ export class CastleAndQuarryManager {
       nextSlot.localPos.y + 1.4,
       nextSlot.localPos.z
     );
+    castle.beaconArrowGroup.updateMatrix();
     castle.beaconArrowGroup.visible = true;
 
     const dropWorldX = castle.x + nextSlot.groundDropLocal.x;
@@ -3131,6 +3213,7 @@ export class CastleAndQuarryManager {
       dropGroundY - castle.y + 0.14,
       nextSlot.groundDropLocal.z
     );
+    castle.groundTargetRing.updateMatrix();
     castle.groundTargetRing.visible = true;
   }
 
@@ -3175,7 +3258,17 @@ export class CastleAndQuarryManager {
         bestDoorZ = doorZ;
       }
     }
-    return best ? { castle: best, doorDist: bestDoorDist, doorX: bestDoorX, doorZ: bestDoorZ } : null;
+    if (!best) return null;
+    this.enterableCastleResult.castle = best;
+    this.enterableCastleResult.doorDist = bestDoorDist;
+    this.enterableCastleResult.doorX = bestDoorX;
+    this.enterableCastleResult.doorZ = bestDoorZ;
+    return this.enterableCastleResult as {
+      castle: CastleInstance;
+      doorDist: number;
+      doorX: number;
+      doorZ: number;
+    };
   }
 
   /**
@@ -3360,6 +3453,7 @@ export class CastleAndQuarryManager {
     const prevBlocks = castle.blocksPlaced;
     const placedSlot = assets.castleSlots[prevBlocks];
     castle.blocksPlaced += blocksToPlace;
+    this.completedCastlesDirty = true;
     this.carriedChiseledBlocks -= blocksToPlace;
     this.dwarf.setCarriedLoad(this.carriedRawStones, this.carriedChiseledBlocks);
 
@@ -3601,6 +3695,8 @@ export class CastleAndQuarryManager {
     const assets = getSharedMasonryAssets();
     const root = new THREE.Group();
     root.position.set(wx, wy, wz);
+    root.updateMatrix();
+    root.matrixAutoUpdate = false;
 
     const useGlb = forceNear && Boolean(sharedNaturalRockGeo && sharedNaturalRockMat);
     const mesh = new THREE.Mesh(
@@ -3611,10 +3707,14 @@ export class CastleAndQuarryManager {
     mesh.rotation.y = rotY;
     mesh.castShadow = forceNear;
     mesh.receiveShadow = false;
+    mesh.updateMatrix();
+    mesh.matrixAutoUpdate = false;
     root.add(mesh);
 
     const ringMesh = new THREE.Mesh(assets.rockRingGeo, assets.rockRingMat);
     ringMesh.position.y = 0.08;
+    ringMesh.updateMatrix();
+    ringMesh.matrixAutoUpdate = false;
     root.add(ringMesh);
 
     this.group.add(root);
@@ -3652,6 +3752,7 @@ export class CastleAndQuarryManager {
             r.respawnTimer = 0;
             r.wy = this.chunkManager.getSurfaceHeight(r.wx, r.wz);
             r.root.position.set(r.wx, r.wy, r.wz);
+            r.root.updateMatrix();
             r.root.visible = true;
           }
           continue;
@@ -3688,6 +3789,7 @@ export class CastleAndQuarryManager {
         if (showRing) {
           const pulse = 0.92 + Math.sin(elapsedTime * 3.8 + r.wx) * 0.1;
           r.ringMesh.scale.setScalar(pulse);
+          r.ringMesh.updateMatrix();
         }
       }
     };
@@ -3717,6 +3819,7 @@ export class CastleAndQuarryManager {
         q.chiselStoneTimer = Math.max(0, q.chiselStoneTimer - dt);
         q.benchRockMesh.rotation.y += dt * 9.0;
         q.benchRockMesh.scale.setScalar(0.35 + (q.chiselStoneTimer / 1.1) * 0.35);
+        q.benchRockMesh.updateMatrix();
         if (q.chiselStoneTimer <= 0) {
           q.benchRockMesh.visible = false;
         }
@@ -3735,8 +3838,10 @@ export class CastleAndQuarryManager {
 
       if (dSq < 45 * 45) {
         q.craneWheelMesh.rotation.z = elapsedTime * 1.4;
+        q.craneWheelMesh.updateMatrix();
         const pulse = 1.0 + Math.sin(elapsedTime * 4.0) * 0.08;
         q.workRingMesh.scale.setScalar(pulse);
+        q.workRingMesh.updateMatrix();
       }
     }
   }
@@ -3761,6 +3866,7 @@ export class CastleAndQuarryManager {
       if (c.doorRingMesh.visible && dSq < 60 * 60) {
         const doorPulse = 1.0 + Math.sin(elapsedTime * 4.2) * 0.1;
         c.doorRingMesh.scale.setScalar(doorPulse);
+        c.doorRingMesh.updateMatrix();
       }
 
       if (c.blocksPlaced >= totalSlots || dSq > 120 * 120) continue;
@@ -3769,9 +3875,11 @@ export class CastleAndQuarryManager {
       const nextSlot = assets.castleSlots[c.blocksPlaced];
       c.beaconArrowGroup.position.y = nextSlot.localPos.y + 1.45 + bob;
       c.beaconArrowGroup.rotation.y = elapsedTime * 2.2;
+      c.beaconArrowGroup.updateMatrix();
 
       const ringPulse = 1.0 + Math.sin(elapsedTime * 4.8) * 0.14;
       c.groundTargetRing.scale.setScalar(ringPulse);
+      c.groundTargetRing.updateMatrix();
     }
   }
 
@@ -3830,15 +3938,14 @@ export class CastleAndQuarryManager {
 
     const activeCastle = this.getActiveCastle(px, pz);
     const nearestQuarry = this.getNearestQuarry(px, pz);
-    const nearestRock = this.getNearestNaturalRock(px, pz);
-    const levelHere = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
-    const levelBadge = levelHere.isLevel
-      ? `<span class="masonry-tag level-ok">✅ Level Ground</span>`
-      : `<span class="masonry-tag level-steep">⛰️ Sloped Ground</span>`;
 
     // Case 1: Carrying Chiseled Castle Blocks -> Guide directly to the exact Next Castle Block Slot!
     if (this.carriedChiseledBlocks > 0) {
       if (!activeCastle) {
+        const levelHere = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
+        const levelBadge = levelHere.isLevel
+          ? `<span class="masonry-tag level-ok">✅ Level Ground</span>`
+          : `<span class="masonry-tag level-steep">⛰️ Sloped Ground</span>`;
         bannerHtml =
           `<div class="masonry-main-row"><span>🧱 <strong>Carrying ${this.carriedChiseledBlocks} Castle Block${this.carriedChiseledBlocks > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to a Level Place &amp; Press <kbd>K</kbd> to Start Building a Castle!</span>` +
           `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
@@ -3871,6 +3978,10 @@ export class CastleAndQuarryManager {
     // Case 2: Carrying Raw Natural Stones -> Guide to the Quarry Workbench (or prompt to set up Quarry with Q)!
     else if (this.carriedRawStones > 0) {
       if (!nearestQuarry) {
+        const levelHere = this.evaluateLevelPlace(px, pz, 3.4, 0.84);
+        const levelBadge = levelHere.isLevel
+          ? `<span class="masonry-tag level-ok">✅ Level Ground</span>`
+          : `<span class="masonry-tag level-steep">⛰️ Sloped Ground</span>`;
         bannerHtml =
           `<div class="masonry-main-row"><span>🪨 <strong>Carrying ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to any Level Place &amp; Press <kbd>Q</kbd> to Set Up a Quarry!</span>` +
           `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button></div>`;
@@ -3913,44 +4024,47 @@ export class CastleAndQuarryManager {
           `<div class="masonry-main-row"><span>⛏️ <strong>Stone Quarry Stockpile</strong> • <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Chiseled Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
           `<button type="button" class="hut-action-pill masonry-action-work">🧱 Pick Up Blocks (E)</button></div>` +
           (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
-      } else if (nearestRock && nearestRock.dist <= 3.6) {
-        bannerHtml =
-          `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone Nearby</strong> (${nearestRock.dist.toFixed(1)}m) • Lift stone to carry to a Quarry &amp; chisel into Castle Blocks!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift Natural Stone (E)</button></div>` +
-          (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
-      } else if (activeCastle) {
-        const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
-        if (nearestQuarry && nearestQuarry.stockpiledBlocks > 0) {
-          guideTargetX = nearestQuarry.x;
-          guideTargetZ = nearestQuarry.z;
-          guideColor = 0xffd166;
-          const qDist = Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz);
-          const qDir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
+      } else {
+        const nearestRock = this.getNearestNaturalRock(px, pz);
+        if (nearestRock && nearestRock.dist <= 3.6) {
           bannerHtml =
-            `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block:</strong> <span class="masonry-tag hint">${nextSlot.label}</span> • Pick up stockpiled blocks at Quarry (<strong>${qDist.toFixed(0)}m ${qDir}</strong>)!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Or Lift Nearest Stone (E)</button></div>` +
-            this.buildCastleProgressStripHtml(activeCastle);
-        } else if (nearestRock) {
+            `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone Nearby</strong> (${Math.round(nearestRock.dist)}m) • Lift stone to carry to a Quarry &amp; chisel into Castle Blocks!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift Natural Stone (E)</button></div>` +
+            (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
+        } else if (activeCastle) {
+          const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
+          if (nearestQuarry && nearestQuarry.stockpiledBlocks > 0) {
+            guideTargetX = nearestQuarry.x;
+            guideTargetZ = nearestQuarry.z;
+            guideColor = 0xffd166;
+            const qDist = Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz);
+            const qDir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
+            bannerHtml =
+              `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block:</strong> <span class="masonry-tag hint">${nextSlot.label}</span> • Pick up stockpiled blocks at Quarry (<strong>${qDist.toFixed(0)}m ${qDir}</strong>)!</span>` +
+              `<button type="button" class="hut-action-pill masonry-action-work">🪨 Or Lift Nearest Stone (E)</button></div>` +
+              this.buildCastleProgressStripHtml(activeCastle);
+          } else if (nearestRock) {
+            guideTargetX = nearestRock.rock.wx;
+            guideTargetZ = nearestRock.rock.wz;
+            guideColor = 0xffe066;
+            const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
+            bannerHtml =
+              `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block (#${activeCastle.blocksPlaced + 1}):</strong> <span class="masonry-tag hint">${nextSlot.label} (${nextSlot.hintLocation})</span> • Gather Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>)!</span>` +
+              (nearestQuarry
+                ? ''
+                : `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`) +
+              `</div>` +
+              this.buildCastleProgressStripHtml(activeCastle);
+          }
+        } else if (this.quarries.length > 0 && nearestRock) {
           guideTargetX = nearestRock.rock.wx;
           guideTargetZ = nearestRock.rock.wz;
           guideColor = 0xffe066;
           const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
           bannerHtml =
-            `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block (#${activeCastle.blocksPlaced + 1}):</strong> <span class="masonry-tag hint">${nextSlot.label} (${nextSlot.hintLocation})</span> • Gather Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>)!</span>` +
-            (nearestQuarry
-              ? ''
-              : `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`) +
-            `</div>` +
-            this.buildCastleProgressStripHtml(activeCastle);
+            `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Ready!</strong> Gather a Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>) or press <kbd>K</kbd> on level ground to start a Castle!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
         }
-      } else if (this.quarries.length > 0 && nearestRock) {
-        guideTargetX = nearestRock.rock.wx;
-        guideTargetZ = nearestRock.rock.wz;
-        guideColor = 0xffe066;
-        const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
-        bannerHtml =
-          `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Ready!</strong> Gather a Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>) or press <kbd>K</kbd> on level ground to start a Castle!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
       }
     }
 
@@ -3999,7 +4113,10 @@ export class CastleAndQuarryManager {
     }
     scan(this.quarryBonusRocks);
 
-    return best ? { rock: best, dist: Math.sqrt(bestDistSq) } : null;
+    if (!best) return null;
+    this.nearestRockResult.rock = best;
+    this.nearestRockResult.dist = Math.sqrt(bestDistSq);
+    return this.nearestRockResult as { rock: NaturalRockInstance; dist: number };
   }
 
   private getNearestQuarry(wx: number, wz: number): QuarryInstance | null {
@@ -4641,10 +4758,15 @@ export class CastleAndQuarryManager {
     }
 
     // 3. Food Rations (`🍖`)
-    const fText = `🍖 ${this.foodCount}`;
-    if (fText !== this.lastFoodText && this.foodCountEl) {
+    const fText = `🍖 ${this.foodCount} Food`;
+    if (fText !== this.lastFoodText) {
       this.lastFoodText = fText;
-      this.foodCountEl.textContent = fText;
+      if (this.foodCountEl) {
+        this.foodCountEl.textContent = fText;
+      }
+      if (this.topFoodHudEl) {
+        this.topFoodHudEl.innerHTML = `🍖 ${this.foodCount} Food (<kbd>G</kbd>)`;
+      }
     }
 
     // 4. Equipped Weapon & Shield Badge (`#combat-gear-badge`)
@@ -4824,6 +4946,7 @@ export class CastleAndQuarryManager {
         this.castles.push(this.createCastleInstance(sc));
       }
     }
+    this.completedCastlesDirty = true;
 
     this.renderHouseShop();
     this.renderCastleArmoryShop();
@@ -4841,6 +4964,7 @@ export class CastleAndQuarryManager {
       this.group.remove(c.root);
     }
     this.castles.length = 0;
+    this.completedCastlesDirty = true;
 
     for (const r of this.quarryBonusRocks) {
       activeNearRocks.delete(r);

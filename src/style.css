@@ -329,8 +329,7 @@ body {
   position: absolute;
   top: 20px;
   left: 530px;
-  background: rgba(22, 34, 24, 0.82);
-  backdrop-filter: blur(6px);
+  background: rgba(22, 34, 24, 0.92);
   border: 1px solid rgba(134, 239, 172, 0.5);
   color: #bbf7d0;
   font-size: 11px;
@@ -353,8 +352,7 @@ body {
   top: 68px;
   left: 78px;
   width: 210px;
-  background: rgba(22, 18, 14, 0.88);
-  backdrop-filter: blur(8px);
+  background: rgba(22, 18, 14, 0.95);
   border: 1px solid rgba(255, 212, 82, 0.32);
   border-radius: 9px;
   padding: 7px 8px;
@@ -465,8 +463,7 @@ body {
   position: absolute;
   bottom: 162px;
   left: 22px;
-  background: rgba(20, 25, 31, 0.78);
-  backdrop-filter: blur(8px);
+  background: rgba(20, 25, 31, 0.92);
   border: 1px solid rgba(255, 183, 3, 0.38);
   border-radius: 10px;
   padding: 7px 11px;
@@ -1117,8 +1114,7 @@ kbd {
   flex-direction: column;
   align-items: stretch;
   gap: 5px;
-  background: linear-gradient(135deg, rgba(24, 30, 38, 0.92), rgba(16, 20, 26, 0.91));
-  backdrop-filter: blur(6px);
+  background: linear-gradient(135deg, rgba(24, 30, 38, 0.95), rgba(16, 20, 26, 0.95));
   border: 1.5px solid rgba(114, 239, 221, 0.68);
   color: #f8f9fa;
   font-size: 11.5px;
@@ -1270,8 +1266,7 @@ kbd {
   top: 108px;
   right: 22px;
   width: 265px;
-  background: rgba(26, 20, 14, 0.92);
-  backdrop-filter: blur(8px);
+  background: rgba(26, 20, 14, 0.95);
   border: 1.5px solid rgba(255, 209, 102, 0.58);
   border-radius: 10px;
   padding: 9px 10px;
@@ -1302,18 +1297,36 @@ kbd {
 /* Bottom-Left Backpack, Health Bar, Strength/Energy Bar & Food Rations HUD (matching art/gameplay_protect_against_enemy.jpg) */
 #energy-survival-hud {
   position: absolute;
-  bottom: 102px;
+  bottom: 148px;
   left: 22px;
+  z-index: 15;
   display: flex;
   align-items: center;
   gap: 9px;
-  background: rgba(24, 20, 15, 0.9);
-  border: 1.5px solid rgba(149, 213, 178, 0.52);
+  background: rgba(24, 20, 15, 0.94);
+  border: 1.5px solid rgba(149, 213, 178, 0.65);
   border-radius: 11px;
   padding: 7px 12px;
   color: #fff8e7;
   pointer-events: auto;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.top-food-pill {
+  pointer-events: auto;
+  cursor: pointer;
+  background: rgba(255, 183, 3, 0.22);
+  border: 1px solid rgba(255, 209, 102, 0.68);
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: #ffe89e;
+  font-weight: 800;
+  transition: all 0.14s ease;
+}
+
+.top-food-pill:hover {
+  background: rgba(255, 183, 3, 0.38);
+  color: #ffffff;
 }
 
 .backpack-badge {
@@ -1424,8 +1437,7 @@ kbd {
   width: 295px;
   max-height: calc(100vh - 205px);
   overflow-y: auto;
-  background: rgba(24, 19, 15, 0.94);
-  backdrop-filter: blur(8px);
+  background: rgba(24, 19, 15, 0.96);
   border: 1.5px solid rgba(255, 209, 102, 0.68);
   border-radius: 11px;
   padding: 9px 10px;
@@ -1463,8 +1475,7 @@ kbd {
   left: 50%;
   transform: translateX(-50%);
   width: min(690px, 92vw);
-  background: linear-gradient(160deg, rgba(42, 14, 18, 0.93), rgba(22, 14, 18, 0.95));
-  backdrop-filter: blur(8px);
+  background: linear-gradient(160deg, rgba(42, 14, 18, 0.96), rgba(22, 14, 18, 0.97));
   border: 1.5px solid rgba(239, 35, 60, 0.78);
   border-radius: 12px;
   padding: 8px 14px;

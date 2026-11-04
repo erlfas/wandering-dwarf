@@ -402,6 +402,7 @@ castleAndQuarryManager.onRequestRestUntilDawn = () => {
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
 
 treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
+landmarkManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 livingWorldManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 fishingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
@@ -969,38 +970,44 @@ function animate(): void {
   }
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
-  const snap = 2.0;
-  const sx = Math.round(px / snap) * snap;
-  const sy = Math.round(py / snap) * snap;
-  const sz = Math.round(pz / snap) * snap;
-  const sunSnapX = Math.round(sunOffset.x / snap) * snap;
-  const sunSnapY = Math.round(sunOffset.y / snap) * snap;
-  let shadowMoved = false;
   if (
-    sx !== lastShadowX ||
-    sy !== lastShadowY ||
-    sz !== lastShadowZ ||
-    sunSnapX !== lastSunSnapX ||
-    sunSnapY !== lastSunSnapY
+    !insideInterior &&
+    dirLight.castShadow &&
+    (config as { enableShadows?: boolean }).enableShadows !== false
   ) {
-    lastShadowX = sx;
-    lastShadowY = sy;
-    lastShadowZ = sz;
-    lastSunSnapX = sunSnapX;
-    lastSunSnapY = sunSnapY;
-    dirLight.position.set(sx + sunSnapX, sy + sunSnapY, sz + sunOffset.z);
-    dirLight.target.position.set(sx, sy, sz);
-    dirLight.updateMatrix();
-    dirLight.updateMatrixWorld();
-    dirLight.target.updateMatrix();
-    dirLight.target.updateMatrixWorld();
-    shadowMoved = true;
-  }
+    const snap = 2.0;
+    const sx = Math.round(px / snap) * snap;
+    const sy = Math.round(py / snap) * snap;
+    const sz = Math.round(pz / snap) * snap;
+    const sunSnapX = Math.round(sunOffset.x / snap) * snap;
+    const sunSnapY = Math.round(sunOffset.y / snap) * snap;
+    let shadowMoved = false;
+    if (
+      sx !== lastShadowX ||
+      sy !== lastShadowY ||
+      sz !== lastShadowZ ||
+      sunSnapX !== lastSunSnapX ||
+      sunSnapY !== lastSunSnapY
+    ) {
+      lastShadowX = sx;
+      lastShadowY = sy;
+      lastShadowZ = sz;
+      lastSunSnapX = sunSnapX;
+      lastSunSnapY = sunSnapY;
+      dirLight.position.set(sx + sunSnapX, sy + sunSnapY, sz + sunOffset.z);
+      dirLight.target.position.set(sx, sy, sz);
+      dirLight.updateMatrix();
+      dirLight.updateMatrixWorld();
+      dirLight.target.updateMatrix();
+      dirLight.target.updateMatrixWorld();
+      shadowMoved = true;
+    }
 
-  // Throttle shadow map depth re-rasterization to 30 Hz (or immediate on frustum snap)
-  if (shadowMoved || elapsedTime - lastShadowRenderTime >= 0.033) {
-    lastShadowRenderTime = elapsedTime;
-    dirLight.shadow.needsUpdate = true;
+    // Throttle shadow map depth re-rasterization to 30 Hz (or immediate on frustum snap)
+    if (shadowMoved || elapsedTime - lastShadowRenderTime >= 0.033) {
+      lastShadowRenderTime = elapsedTime;
+      dirLight.shadow.needsUpdate = true;
+    }
   }
 
   // Throttle HUD DOM text mutations to 5 Hz and skip DOM writes when text is unchanged

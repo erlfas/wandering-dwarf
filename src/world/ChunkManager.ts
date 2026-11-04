@@ -86,7 +86,8 @@ export class ChunkManager {
   private getGrassDensityForDistance(dist: number): number {
     if (!this.config.enableGrassBlades || this.config.blankClayMode) return 0;
     if (dist > this.config.grassRadiusChunks) return 0;
-    if (dist <= 1.5) return 1.0;
+    const wantCloseClumps = dist <= 1.05;
+    if (wantCloseClumps) return 1.0;
     return 0.55;
   }
 

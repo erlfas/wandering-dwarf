@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import deerModelUrl from '../../3dmodels/deer 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
@@ -112,7 +113,7 @@ export function loadDeerModel(): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry.clone();
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes if present
@@ -138,13 +139,33 @@ export function loadDeerModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      geo = mergeVertices(geo, 1e-4);
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
 
       const origMat = (
         Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
       ) as THREE.MeshStandardMaterial;
+      if (origMat.normalMap) {
+        origMat.normalMap.dispose();
+        origMat.normalMap = null;
+      }
+      if (origMat.roughnessMap) {
+        origMat.roughnessMap.dispose();
+        origMat.roughnessMap = null;
+      }
+      if (origMat.metalnessMap) {
+        origMat.metalnessMap.dispose();
+        origMat.metalnessMap = null;
+      }
+      if (origMat.aoMap) {
+        origMat.aoMap.dispose();
+        origMat.aoMap = null;
+      }
 
       sharedDeerGlbMats = DEER_SPECIES.map(
         (sp) =>
@@ -294,7 +315,6 @@ export class HuntingAndDeerManager {
   // DOM HUD elements for Hunting Mode
   private huntingBannerEl: HTMLElement | null;
   private huntingToggleBtn: HTMLElement | null;
-  private audioCtx: AudioContext | null = null;
   private onEnterHuntingCallback?: () => void;
 
   constructor(
@@ -470,9 +490,8 @@ export class HuntingAndDeerManager {
         // Ignore if user is dragging with right-click or middle-click to orbit camera
         if ((e.buttons & 2) !== 0 || (e.buttons & 4) !== 0) return;
 
-        const rect = this.domElement.getBoundingClientRect();
-        this.mouseNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        this.mouseNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
+        this.mouseNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
         this.groundAimPlane.constant = -(this.dwarf.root.position.y + 0.5);
         this.raycaster.setFromCamera(this.mouseNdc, this.camera);
@@ -778,7 +797,7 @@ export class HuntingAndDeerManager {
         { x: 14.5, z: 16.5, sp: 2 },
       ];
       for (const spot of starterSpots) {
-        const gy = this.noise.getHeight(spot.x, spot.z);
+        const gy = this.sampleGroundHeight(spot.x, spot.z);
         if (gy > minLandY) {
           deerList.push(this.createDeerInstance(spot.x, gy, spot.z, spot.sp, rng));
         }
@@ -791,7 +810,7 @@ export class HuntingAndDeerManager {
       const wx = cx * size + (rng() - 0.5) * (size * 0.8);
       const wz = cz * size + (rng() - 0.5) * (size * 0.8);
       if (wx * wx + wz * wz < 9.0 * 9.0) continue; // Keep exact spawn point clear
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
       if (wy > minLandY && wy < this.config.waterLevel + 24.0) {
         const speciesIdx = rng() < 0.16 ? 2 : rng() < 0.5 ? 1 : 0;
         deerList.push(this.createDeerInstance(wx, wy, wz, speciesIdx, rng));
@@ -910,7 +929,11 @@ export class HuntingAndDeerManager {
           d.bodyMesh.castShadow = wantShadow;
         }
 
-        if (distSq > maxSimDistSq) continue;
+        if (distSq > maxSimDistSq) {
+          if (d.root.visible) d.root.visible = false;
+          continue;
+        }
+        if (!d.root.visible) d.root.visible = true;
 
         // Spook if the player runs right up next to the deer (< 6.2m by day, or < 12.5m at night when Trolls prowl!)
         const hour = ((this.config.timeOfDay % 24) + 24) % 24;
@@ -1190,17 +1213,7 @@ export class HuntingAndDeerManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playEquipBowSound(): void {
@@ -1217,6 +1230,10 @@ export class HuntingAndDeerManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.17);
   }
@@ -1235,6 +1252,10 @@ export class HuntingAndDeerManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.17);
   }
@@ -1253,6 +1274,10 @@ export class HuntingAndDeerManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.21);
   }
@@ -1272,6 +1297,10 @@ export class HuntingAndDeerManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.075 + 0.34);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.075);
       osc.stop(now + idx * 0.075 + 0.36);
     });

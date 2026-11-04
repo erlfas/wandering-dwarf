@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
@@ -50,6 +51,7 @@ interface SharedChestAssets {
   ringMatStandard: THREE.MeshBasicMaterial;
   ringMatRare: THREE.MeshBasicMaterial;
   ringMatMythic: THREE.MeshBasicMaterial;
+  matGlowRingOpened: THREE.MeshBasicMaterial;
   matSealDome: THREE.MeshBasicMaterial;
   matRunestonePillar: THREE.MeshStandardMaterial;
   matCrystalDormant: THREE.MeshStandardMaterial;
@@ -200,6 +202,12 @@ function getSharedChestAssets(): SharedChestAssets {
     transparent: true,
     opacity: 0.62,
   });
+  const matGlowRingOpened = new THREE.MeshBasicMaterial({
+    color: 0xffe066,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.5,
+  });
 
   const matSealDome = new THREE.MeshBasicMaterial({
     color: 0x48cae4,
@@ -328,6 +336,7 @@ function getSharedChestAssets(): SharedChestAssets {
     ringMatStandard,
     ringMatRare,
     ringMatMythic,
+    matGlowRingOpened,
     matSealDome,
     matRunestonePillar,
     matCrystalDormant,
@@ -380,7 +389,6 @@ export class TreasureManager {
   private collectedIdsDirty = true;
   private openingChests: ChestInstance[] = [];
   private activeDigSite: BuriedDigSite | null = null;
-  private audioCtx: AudioContext | null = null;
   private humCooldown = 0;
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
@@ -862,18 +870,20 @@ export class TreasureManager {
     const perpX = -dirZ;
     const perpZ = dirX;
     const trailSpan = Math.min(dist * 0.85, 16.0);
+    const targetPos = target.pos;
 
     for (let i = 0; i < this.fireflyCount; i++) {
       let phase = (this.fireflyPhase[i] + dt * 0.42) % 1.0;
       this.fireflyPhase[i] = phase;
 
       const along = 1.4 + phase * trailSpan;
+      const u = Math.min(1, along / dist);
       const swirl = Math.sin(elapsedTime * 3.2 + i * 0.9) * (0.45 + phase * 0.65);
       const wx = playerPos.x + dirX * along + perpX * swirl;
       const wz = playerPos.z + dirZ * along + perpZ * swirl;
-      const groundY = this.sampleGroundHeight(wx, wz);
+      const baseGroundY = THREE.MathUtils.lerp(playerPos.y, targetPos.y, u);
       const wy =
-        Math.max(groundY, this.config.waterLevel - 0.2) +
+        Math.max(baseGroundY, this.config.waterLevel - 0.2) +
         0.85 +
         Math.sin(elapsedTime * 4.5 + i * 1.3) * 0.32;
 
@@ -891,7 +901,8 @@ export class TreasureManager {
     if (
       ringMat !== assets.ringMatStandard &&
       ringMat !== assets.ringMatRare &&
-      ringMat !== assets.ringMatMythic
+      ringMat !== assets.ringMatMythic &&
+      ringMat !== assets.matGlowRingOpened
     ) {
       ringMat.dispose();
     }
@@ -923,7 +934,7 @@ export class TreasureManager {
         const lz = isStartChunk && attempt === 0 ? -9.5 : (rng() - 0.5) * (size * 0.78);
         const wx = cx * size + lx;
         const wz = cz * size + lz;
-        const wy = this.noise.getHeight(wx, wz);
+        const wy = this.sampleGroundHeight(wx, wz);
 
         if (this.config.enableWater && wy < this.config.waterLevel + 0.9) {
           continue;
@@ -937,7 +948,10 @@ export class TreasureManager {
           continue;
         }
 
-        this.noise.getNormal(wx, wz, tempChestNormal);
+        const eps = 0.6;
+        const hX = this.sampleGroundHeight(wx + eps, wz) - this.sampleGroundHeight(wx - eps, wz);
+        const hZ = this.sampleGroundHeight(wx, wz + eps) - this.sampleGroundHeight(wx, wz - eps);
+        tempChestNormal.set(-hX, 2 * eps, -hZ).normalize();
         if (tempChestNormal.y < 0.82) continue;
 
         const roll = rng();
@@ -965,7 +979,7 @@ export class TreasureManager {
             const rx = wx + Math.cos(rAngle) * rDist;
             const rz = wz + Math.sin(rAngle) * rDist;
             const ry = Math.max(
-              this.noise.getHeight(rx, rz),
+              this.sampleGroundHeight(rx, rz),
               this.config.enableWater ? this.config.waterLevel + 0.3 : -999
             );
             runestones.push(this.buildRunestoneMesh(rx, ry, rz, rIdx));
@@ -1015,9 +1029,10 @@ export class TreasureManager {
     this.score += earnedPoints;
     this.chestsCollected += 1;
 
-    chest.glowRing.material = (chest.glowRing.material as THREE.MeshBasicMaterial).clone();
-
     const assets = getSharedChestAssets();
+    assets.matGlowRingOpened.opacity = 0.5;
+    chest.glowRing.material = assets.matGlowRingOpened;
+
     const sparkles = new THREE.Points(assets.sparklesGeo, assets.sparklesMat);
     sparkles.position.y = 0.5;
     chest.root.add(sparkles);
@@ -1048,7 +1063,7 @@ export class TreasureManager {
       const dist = 52 + Math.random() * 32;
       const wx = originPos.x + Math.cos(angle) * dist;
       const wz = originPos.z + Math.sin(angle) * dist;
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
 
       if (this.config.enableWater && wy < this.config.waterLevel + 1.0) continue;
 
@@ -1244,17 +1259,7 @@ export class TreasureManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playPickupChime(isRare: boolean): void {

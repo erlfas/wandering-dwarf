@@ -22,12 +22,16 @@ function getSharedWaterGeometry(segments: number): THREE.BufferGeometry {
     if (!sharedWaterGeoNear) {
       sharedWaterGeoNear = new THREE.PlaneGeometry(1, 1, 24, 24);
       sharedWaterGeoNear.rotateX(-Math.PI / 2);
+      sharedWaterGeoNear.computeBoundingBox();
+      sharedWaterGeoNear.computeBoundingSphere();
     }
     return sharedWaterGeoNear;
   }
   if (!sharedWaterGeoFar) {
     sharedWaterGeoFar = new THREE.PlaneGeometry(1, 1, 4, 4);
     sharedWaterGeoFar.rotateX(-Math.PI / 2);
+    sharedWaterGeoFar.computeBoundingBox();
+    sharedWaterGeoFar.computeBoundingSphere();
   }
   return sharedWaterGeoFar;
 }
@@ -75,6 +79,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   private waterMinZ = Infinity;
   private waterMaxZ = -Infinity;
   private lastForestTier = -1;
+  private biomeGridPopulated = false;
+  private tallGrassPopulated = false;
   private readonly biomeGrid = new Float32Array(BIOME_STRIDE * BIOME_STRIDE * 3);
   private borderLine?: THREE.LineSegments;
   private chunkGrass?: ChunkGrass;
@@ -104,7 +110,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       config.enableGrassBlades && !config.blankClayMode ? grassDensityMult : 0;
     this.hasGrass = this.grassDensityMult > 0;
 
-    this.populateBiomeGrid(noise);
+    this.populateBiomeGrid(noise, this.hasGrass);
     const geometry = this.buildGeometry(noise, config.blankClayMode, config.waterLevel);
     this.mesh = new THREE.Mesh(geometry, terrainMaterial);
     this.mesh.position.set(cx * size, 0, cz * size);
@@ -158,7 +164,11 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     this.mesh.updateMatrixWorld(true);
   }
 
-  private populateBiomeGrid(noise: TerrainNoise): void {
+  private populateBiomeGrid(noise: TerrainNoise, needTallGrass = this.hasGrass): void {
+    const needBase = !this.biomeGridPopulated;
+    const needTall = needTallGrass && !this.tallGrassPopulated;
+    if (!needBase && !needTall) return;
+
     const half = this.size * 0.5;
     const step = this.size / BIOME_SEGMENTS;
     const worldOffsetX = this.cx * this.size;
@@ -171,10 +181,21 @@ export class TerrainChunk implements ChunkSurfaceSampler {
       for (let bx = 0; bx < BIOME_STRIDE; bx++) {
         const wx = worldOffsetX - half + bx * step;
         const idx = (rowOffset + bx) * 3;
-        grid[idx] = noise.getForestDensity(wx, wz);
-        grid[idx + 1] = noise.getMeadowPatch(wx, wz);
-        grid[idx + 2] = noise.getTallGrassFactor(wx, wz);
+        if (needBase) {
+          grid[idx] = noise.getForestDensity(wx, wz);
+          grid[idx + 1] = noise.getMeadowPatch(wx, wz);
+        }
+        if (needTall) {
+          grid[idx + 2] = noise.getTallGrassFactor(wx, wz);
+        } else if (needBase) {
+          grid[idx + 2] = 0;
+        }
       }
+    }
+
+    this.biomeGridPopulated = true;
+    if (needTallGrass) {
+      this.tallGrassPopulated = true;
     }
   }
 
@@ -292,7 +313,10 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     grassMaterial: THREE.Material,
     flowerMaterial: THREE.Material
   ): void {
-    this.populateBiomeGrid(noise);
+    const effectiveMult =
+      config.enableGrassBlades && !config.blankClayMode ? grassDensityMult : 0;
+    this.tallGrassPopulated = false;
+    this.populateBiomeGrid(noise, effectiveMult > 0);
     if (this.chunkGrass) {
       this.mesh.remove(this.chunkGrass.group);
       this.chunkGrass.dispose();
@@ -307,7 +331,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     treeMaterial: THREE.Material,
     dist: number
   ): void {
-    this.populateBiomeGrid(noise);
+    this.biomeGridPopulated = false;
+    this.populateBiomeGrid(noise, false);
     if (this.chunkForest) {
       this.mesh.remove(this.chunkForest.group);
       this.chunkForest.dispose();
@@ -351,6 +376,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     }
 
     if (this.hasGrass) {
+      this.populateBiomeGrid(noise, true);
       this.chunkGrass = new ChunkGrass(
         this.cx,
         this.cz,
@@ -670,7 +696,13 @@ export class TerrainChunk implements ChunkSurfaceSampler {
           colors[cIdx + 1] = clayColor.g;
           colors[cIdx + 2] = clayColor.b;
         } else {
-          this.sampleBiome(localX, localZ, tempBiome);
+          if (segments === BIOME_SEGMENTS) {
+            const bIdx = (iz * BIOME_STRIDE + ix) * 3;
+            tempBiome.forest = this.biomeGrid[bIdx];
+            tempBiome.meadow = this.biomeGrid[bIdx + 1];
+          } else {
+            this.sampleBiome(localX, localZ, tempBiome);
+          }
           noise.getSurfaceColor(
             wx,
             wy,
@@ -760,6 +792,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   }
 
   public dispose(): void {
+    this.biomeGridPopulated = false;
+    this.tallGrassPopulated = false;
     this.chunkGrass?.dispose();
     this.chunkForest?.dispose();
     if (this.borderLine) {

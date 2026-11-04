@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DwarfCharacter } from '../player/DwarfCharacter';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
@@ -202,7 +203,6 @@ export class LivingWorldManager {
   private dwarfLanternMesh!: THREE.Mesh;
   private isNight = false;
   private hazardHitCooldown = 0;
-  private audioCtx: AudioContext | null = null;
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
   constructor(
@@ -294,6 +294,7 @@ export class LivingWorldManager {
   private attachDwarfLantern(): void {
     this.dwarfLanternLight = new THREE.PointLight(0xffaa33, 0, 26, 1.4);
     this.dwarfLanternLight.position.set(0.42, 1.15, 0.35);
+    this.dwarfLanternLight.visible = false;
     this.dwarf.root.add(this.dwarfLanternLight);
 
     const lanternGeo = new THREE.CylinderGeometry(0.09, 0.11, 0.24, 6);
@@ -596,6 +597,7 @@ export class LivingWorldManager {
     // 5. Automatic Dwarven Belt Lantern at Dusk / Night
     const showLantern = nightFactor > 0.25;
     this.dwarfLanternMesh.visible = showLantern;
+    this.dwarfLanternLight.visible = showLantern;
     if (showLantern) {
       const flicker = 1.0 + Math.sin(elapsedTime * 11.0) * 0.08;
       this.dwarfLanternLight.intensity = ((nightFactor - 0.25) / 0.75) * 3.6 * flicker;
@@ -617,7 +619,7 @@ export class LivingWorldManager {
     if (!isStartChunk && rng() < 0.35) {
       const wx = cx * size + (rng() - 0.5) * (size * 0.7);
       const wz = cz * size + (rng() - 0.5) * (size * 0.7);
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
       if (!this.config.enableWater || wy > this.config.waterLevel + 0.8) {
         const mesh = new THREE.Group();
         mesh.position.set(wx, wy, wz);
@@ -653,7 +655,7 @@ export class LivingWorldManager {
     if (isStartChunk || rng() < 0.35) {
       const wx = isStartChunk ? 5.5 : cx * size + (rng() - 0.5) * (size * 0.65);
       const wz = isStartChunk ? 8.5 : cz * size + (rng() - 0.5) * (size * 0.65);
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
       if (!this.config.enableWater || wy > this.config.waterLevel + 0.9) {
         const group = new THREE.Group();
         group.position.set(wx, wy, wz);
@@ -688,7 +690,7 @@ export class LivingWorldManager {
     if (isStartChunk || rng() < 0.28) {
       const wx = isStartChunk ? -6.5 : cx * size + (rng() - 0.5) * (size * 0.6);
       const wz = isStartChunk ? 9.5 : cz * size + (rng() - 0.5) * (size * 0.6);
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.0) {
         const mesh = new THREE.Mesh(assets.spiritRabbitGeo, assets.matSpirit);
         mesh.position.set(wx, wy, wz);
@@ -704,7 +706,7 @@ export class LivingWorldManager {
         const tz = wz + Math.sin(tAngle) * 18.0;
         ent.spiritRabbit = {
           pos: new THREE.Vector3(wx, wy, wz),
-          targetPos: new THREE.Vector3(tx, this.noise.getHeight(tx, tz), tz),
+          targetPos: new THREE.Vector3(tx, this.sampleGroundHeight(tx, tz), tz),
           rewarded: false,
           hopPhase: rng() * 6.0,
           mesh,
@@ -716,7 +718,7 @@ export class LivingWorldManager {
     if (!isStartChunk && rng() < 0.22) {
       const wx = cx * size + (rng() - 0.5) * (size * 0.6);
       const wz = cz * size + (rng() - 0.5) * (size * 0.6);
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
 
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
         const mesh = new THREE.Group();
@@ -777,17 +779,7 @@ export class LivingWorldManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playBirdChirp(): void {

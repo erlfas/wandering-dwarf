@@ -1,8 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { DwarfCharacter } from '../player/DwarfCharacter';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+
+const FISH_CANDIDATE_OFFSETS = [0, 0.45, -0.45, 0.95, -0.95, 1.5, -1.5, 2.2, -2.2] as const;
 
 export type FishingState = 'inactive' | 'aiming' | 'casting' | 'floating' | 'landed_dry' | 'bite' | 'reeling';
 
@@ -197,7 +200,7 @@ export class FishingAndFishManager {
   // DOM HUD elements for Fishing Mode
   private fishingBannerEl: HTMLElement | null;
   private fishingToggleBtn: HTMLElement | null;
-  private audioCtx: AudioContext | null = null;
+  private lastBannerHtml = '';
   private onEnterFishingCallback?: () => void;
 
   constructor(
@@ -211,6 +214,12 @@ export class FishingAndFishManager {
     this.group.matrixAutoUpdate = false;
     this.fishingBannerEl = document.getElementById('fishing-banner');
     this.fishingToggleBtn = document.getElementById('fishing-mode-toggle');
+    this.fishingBannerEl?.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('#fishing-exit-btn')) {
+        this.exitFishingMode();
+      }
+    });
 
     this.initFishAssets();
     this.initFishingVisuals();
@@ -420,9 +429,8 @@ export class FishingAndFishManager {
         // Ignore if user is holding mouse buttons to orbit camera
         if (e.buttons !== 0) return;
 
-        const rect = this.domElement.getBoundingClientRect();
-        this.mouseNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        this.mouseNdc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        this.mouseNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
+        this.mouseNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
 
         this.waterAimPlane.constant = -this.config.waterLevel;
         this.raycaster.setFromCamera(this.mouseNdc, this.camera);
@@ -666,14 +674,16 @@ export class FishingAndFishManager {
         : `🎣 <strong>DRAWING LINE BACK...</strong>`;
     }
 
-    this.fishingBannerEl.innerHTML = `
+    const html = `
       <span class="fishing-banner-text">${statusHtml}</span>
       <button id="fishing-exit-btn" type="button" class="fishing-exit-pill" title="Stow Rod in Backpack & Exit (F or Esc)">
         ✕ Exit (F / Esc)
       </button>
     `;
-    const exitBtn = document.getElementById('fishing-exit-btn');
-    exitBtn?.addEventListener('click', () => this.exitFishingMode());
+    if (html !== this.lastBannerHtml) {
+      this.lastBannerHtml = html;
+      this.fishingBannerEl.innerHTML = html;
+    }
   }
 
   private getKey(cx: number, cz: number): number {
@@ -792,7 +802,7 @@ export class FishingAndFishManager {
       ];
       for (let i = 0; i < starterCenters.length; i++) {
         const pt = starterCenters[i];
-        const gy = this.noise.getHeight(pt.x, pt.z);
+        const gy = this.sampleGroundHeight(pt.x, pt.z);
         if (gy < waterY - 0.35) {
           fishList.push(this.createFishInstance(pt.x, pt.z, i % FISH_SPECIES.length, rng));
         }
@@ -804,7 +814,7 @@ export class FishingAndFishManager {
     for (let i = 0; i < probes && fishList.length < 10; i++) {
       const wx = cx * size + (rng() - 0.5) * (size * 0.86);
       const wz = cz * size + (rng() - 0.5) * (size * 0.86);
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
       if (wy < waterY - 0.42) {
         const speciesIdx =
           rng() < 0.12 ? 3 : Math.floor(rng() * 3); // 12% chance of Mythic Beard-Carp
@@ -882,7 +892,11 @@ export class FishingAndFishManager {
         const dxP = playerPos.x - f.pos.x;
         const dzP = playerPos.z - f.pos.z;
         const distSqToPlayer = dxP * dxP + dzP * dzP;
-        if (distSqToPlayer > maxSimDistSq) continue;
+        if (distSqToPlayer > maxSimDistSq) {
+          if (f.mesh.visible) f.mesh.visible = false;
+          continue;
+        }
+        if (!f.mesh.visible) f.mesh.visible = true;
 
         if (f.fleeTimer > 0) {
           f.fleeTimer = Math.max(0, f.fleeTimer - dt);
@@ -908,9 +922,8 @@ export class FishingAndFishManager {
           const awayAngle = Math.atan2(-dxP, -dzP);
           let bestAngle = awayAngle;
           let deepestGround = Infinity;
-          const candidateOffsets = [0, 0.45, -0.45, 0.95, -0.95, 1.5, -1.5, 2.2, -2.2];
-          for (let i = 0; i < candidateOffsets.length; i++) {
-            const testAng = awayAngle + candidateOffsets[i];
+          for (let i = 0; i < FISH_CANDIDATE_OFFSETS.length; i++) {
+            const testAng = awayAngle + FISH_CANDIDATE_OFFSETS[i];
             const probeX = f.pos.x + Math.sin(testAng) * 1.35;
             const probeZ = f.pos.z + Math.cos(testAng) * 1.35;
             const gY = this.sampleGroundHeight(probeX, probeZ);
@@ -1337,17 +1350,7 @@ export class FishingAndFishManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playEquipRodSound(): void {
@@ -1364,6 +1367,10 @@ export class FishingAndFishManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.16);
   }
@@ -1382,6 +1389,10 @@ export class FishingAndFishManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.25);
   }
@@ -1400,6 +1411,10 @@ export class FishingAndFishManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.15);
   }
@@ -1418,6 +1433,10 @@ export class FishingAndFishManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.11);
   }
@@ -1436,6 +1455,10 @@ export class FishingAndFishManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.07 + 0.22);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.07);
       osc.stop(now + idx * 0.07 + 0.24);
     });
@@ -1455,6 +1478,10 @@ export class FishingAndFishManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
     osc.start(now);
     osc.stop(now + 0.29);
   }
@@ -1474,6 +1501,10 @@ export class FishingAndFishManager {
       gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.36);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
       osc.start(now + idx * 0.08);
       osc.stop(now + idx * 0.08 + 0.38);
     });

@@ -846,8 +846,8 @@ export class DwarfCharacter {
   }
 
   public getRodTipWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
-    this.root.updateMatrixWorld(true);
-    return this.rodTipNode.getWorldPosition(out);
+    this.rodTipNode.updateWorldMatrix(true, false);
+    return out.setFromMatrixPosition(this.rodTipNode.matrixWorld);
   }
 
   public setHuntingMode(active: boolean): void {
@@ -873,8 +873,8 @@ export class DwarfCharacter {
   }
 
   public getBowLaunchWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
-    this.root.updateMatrixWorld(true);
-    return this.bowLaunchNode.getWorldPosition(out);
+    this.bowLaunchNode.updateWorldMatrix(true, false);
+    return out.setFromMatrixPosition(this.bowLaunchNode.matrixWorld);
   }
 
   private buildTrailParticles(): THREE.Points {
@@ -970,7 +970,37 @@ export class DwarfCharacter {
           if (obj instanceof THREE.Mesh) {
             obj.castShadow = true;
             obj.receiveShadow = false;
-            obj.frustumCulled = false;
+            if (!obj.geometry.boundingSphere) {
+              obj.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 1.0, 0), 2.5);
+            } else {
+              obj.geometry.boundingSphere.set(new THREE.Vector3(0, 1.0, 0), 2.5);
+            }
+            obj.frustumCulled = true;
+
+            const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+            for (const mat of mats) {
+              if (mat instanceof THREE.MeshStandardMaterial) {
+                const baseMap = mat.map;
+                const secondaryMaps = [
+                  mat.normalMap,
+                  mat.roughnessMap,
+                  mat.metalnessMap,
+                  mat.aoMap,
+                  mat.emissiveMap,
+                ];
+                mat.normalMap = null;
+                mat.roughnessMap = null;
+                mat.metalnessMap = null;
+                mat.aoMap = null;
+                mat.emissiveMap = null;
+                for (const tex of secondaryMaps) {
+                  if (tex && tex !== baseMap) {
+                    tex.dispose();
+                  }
+                }
+                mat.needsUpdate = true;
+              }
+            }
           }
         });
 

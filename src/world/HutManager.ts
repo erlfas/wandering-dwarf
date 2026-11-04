@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import hutInteriorModelUrl from '../../3dmodels/dwarven hut interior 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
@@ -158,7 +158,7 @@ export function loadDwarvenHutInteriorModel(): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      const geo = mesh.geometry;
+      let geo = mesh.geometry;
       geo.applyMatrix4(mesh.matrixWorld);
 
       // 1. Strip unused skinning attributes
@@ -182,6 +182,11 @@ export function loadDwarvenHutInteriorModel(): void {
       // 3. Guard computeVertexNormals() — never recompute on 22,939-vert mesh when normals exist
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
+      }
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();

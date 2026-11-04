@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { TerrainNoise, createSeededRandom } from './TerrainNoise';
 import { TreasureManager } from './TreasureManager';
@@ -232,7 +233,6 @@ export class ChallengeManager {
   private lastCenterCz = Number.NaN;
   private coinPitchStep = 0;
   private coinPitchResetTimer = 0;
-  private audioCtx: AudioContext | null = null;
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
 
   private challengeBannerEl: HTMLElement | null;
@@ -731,7 +731,7 @@ export class ChallengeManager {
         const lz = isStartChunk && attempt === 0 ? -4.5 : (rng() - 0.5) * (size * 0.72);
         const wx = cx * size + lx;
         const wz = cz * size + lz;
-        const wy = this.noise.getHeight(wx, wz);
+        const wy = this.sampleGroundHeight(wx, wz);
 
         if (this.config.enableWater && wy < this.config.waterLevel + 0.5) continue;
         const trackW = this.noise.getTrackWeight(wx, wz, wy);
@@ -753,7 +753,7 @@ export class ChallengeManager {
         for (let i = 0; i < coinCount; i++) {
           const coinId = `coin_${cx}_${cz}_${i}`;
           if (!this.collectedCoinIds.has(coinId)) {
-            const wy = this.noise.getHeight(curX, curZ);
+            const wy = this.sampleGroundHeight(curX, curZ);
             if (!this.config.enableWater || wy >= this.config.waterLevel + 0.35) {
               const root = new THREE.Group();
               root.position.set(curX, wy, curZ);
@@ -797,7 +797,7 @@ export class ChallengeManager {
             const testAngle = heading + s * 0.28;
             const tx = curX + Math.cos(testAngle) * 3.4;
             const tz = curZ + Math.sin(testAngle) * 3.4;
-            const ty = this.noise.getHeight(tx, tz);
+            const ty = this.sampleGroundHeight(tx, tz);
             const w = this.noise.getTrackWeight(tx, tz, ty);
             if (w > bestWeight) {
               bestWeight = w;
@@ -821,7 +821,7 @@ export class ChallengeManager {
       const lz = isStarterArchChunk ? 12.0 : (rng() - 0.5) * (size * 0.55);
       const wx = cx * size + lx;
       const wz = cz * size + lz;
-      const wy = this.noise.getHeight(wx, wz);
+      const wy = this.sampleGroundHeight(wx, wz);
 
       if (!this.config.enableWater || wy > this.config.waterLevel + 1.5) {
         // Orient the archway toward a downhill or scenic trail direction
@@ -831,7 +831,7 @@ export class ChallengeManager {
           const testYaw = (a * Math.PI) / 4;
           const tx = wx + Math.sin(testYaw) * 24;
           const tz = wz + Math.cos(testYaw) * 24;
-          const ty = this.noise.getHeight(tx, tz);
+          const ty = this.sampleGroundHeight(tx, tz);
           if (ty < lowestY && (!this.config.enableWater || ty > this.config.waterLevel + 0.8)) {
             lowestY = ty;
             bestYaw = testYaw;
@@ -849,7 +849,7 @@ export class ChallengeManager {
           rx += Math.sin(curYaw) * stepDist;
           rz += Math.cos(curYaw) * stepDist;
           const ry = Math.max(
-            this.noise.getHeight(rx, rz),
+            this.sampleGroundHeight(rx, rz),
             this.config.enableWater ? this.config.waterLevel + 0.4 : -999
           );
           ringSpecs.push({
@@ -959,17 +959,7 @@ export class ChallengeManager {
   }
 
   private ensureAudio(): AudioContext | null {
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new AudioContext();
-      }
-      if (this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume();
-      }
-      return this.audioCtx;
-    } catch {
-      return null;
-    }
+    return getSharedAudioContext();
   }
 
   private playCoinChime(): void {
