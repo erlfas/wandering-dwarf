@@ -4,6 +4,15 @@ import dwarfModelUrl from '../../3dmodels/dwarf front t-pose 3d model.glb?url';
 
 type AnimState = 'idle' | 'walk' | 'run' | 'swim';
 
+export type EquippedWeaponId =
+  | 'mallet'
+  | 'oak_club'
+  | 'battle_axe'
+  | 'broadsword'
+  | 'runic_greatsword';
+
+export type EquippedShieldId = 'none' | 'round_shield' | 'mithril_aegis';
+
 /**
  * 3D Dwarf character loaded from `3dmodels/dwarf front t-pose 3d model.glb`.
  * Supports idle breathing, walking, sprinting, and swimming animations via AnimationMixer,
@@ -34,6 +43,11 @@ export class DwarfCharacter {
   private chiselToolGroup = new THREE.Group();
   private hammerPivot = new THREE.Group();
   private chiselPivot = new THREE.Group();
+  private equippedWeaponGroup = new THREE.Group();
+  private weaponMeshes: Partial<Record<EquippedWeaponId, THREE.Group>> = {};
+  private equippedShieldGroup = new THREE.Group();
+  private shieldMeshes: Partial<Record<Exclude<EquippedShieldId, 'none'>, THREE.Group>> = {};
+  private stowedShieldGroup = new THREE.Group();
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
@@ -55,6 +69,15 @@ export class DwarfCharacter {
   private chiselAnimTimer = 0;
   private chiselAnimDuration = 1.0;
   private carryBobTime = 0;
+
+  private equippedWeaponId: EquippedWeaponId = 'mallet';
+  private equippedShieldId: EquippedShieldId = 'none';
+  private combatReady = false;
+  private meleeSwingTimer = 0;
+  private readonly meleeSwingDuration = 0.38;
+  private shieldBlocking = false;
+  private shieldBlockBlend = 0;
+  private shieldImpactTimer = 0;
 
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
@@ -503,6 +526,234 @@ export class DwarfCharacter {
     this.chiselToolGroup.add(this.chiselPivot);
 
     this.modelContainer.add(this.chiselToolGroup);
+
+    // 9. Melee Combat Weapons (Right Hand) & Round Shield / Mithril Aegis (Left Forearm)
+    //    matching `art/gameplay_protect_against_enemy.jpg`
+    this.buildCombatWeaponsAndShields(rodWoodMat, flapMat, brassMat, steelHeadMat);
+  }
+
+  private buildCombatWeaponsAndShields(
+    woodMat: THREE.MeshStandardMaterial,
+    darkWoodMat: THREE.MeshStandardMaterial,
+    brassMat: THREE.MeshStandardMaterial,
+    steelMat: THREE.MeshStandardMaterial
+  ): void {
+    const darkIronMat = new THREE.MeshStandardMaterial({
+      color: 0x3b4148,
+      roughness: 0.42,
+      metalness: 0.78,
+    });
+    const runicGoldMat = new THREE.MeshStandardMaterial({
+      color: 0xffd166,
+      roughness: 0.22,
+      metalness: 0.9,
+      emissive: 0xff9f1c,
+      emissiveIntensity: 0.65,
+    });
+    const mithrilMat = new THREE.MeshStandardMaterial({
+      color: 0xcaf0f8,
+      roughness: 0.18,
+      metalness: 0.92,
+      emissive: 0x0077b6,
+      emissiveIntensity: 0.45,
+    });
+
+    this.equippedWeaponGroup.position.set(0.32, 0.78, 0.24);
+    this.equippedWeaponGroup.visible = false;
+
+    // A) Starter Stone Mason's Mallet ('mallet')
+    {
+      const g = new THREE.Group();
+      const shaftGeo = new THREE.CylinderGeometry(0.018, 0.022, 0.48, 7);
+      shaftGeo.translate(0, 0.2, 0);
+      const shaft = new THREE.Mesh(shaftGeo, woodMat);
+      shaft.castShadow = true;
+      g.add(shaft);
+
+      const headGeo = new THREE.BoxGeometry(0.14, 0.13, 0.26);
+      headGeo.translate(0, 0.44, 0);
+      const head = new THREE.Mesh(headGeo, darkIronMat);
+      head.castShadow = true;
+      g.add(head);
+      this.weaponMeshes.mallet = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
+    // B) Iron-Spiked Oak Club ('oak_club')
+    {
+      const g = new THREE.Group();
+      g.visible = false;
+      const clubBodyGeo = new THREE.CylinderGeometry(0.068, 0.024, 0.68, 8);
+      clubBodyGeo.translate(0, 0.3, 0);
+      const clubBody = new THREE.Mesh(clubBodyGeo, darkWoodMat);
+      clubBody.castShadow = true;
+      g.add(clubBody);
+
+      const bandGeo = new THREE.CylinderGeometry(0.066, 0.062, 0.06, 8);
+      bandGeo.translate(0, 0.5, 0);
+      g.add(new THREE.Mesh(bandGeo, darkIronMat));
+
+      const spikeGeo = new THREE.ConeGeometry(0.022, 0.09, 5);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const sp = new THREE.Mesh(spikeGeo, steelMat);
+        sp.position.set(Math.cos(a) * 0.085, 0.48 + (i % 2) * 0.06, Math.sin(a) * 0.085);
+        sp.rotation.z = -Math.cos(a) * (Math.PI / 2);
+        sp.rotation.x = Math.sin(a) * (Math.PI / 2);
+        g.add(sp);
+      }
+      this.weaponMeshes.oak_club = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
+    // C) Dwarven Bearded Battle-Axe ('battle_axe' — matching art/gameplay_protect_against_enemy.jpg)
+    {
+      const g = new THREE.Group();
+      g.visible = false;
+      const haftGeo = new THREE.CylinderGeometry(0.02, 0.024, 0.68, 8);
+      haftGeo.translate(0, 0.28, 0);
+      const haft = new THREE.Mesh(haftGeo, woodMat);
+      haft.castShadow = true;
+      g.add(haft);
+
+      const collarGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.12, 8);
+      collarGeo.translate(0, 0.52, 0);
+      g.add(new THREE.Mesh(collarGeo, darkIronMat));
+
+      // Broad bearded crescent axe blade facing forward (+Z)
+      const bladeGeo = new THREE.ConeGeometry(0.18, 0.26, 4);
+      bladeGeo.rotateX(-Math.PI / 2);
+      bladeGeo.scale(0.24, 1.15, 0.95);
+      bladeGeo.translate(0, 0.5, 0.13);
+      const blade = new THREE.Mesh(bladeGeo, steelMat);
+      blade.castShadow = true;
+      g.add(blade);
+
+      const backSpikeGeo = new THREE.ConeGeometry(0.035, 0.12, 4);
+      backSpikeGeo.rotateX(-Math.PI / 2);
+      backSpikeGeo.translate(0, 0.53, -0.07);
+      g.add(new THREE.Mesh(backSpikeGeo, darkIronMat));
+
+      this.weaponMeshes.battle_axe = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
+    // D) Stronghold Broadsword ('broadsword')
+    {
+      const g = new THREE.Group();
+      g.visible = false;
+      const gripGeo = new THREE.CylinderGeometry(0.02, 0.022, 0.2, 8);
+      gripGeo.translate(0, 0.06, 0);
+      g.add(new THREE.Mesh(gripGeo, darkWoodMat));
+
+      const pommelGeo = new THREE.SphereGeometry(0.036, 8, 8);
+      pommelGeo.translate(0, -0.05, 0);
+      g.add(new THREE.Mesh(pommelGeo, brassMat));
+
+      const guardGeo = new THREE.BoxGeometry(0.04, 0.038, 0.26);
+      guardGeo.translate(0, 0.17, 0);
+      g.add(new THREE.Mesh(guardGeo, brassMat));
+
+      const bladeGeo = new THREE.BoxGeometry(0.022, 0.66, 0.085);
+      bladeGeo.translate(0, 0.51, 0);
+      const blade = new THREE.Mesh(bladeGeo, steelMat);
+      blade.castShadow = true;
+      g.add(blade);
+
+      const tipGeo = new THREE.ConeGeometry(0.06, 0.14, 4);
+      tipGeo.scale(0.36, 1.0, 1.0);
+      tipGeo.translate(0, 0.91, 0);
+      g.add(new THREE.Mesh(tipGeo, steelMat));
+
+      this.weaponMeshes.broadsword = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
+    // E) Mountain King's Runic Greatsword ('runic_greatsword')
+    {
+      const g = new THREE.Group();
+      g.visible = false;
+      const gripGeo = new THREE.CylinderGeometry(0.024, 0.026, 0.26, 8);
+      gripGeo.translate(0, 0.08, 0);
+      g.add(new THREE.Mesh(gripGeo, darkWoodMat));
+
+      const pommelGeo = new THREE.OctahedronGeometry(0.048, 0);
+      pommelGeo.translate(0, -0.06, 0);
+      g.add(new THREE.Mesh(pommelGeo, runicGoldMat));
+
+      const guardGeo = new THREE.BoxGeometry(0.05, 0.05, 0.34);
+      guardGeo.translate(0, 0.21, 0);
+      g.add(new THREE.Mesh(guardGeo, runicGoldMat));
+
+      const bladeGeo = new THREE.BoxGeometry(0.028, 0.82, 0.11);
+      bladeGeo.translate(0, 0.64, 0);
+      const blade = new THREE.Mesh(bladeGeo, mithrilMat);
+      blade.castShadow = true;
+      g.add(blade);
+
+      const runeStripGeo = new THREE.BoxGeometry(0.034, 0.68, 0.036);
+      runeStripGeo.translate(0, 0.62, 0);
+      g.add(new THREE.Mesh(runeStripGeo, runicGoldMat));
+
+      const tipGeo = new THREE.ConeGeometry(0.078, 0.18, 4);
+      tipGeo.scale(0.36, 1.0, 1.0);
+      tipGeo.translate(0, 1.14, 0);
+      g.add(new THREE.Mesh(tipGeo, mithrilMat));
+
+      this.weaponMeshes.runic_greatsword = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
+    this.modelContainer.add(this.equippedWeaponGroup);
+
+    // F) Left-Arm Equipped Round Shield & Mithril Aegis (matching art/gameplay_protect_against_enemy.jpg)
+    this.equippedShieldGroup.position.set(-0.34, 0.84, 0.22);
+    this.equippedShieldGroup.visible = false;
+
+    const buildShieldMesh = (isMithril: boolean): THREE.Group => {
+      const sg = new THREE.Group();
+      const discGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.042, 18);
+      discGeo.rotateZ(Math.PI / 2);
+      const disc = new THREE.Mesh(discGeo, isMithril ? mithrilMat : woodMat);
+      disc.castShadow = true;
+      sg.add(disc);
+
+      const rimGeo = new THREE.TorusGeometry(0.34, 0.028, 8, 20);
+      rimGeo.rotateY(Math.PI / 2);
+      const rim = new THREE.Mesh(rimGeo, isMithril ? runicGoldMat : darkIronMat);
+      rim.castShadow = true;
+      sg.add(rim);
+
+      const bossGeo = new THREE.SphereGeometry(0.095, 10, 8);
+      bossGeo.scale(0.65, 1.0, 1.0);
+      bossGeo.translate(-0.025, 0, 0);
+      const boss = new THREE.Mesh(bossGeo, isMithril ? runicGoldMat : steelMat);
+      sg.add(boss);
+
+      return sg;
+    };
+
+    const roundShield = buildShieldMesh(false);
+    this.shieldMeshes.round_shield = roundShield;
+    this.equippedShieldGroup.add(roundShield);
+
+    const mithrilShield = buildShieldMesh(true);
+    mithrilShield.visible = false;
+    this.shieldMeshes.mithril_aegis = mithrilShield;
+    this.equippedShieldGroup.add(mithrilShield);
+
+    this.modelContainer.add(this.equippedShieldGroup);
+
+    // Stowed Shield on Backpack when busy fishing/hunting/carrying stones
+    const stowedShieldDisc = new THREE.CylinderGeometry(0.24, 0.24, 0.03, 14);
+    stowedShieldDisc.rotateX(Math.PI / 2);
+    const stowedShieldMesh = new THREE.Mesh(stowedShieldDisc, woodMat);
+    const stowedShieldRim = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.02, 6, 16), darkIronMat);
+    this.stowedShieldGroup.add(stowedShieldMesh);
+    this.stowedShieldGroup.add(stowedShieldRim);
+    this.stowedShieldGroup.position.set(0, -0.02, -0.14);
+    this.stowedShieldGroup.visible = false;
+    this.backpackGroup.add(this.stowedShieldGroup);
   }
 
   public setNaturalRockAsset(
@@ -534,6 +785,44 @@ export class DwarfCharacter {
 
   public isChiseling(): boolean {
     return this.chiselAnimTimer > 0;
+  }
+
+  public setEquippedCombatGear(weaponId: EquippedWeaponId, shieldId: EquippedShieldId): void {
+    this.equippedWeaponId = weaponId;
+    this.equippedShieldId = shieldId;
+    for (const [id, mesh] of Object.entries(this.weaponMeshes)) {
+      if (mesh) mesh.visible = id === weaponId;
+    }
+    if (this.shieldMeshes.round_shield) {
+      this.shieldMeshes.round_shield.visible = shieldId === 'round_shield';
+    }
+    if (this.shieldMeshes.mithril_aegis) {
+      this.shieldMeshes.mithril_aegis.visible = shieldId === 'mithril_aegis';
+    }
+  }
+
+  public setCombatReady(ready: boolean): void {
+    this.combatReady = ready;
+  }
+
+  public triggerMeleeSwing(): void {
+    this.meleeSwingTimer = this.meleeSwingDuration;
+  }
+
+  public isSwingingWeapon(): boolean {
+    return this.meleeSwingTimer > 0;
+  }
+
+  public setShieldBlocking(blocking: boolean): void {
+    this.shieldBlocking = blocking;
+  }
+
+  public isShieldBlocking(): boolean {
+    return this.shieldBlocking && this.equippedShieldId !== 'none';
+  }
+
+  public triggerBlockImpact(): void {
+    this.shieldImpactTimer = 0.26;
   }
 
   public setFishingMode(active: boolean): void {
@@ -1093,8 +1382,8 @@ export class DwarfCharacter {
     const showBlocks = canShowCarry && this.carriedChiseledBlocks > 0;
     this.carriedStoneGroup.visible = showRawStones;
     this.carriedBlockGroup.visible = showBlocks;
+    this.carryBobTime += dt * (moveSpeed > 0.2 ? 9.0 : 2.2);
     if (showRawStones || showBlocks) {
-      this.carryBobTime += dt * (moveSpeed > 0.2 ? 9.0 : 2.2);
       const bobY = Math.sin(this.carryBobTime) * (moveSpeed > 0.2 ? 0.032 : 0.01);
       if (showRawStones) {
         this.carriedStoneGroup.position.y = 0.72 + bobY;
@@ -1102,6 +1391,83 @@ export class DwarfCharacter {
       if (showBlocks) {
         this.carriedBlockGroup.position.y = 0.76 + bobY;
       }
+    }
+
+    // 9. Animate Equipped Melee Weapon (Right Hand) & Shield (Left Arm) when not carrying/fishing/hunting
+    if (this.meleeSwingTimer > 0) {
+      this.meleeSwingTimer = Math.max(0, this.meleeSwingTimer - dt);
+    }
+    if (this.shieldImpactTimer > 0) {
+      this.shieldImpactTimer = Math.max(0, this.shieldImpactTimer - dt);
+    }
+
+    const busyWithHands =
+      isSwimming || isGliding || rodOut || bowOut || isChiselingNow || showRawStones || showBlocks;
+    const showWeaponInHand =
+      !busyWithHands &&
+      (this.equippedWeaponId !== 'mallet' || this.combatReady || this.meleeSwingTimer > 0);
+    const hasShield = this.equippedShieldId !== 'none';
+    const showShieldOnArm = !busyWithHands && hasShield;
+
+    this.equippedWeaponGroup.visible = showWeaponInHand;
+    this.equippedShieldGroup.visible = showShieldOnArm;
+    this.stowedShieldGroup.visible = busyWithHands && hasShield;
+
+    if (showWeaponInHand) {
+      const walkSwing = moveSpeed > 0.2 ? Math.sin(this.carryBobTime) * 0.12 : 0;
+      if (this.meleeSwingTimer > 0) {
+        const p = 1.0 - this.meleeSwingTimer / this.meleeSwingDuration;
+        // Wind up (0..0.28), fast cleave forward/down (0.28..0.72), recover (0.72..1.0)
+        let pitch = 0.35;
+        let yaw = 0;
+        let roll = -0.15;
+        if (p < 0.28) {
+          const w = p / 0.28;
+          pitch = THREE.MathUtils.lerp(0.35, -0.85, w);
+          yaw = THREE.MathUtils.lerp(0, -0.45, w);
+          roll = THREE.MathUtils.lerp(-0.15, -0.55, w);
+        } else if (p < 0.72) {
+          const s = (p - 0.28) / 0.44;
+          pitch = THREE.MathUtils.lerp(-0.85, 1.48, s);
+          yaw = THREE.MathUtils.lerp(-0.45, 0.52, s);
+          roll = THREE.MathUtils.lerp(-0.55, 0.38, s);
+        } else {
+          const r = (p - 0.72) / 0.28;
+          pitch = THREE.MathUtils.lerp(1.48, 0.35, r);
+          yaw = THREE.MathUtils.lerp(0.52, 0, r);
+          roll = THREE.MathUtils.lerp(0.38, -0.15, r);
+        }
+        this.equippedWeaponGroup.position.set(0.32, 0.86, 0.34);
+        this.equippedWeaponGroup.rotation.set(pitch, yaw, roll);
+      } else {
+        this.equippedWeaponGroup.position.set(0.33, 0.78, 0.26);
+        this.equippedWeaponGroup.rotation.set(0.42 + walkSwing, -0.08, -0.12);
+      }
+    }
+
+    if (showShieldOnArm) {
+      const targetBlock = this.shieldBlocking ? 1.0 : 0.0;
+      this.shieldBlockBlend = THREE.MathUtils.lerp(
+        this.shieldBlockBlend,
+        targetBlock,
+        Math.min(1, dt * 14.0)
+      );
+      const impactRecoil =
+        this.shieldImpactTimer > 0
+          ? Math.sin((this.shieldImpactTimer / 0.26) * Math.PI) * 0.09
+          : 0;
+      // Blend from left side-guard (-0.34, 0.84, 0.22) to raised front guard (-0.12, 0.94, 0.44)
+      // matching `art/gameplay_protect_against_enemy.jpg`
+      this.equippedShieldGroup.position.set(
+        THREE.MathUtils.lerp(-0.34, -0.11, this.shieldBlockBlend),
+        THREE.MathUtils.lerp(0.82, 0.94, this.shieldBlockBlend),
+        THREE.MathUtils.lerp(0.22, 0.44 - impactRecoil, this.shieldBlockBlend)
+      );
+      this.equippedShieldGroup.rotation.set(
+        THREE.MathUtils.lerp(0.08, -0.18, this.shieldBlockBlend),
+        THREE.MathUtils.lerp(0.28, 1.38, this.shieldBlockBlend),
+        THREE.MathUtils.lerp(-0.12, 0.08, this.shieldBlockBlend)
+      );
     }
 
     // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)

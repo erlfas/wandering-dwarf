@@ -16,6 +16,8 @@ import { FishingAndFishManager } from './world/FishingAndFishManager';
 import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
 import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
+import { CastleInteriorManager } from './world/CastleInteriorManager';
+import { TrollCombatManager } from './world/TrollCombatManager';
 import { WaterReflectionController } from './world/WaterMesh';
 import {
   clearProgress,
@@ -136,6 +138,7 @@ const landmarkManager = new LandmarkManager(
   noise,
   (tx, tz, label) => {
     hutManager.exitCurrentHut(true);
+    castleInteriorManager.exitCurrentCastle(true);
     explorer.setPose(tx, tz, explorer.getHeading(), explorer.yaw, explorer.pitch, explorer.distance);
     chunkManager.update(
       explorer.playerPos.x,
@@ -220,6 +223,7 @@ fishingManager.setOnEnterFishingCallback(() => huntingManager.exitHuntingMode())
 huntingManager.setOnEnterHuntingCallback(() => fishingManager.exitFishingMode());
 
 let hutManager!: HutManager;
+let castleInteriorManager!: CastleInteriorManager;
 
 const castleAndQuarryManager = new CastleAndQuarryManager(
   config,
@@ -238,6 +242,7 @@ const castleAndQuarryManager = new CastleAndQuarryManager(
     treasureManager.grantBonusGold(gold, msg);
     relicStore.renderShop();
     castleAndQuarryManager.renderHouseShop();
+    castleAndQuarryManager.renderCastleArmoryShop();
   },
   () => hutManager?.isInsideHut() ?? false
 );
@@ -247,22 +252,71 @@ castleAndQuarryManager.onStateChanged = () => {
   persistCurrentProgress(false);
 };
 
+// Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
+const sampleSurfaceHeight = (wx: number, wz: number): number =>
+  chunkManager.getSurfaceHeight(wx, wz);
+
+const trollCombatManager = new TrollCombatManager(
+  config,
+  renderer.domElement,
+  dwarf,
+  sampleSurfaceHeight,
+  () => (hutManager?.isInsideHut() ?? false) || (castleInteriorManager?.isInsideCastle() ?? false),
+  () => castleAndQuarryManager.getCompletedCastlePositions(),
+  () => castleAndQuarryManager.getCombatStats(),
+  (cost) => castleAndQuarryManager.consumeCombatEnergy(cost),
+  (damage, sourceTitle) => castleAndQuarryManager.applyPlayerDamage(damage, sourceTitle),
+  () => {
+    castleAndQuarryManager.eatFood(false);
+  },
+  (gold, rations, trophiesTotal, title) => {
+    castleAndQuarryManager.addFoodRations(rations, 'troll');
+    castleAndQuarryManager.setTrollsSlainBonusCount(trophiesTotal);
+    treasureManager.grantBonusGold(
+      gold,
+      `👹 DEFEATED ${title.toUpperCase()}! +${gold}g, +${rations}🍖 Rations & Troll Slayer Trophy #${trophiesTotal} (+10 Max ❤️ & +5% DMG)!`
+    );
+    persistCurrentProgress(true);
+  },
+  () => {
+    // Dwarf defeated by Troll -> Restore to Last Saved Location with full Health & Strength!
+    const saved = loadProgress() ?? loadProgressFromSlot(1);
+    if (saved) {
+      applyLoadedGameState(saved);
+      castleAndQuarryManager.healAndRestoreFull();
+      treasureManager.grantBonusGold(
+        0,
+        '🛡️ Restored to your Last Saved Location with full Health & Strength!'
+      );
+    } else {
+      restartNewGame();
+    }
+  },
+  () => {
+    fishingManager.interruptFishingFromTroll();
+  }
+);
+scene.add(trollCombatManager.group);
+
+const exteriorSceneGroups: THREE.Object3D[] = [
+  chunkManager.group,
+  treasureManager.group,
+  landmarkManager.group,
+  livingWorldManager.group,
+  challengeManager.group,
+  fishingManager.group,
+  huntingManager.group,
+  castleAndQuarryManager.group,
+  trollCombatManager.group,
+];
+
 hutManager = new HutManager(
   config,
   scene,
   fog,
   chunkManager,
   dwarf,
-  [
-    chunkManager.group,
-    treasureManager.group,
-    landmarkManager.group,
-    livingWorldManager.group,
-    challengeManager.group,
-    fishingManager.group,
-    huntingManager.group,
-    castleAndQuarryManager.group,
-  ],
+  exteriorSceneGroups,
   (x, z, heading, yaw, pitch, distance) => {
     explorer.setPose(x, z, heading, yaw, pitch, distance);
   },
@@ -270,6 +324,7 @@ hutManager = new HutManager(
     treasureManager.grantBonusGold(gold, msg);
     relicStore.renderShop();
     castleAndQuarryManager.renderHouseShop();
+    castleAndQuarryManager.renderCastleArmoryShop();
     persistCurrentProgress(false);
   }
 );
@@ -287,11 +342,65 @@ hutManager.setOnWarmHearthCallback(() => {
   }
 });
 
+castleInteriorManager = new CastleInteriorManager(
+  config,
+  scene,
+  fog,
+  dwarf,
+  [...exteriorSceneGroups, hutManager.group],
+  (x, z, heading, yaw, pitch, distance) => {
+    explorer.setPose(x, z, heading, yaw, pitch, distance);
+  }
+);
+scene.add(castleInteriorManager.group);
+explorer.setCastleInteriorManager(castleInteriorManager);
+
+castleInteriorManager.setCallbacks(
+  (visit) => {
+    fishingManager.exitFishingMode();
+    huntingManager.exitHuntingMode();
+    castleAndQuarryManager.renderCastleArmoryShop();
+    treasureManager.grantBonusGold(
+      0,
+      `🏰 Entered ${visit.name} (Tier ${visit.tier})! Safe from Night Trolls — Visit the Armory & Tavern Shop (Keys 5–0) or Rest Until Dawn (R)!`
+    );
+    persistCurrentProgress(true);
+  },
+  () => {
+    castleAndQuarryManager.renderCastleArmoryShop();
+    persistCurrentProgress(true);
+  },
+  (visit) => {
+    config.timeOfDay = 6.5;
+    castleAndQuarryManager.healAndRestoreFull();
+    trollCombatManager.despawnAllTrolls(false);
+    debugOverlay?.syncDisplay();
+    treasureManager.grantBonusGold(
+      0,
+      `☀️ Rested Until Dawn inside ${visit.name}! Full Health & Strength restored, and Night Trolls have fled!`
+    );
+    persistCurrentProgress(true);
+  }
+);
+
+castleAndQuarryManager.isInsideCastleFn = () => castleInteriorManager.isInsideCastle();
+castleAndQuarryManager.getActiveCastleVisitFn = () => castleInteriorManager.getActiveCastleVisit();
+castleAndQuarryManager.onRequestEnterCastle = (visit) => {
+  if (!castleInteriorManager.canEnterNow()) return;
+  hutManager.exitCurrentHut(true);
+  fishingManager.exitFishingMode();
+  huntingManager.exitHuntingMode();
+  castleInteriorManager.enterCastle(visit);
+};
+castleAndQuarryManager.onRequestExitCastle = () => {
+  castleInteriorManager.exitCurrentCastle();
+};
+castleAndQuarryManager.onRequestRestUntilDawn = () => {
+  castleInteriorManager.tryRestUntilDawn();
+};
+
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
 
-// Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
-const sampleSurfaceHeight = (wx: number, wz: number): number =>
-  chunkManager.getSurfaceHeight(wx, wz);
 treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 livingWorldManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
@@ -314,6 +423,7 @@ if (savedProgress) {
   hutManager.restoreProgress(savedProgress.artefactsCollected);
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
+  trollCombatManager.restoreProgress(savedProgress.trollsSlain);
   castleAndQuarryManager.restoreProgress(
     savedProgress.quarries,
     savedProgress.castles,
@@ -321,7 +431,12 @@ if (savedProgress) {
     savedProgress.energy,
     savedProgress.foodCount,
     savedProgress.carriedRawStones,
-    savedProgress.carriedChiseledBlocks
+    savedProgress.carriedChiseledBlocks,
+    savedProgress.health,
+    savedProgress.unlockedArmory,
+    savedProgress.equippedWeapon,
+    savedProgress.equippedShield,
+    savedProgress.trollsSlain
   );
   syncBeaconFog();
   explorer.setPose(
@@ -360,10 +475,19 @@ const reusableSaveState: SavedProgress = {
 };
 
 function populateSaveState(): SavedProgress {
+  const activeCastle = castleInteriorManager.getActiveCastleVisit();
+  const saveX = activeCastle
+    ? activeCastle.worldX + Math.sin(activeCastle.rotationY) * 6.6
+    : explorer.playerPos.x;
+  const saveY = activeCastle ? activeCastle.worldY + 0.45 : explorer.playerPos.y;
+  const saveZ = activeCastle
+    ? activeCastle.worldZ + Math.cos(activeCastle.rotationY) * 6.6
+    : explorer.playerPos.z;
+
   reusableSaveState.seed = config.seed;
-  reusableSaveState.playerPos.x = Math.round(explorer.playerPos.x * 100) / 100;
-  reusableSaveState.playerPos.y = Math.round(explorer.playerPos.y * 100) / 100;
-  reusableSaveState.playerPos.z = Math.round(explorer.playerPos.z * 100) / 100;
+  reusableSaveState.playerPos.x = Math.round(saveX * 100) / 100;
+  reusableSaveState.playerPos.y = Math.round(saveY * 100) / 100;
+  reusableSaveState.playerPos.z = Math.round(saveZ * 100) / 100;
   reusableSaveState.heading = Math.round(explorer.getHeading() * 1000) / 1000;
   reusableSaveState.yaw = Math.round(explorer.yaw * 1000) / 1000;
   reusableSaveState.pitch = Math.round(explorer.pitch * 1000) / 1000;
@@ -384,6 +508,11 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.foodCount = castleAndQuarryManager.foodCount;
   reusableSaveState.carriedRawStones = castleAndQuarryManager.carriedRawStones;
   reusableSaveState.carriedChiseledBlocks = castleAndQuarryManager.carriedChiseledBlocks;
+  reusableSaveState.health = Math.round(castleAndQuarryManager.health);
+  reusableSaveState.unlockedArmory = castleAndQuarryManager.getUnlockedArmoryIds();
+  reusableSaveState.equippedWeapon = castleAndQuarryManager.equippedWeaponId;
+  reusableSaveState.equippedShield = castleAndQuarryManager.equippedShieldId;
+  reusableSaveState.trollsSlain = trollCombatManager.trollsSlain;
   return reusableSaveState;
 }
 
@@ -475,6 +604,8 @@ function restartNewGame(): void {
   huntingManager.exitHuntingMode();
   huntingManager.rebuildAll();
   hutManager.reset();
+  castleInteriorManager.exitCurrentCastle(true);
+  trollCombatManager.reset();
   castleAndQuarryManager.reset();
   syncBeaconFog();
   explorer.resetToOrigin();
@@ -492,6 +623,7 @@ function restartNewGame(): void {
 
 function applyLoadedGameState(loaded: SavedProgress): void {
   hutManager.exitCurrentHut(true);
+  castleInteriorManager.exitCurrentCastle(true);
   fishingManager.exitFishingMode();
   huntingManager.exitHuntingMode();
   if (config.seed !== loaded.seed) {
@@ -511,6 +643,8 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   landmarkManager.reset();
   landmarkManager.restoreLitBeacons(loaded.litBeacons);
   challengeManager.reset();
+  trollCombatManager.despawnAllTrolls(false);
+  trollCombatManager.restoreProgress(loaded.trollsSlain);
 
   explorer.setPose(
     loaded.playerPos.x,
@@ -536,7 +670,12 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.energy,
     loaded.foodCount,
     loaded.carriedRawStones,
-    loaded.carriedChiseledBlocks
+    loaded.carriedChiseledBlocks,
+    loaded.health,
+    loaded.unlockedArmory,
+    loaded.equippedWeapon,
+    loaded.equippedShield,
+    loaded.trollsSlain
   );
   worldMap.reset();
   worldMap.restoreProgress(
@@ -581,10 +720,11 @@ function formatSaveSummary(state: SavedProgress): string {
   const castles = state.castles ?? [];
   const quarries = state.quarries ?? [];
   const totalBlocks = castles.reduce((acc, c) => acc + (c.blocksPlaced || 0), 0);
+  const trolls = state.trollsSlain ?? 0;
   const timeStr = state.savedAt
     ? new Date(state.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : 'Saved';
-  return `🕒 ${timeStr} • 🪙 ${state.score} Gold • 🏰 ${castles.length} Castle (${totalBlocks} Blocks) • ⛏️ ${quarries.length} Quarry • 📦 ${state.chestsCollected} Chests`;
+  return `🕒 ${timeStr} • 🪙 ${state.score} Gold • 🏰 ${castles.length} Castle (${totalBlocks} Blocks) • 👹 ${trolls} Trolls • ⛏️ ${quarries.length} Quarry`;
 }
 
 function renderGameMenu(): void {
@@ -596,9 +736,9 @@ function renderGameMenu(): void {
   gameMenuSummaryEl.innerHTML =
     `<span><strong>Current Session:</strong></span>` +
     `<span>🪙 <strong>${current.score}</strong> Gold</span>` +
-    `<span>🏰 <strong>${castles.length}</strong> Castle (${totalBlocks}/30 Blocks)</span>` +
-    `<span>⛏️ <strong>${quarries.length}</strong> Quarry</span>` +
-    `<span>⚡ <strong>${current.energy}</strong> Energy • 🍖 <strong>${current.foodCount}</strong> Food</span>` +
+    `<span>🏰 <strong>${castles.length}</strong> Castle (${totalBlocks}/30 Blocks) • ⛏️ <strong>${quarries.length}</strong> Quarry</span>` +
+    `<span>👹 <strong>${current.trollsSlain ?? 0}</strong> Trolls Slain</span>` +
+    `<span>❤️ <strong>${current.health ?? 100}</strong> HP • ⚡ <strong>${current.energy}</strong> Strength • 🍖 <strong>${current.foodCount}</strong> Food</span>` +
     `<span>📍 Pos (${Math.round(current.playerPos.x)}, ${Math.round(current.playerPos.z)})</span>`;
 
   gameMenuSlotsListEl.innerHTML = '';
@@ -720,7 +860,11 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'Escape') {
     if (isGameMenuOpen()) {
       setGameMenuOpen(false);
-    } else if (!worldMap.isMapOpen()) {
+    } else if (
+      !worldMap.isMapOpen() &&
+      !hutManager.isInsideHut() &&
+      !castleInteriorManager.isInsideCastle()
+    ) {
       setGameMenuOpen(true);
     }
   }
@@ -787,15 +931,19 @@ function animate(): void {
   const py = explorer.playerPos.y;
   const pz = explorer.playerPos.z;
   const hasLodestone = relicStore.has('lodestone_amulet');
+  const insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
+
   hutManager.update(dt, elapsedTime, explorer.playerPos);
+  castleInteriorManager.update(dt, elapsedTime, explorer.playerPos);
   castleAndQuarryManager.update(
     dt,
     elapsedTime,
     explorer.playerPos,
     explorer.isSprintingNow()
   );
+  trollCombatManager.update(dt, elapsedTime, explorer.playerPos, camera.position);
 
-  if (!hutManager.isInsideHut()) {
+  if (!insideInterior) {
     chunkManager.update(px, py, pz, elapsedTime, false);
     worldMap.updateDiscovery(px, pz, false);
     treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
@@ -860,13 +1008,16 @@ function animate(): void {
     lastHudUpdate = elapsedTime;
     const nearest = treasureManager.getNearestChest(explorer.playerPos);
     const hutHint = hutManager.getNearestHutHint(explorer.playerPos);
-    const nextHint = hutManager.isInsideHut()
-      ? (hutHint ?? 'Inside Dwarven Hut')
-      : nearest
-        ? hutHint
-          ? `${nearest.label} • ${hutHint}`
-          : nearest.label
-        : (hutHint ?? 'Explore further!');
+    const activeCastleVisit = castleInteriorManager.getActiveCastleVisit();
+    const nextHint = activeCastleVisit
+      ? `🏰 Inside ${activeCastleVisit.name} (Tier ${activeCastleVisit.tier}) — Safe Sanctuary!`
+      : hutManager.isInsideHut()
+        ? (hutHint ?? 'Inside Dwarven Hut')
+        : nearest
+          ? hutHint
+            ? `${nearest.label} • ${hutHint}`
+            : nearest.label
+          : (hutHint ?? 'Explore further!');
     if (nextHint !== lastChestHintText) {
       lastChestHintText = nextHint;
       nearestChestHint.textContent = nextHint;
@@ -874,7 +1025,7 @@ function animate(): void {
 
     // Update compass chest pointer visibility & world bearing at 5 Hz
     const pointerRange = hasLodestone ? 240 : 65;
-    const showPointer = Boolean(nearest && nearest.dist <= pointerRange);
+    const showPointer = Boolean(!insideInterior && nearest && nearest.dist <= pointerRange);
     if (showPointer && nearest) {
       lastChestWorldAngle = Math.atan2(nearest.pos.x - px, -(nearest.pos.z - pz));
       if (!lastPointerVisible) {
@@ -955,7 +1106,7 @@ function animate(): void {
   }
 
   // Render planar water reflection pass when outdoors
-  if (!hutManager.isInsideHut()) {
+  if (!insideInterior) {
     waterReflection.update(
       renderer,
       scene,

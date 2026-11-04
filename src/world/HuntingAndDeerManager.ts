@@ -912,9 +912,12 @@ export class HuntingAndDeerManager {
 
         if (distSq > maxSimDistSq) continue;
 
-        // Spook if the player runs right up next to the deer (< 6.2m)
-        if (distSq < 6.2 * 6.2 && d.fleeTimer <= 0.2) {
-          d.fleeTimer = 2.8;
+        // Spook if the player runs right up next to the deer (< 6.2m by day, or < 12.5m at night when Trolls prowl!)
+        const hour = ((this.config.timeOfDay % 24) + 24) % 24;
+        const isNight = hour >= 19.5 || hour < 5.5;
+        const spookRadius = isNight ? 12.5 : 6.2;
+        if (distSq < spookRadius * spookRadius && d.fleeTimer <= 0.2) {
+          d.fleeTimer = isNight ? 4.2 : 2.8;
           d.grazeTimer = 0;
         }
 
@@ -926,7 +929,7 @@ export class HuntingAndDeerManager {
           while (diff < -Math.PI) diff += Math.PI * 2;
           d.heading += diff * Math.min(1, dt * 8.0);
 
-          const fleeSpeed = d.speed * 3.1;
+          const fleeSpeed = d.speed * (isNight ? 4.3 : 3.1);
           const nextX = d.pos.x + Math.sin(d.heading) * fleeSpeed * dt;
           const nextZ = d.pos.z + Math.cos(d.heading) * fleeSpeed * dt;
           const nextY = this.sampleGroundHeight(nextX, nextZ);

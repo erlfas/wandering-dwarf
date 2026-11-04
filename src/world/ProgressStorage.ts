@@ -43,6 +43,11 @@ export interface SavedProgress {
   foodCount?: number;
   carriedRawStones?: number;
   carriedChiseledBlocks?: number;
+  health?: number;
+  unlockedArmory?: string[];
+  equippedWeapon?: string;
+  equippedShield?: string;
+  trollsSlain?: number;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {
@@ -119,6 +124,13 @@ function parseSavedProgress(raw: string | null): SavedProgress | null {
       carriedRawStones: typeof data.carriedRawStones === 'number' ? data.carriedRawStones : 0,
       carriedChiseledBlocks:
         typeof data.carriedChiseledBlocks === 'number' ? data.carriedChiseledBlocks : 0,
+      health: typeof data.health === 'number' ? data.health : 100,
+      unlockedArmory: Array.isArray(data.unlockedArmory)
+        ? data.unlockedArmory.filter((s): s is string => typeof s === 'string')
+        : [],
+      equippedWeapon: typeof data.equippedWeapon === 'string' ? data.equippedWeapon : 'mallet',
+      equippedShield: typeof data.equippedShield === 'string' ? data.equippedShield : 'none',
+      trollsSlain: typeof data.trollsSlain === 'number' ? data.trollsSlain : 0,
     };
   } catch {
     return null;

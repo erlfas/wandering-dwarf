@@ -1299,21 +1299,21 @@ kbd {
   margin-top: 1px;
 }
 
-/* Bottom-Left Backpack, Energy Bar & Food Rations HUD (matching art/castle.jpg & art/quarry.jpg) */
+/* Bottom-Left Backpack, Health Bar, Strength/Energy Bar & Food Rations HUD (matching art/gameplay_protect_against_enemy.jpg) */
 #energy-survival-hud {
   position: absolute;
-  bottom: 108px;
+  bottom: 102px;
   left: 22px;
   display: flex;
   align-items: center;
   gap: 9px;
-  background: rgba(24, 20, 15, 0.88);
-  border: 1.5px solid rgba(149, 213, 178, 0.48);
+  background: rgba(24, 20, 15, 0.9);
+  border: 1.5px solid rgba(149, 213, 178, 0.52);
   border-radius: 11px;
-  padding: 6px 11px;
+  padding: 7px 12px;
   color: #fff8e7;
   pointer-events: auto;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
 }
 
 .backpack-badge {
@@ -1321,8 +1321,8 @@ kbd {
   background: radial-gradient(circle, rgba(138, 90, 54, 0.55), rgba(68, 42, 24, 0.75));
   border: 1.5px solid rgba(255, 209, 102, 0.55);
   border-radius: 8px;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1333,7 +1333,7 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 190px;
+  min-width: 245px;
 }
 
 .energy-top-row {
@@ -1345,8 +1345,12 @@ kbd {
   font-weight: 800;
 }
 
+#health-bar-text {
+  color: #70e000;
+}
+
 #energy-bar-text {
-  color: #95d5b2;
+  color: #ffd166;
 }
 
 .food-pill {
@@ -1375,20 +1379,180 @@ kbd {
   color: #ffffff;
 }
 
+.health-bar-track,
 .energy-bar-track {
   width: 100%;
-  height: 9px;
-  background: rgba(15, 18, 22, 0.85);
+  height: 7px;
+  background: rgba(15, 18, 22, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   overflow: hidden;
 }
 
-#energy-bar-fill {
+#health-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #52b788, #95d5b2);
+  background: linear-gradient(90deg, #38b000, #70e000);
   border-radius: 999px;
   transition: width 0.18s ease;
+}
+
+#energy-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f4a261, #ffd166);
+  border-radius: 999px;
+  transition: width 0.18s ease;
+}
+
+#combat-gear-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffe89e;
+  letter-spacing: 0.2px;
+  margin-top: 1px;
+}
+
+#trolls-slain-value {
+  color: #ff9f1c;
+  font-weight: 800;
+}
+
+/* Castle Armory & Tavern Shop (Visible inside Tier I / II / III Castles) */
+#castle-armory-shop {
+  position: absolute;
+  top: 96px;
+  right: 22px;
+  width: 295px;
+  max-height: calc(100vh - 205px);
+  overflow-y: auto;
+  background: rgba(24, 19, 15, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255, 209, 102, 0.68);
+  border-radius: 11px;
+  padding: 9px 10px;
+  color: #fff6e0;
+  pointer-events: auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), 0 0 22px rgba(255, 183, 3, 0.22);
+}
+
+#castle-armory-shop.hidden {
+  display: none;
+}
+
+#castle-armory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.armory-tier-badge {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(72, 202, 228, 0.22);
+  border: 1px solid rgba(144, 224, 239, 0.55);
+  color: #caf0f8;
+  margin-left: 3px;
+}
+
+/* Nighttime Troll-Beast Defeat Tracker Banner (Top-Center HUD) */
+#troll-combat-banner {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(690px, 92vw);
+  background: linear-gradient(160deg, rgba(42, 14, 18, 0.93), rgba(22, 14, 18, 0.95));
+  backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(239, 35, 60, 0.78);
+  border-radius: 12px;
+  padding: 8px 14px;
+  color: #fff0f3;
+  pointer-events: auto;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 20px rgba(239, 35, 60, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  z-index: 18;
+}
+
+#troll-combat-banner.hidden {
+  display: none;
+}
+
+.troll-tracker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.troll-dist-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(255, 183, 3, 0.2);
+  border: 1px solid rgba(255, 209, 102, 0.6);
+  color: #ffd166;
+  margin-left: 4px;
+}
+
+.troll-hp-readout {
+  font-size: 11.5px;
+  color: #ffccd5;
+}
+
+.troll-hits-left-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(239, 35, 60, 0.32);
+  border: 1px solid rgba(255, 117, 143, 0.8);
+  color: #ffffff;
+  margin-left: 4px;
+}
+
+.troll-hp-bar-track {
+  width: 100%;
+  height: 10px;
+  background: rgba(10, 10, 14, 0.9);
+  border: 1px solid rgba(255, 117, 143, 0.5);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.troll-hp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #d90429, #ef233c, #ff758f);
+  border-radius: 999px;
+  transition: width 0.14s ease;
+}
+
+.troll-combat-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  color: #f8f9fa;
+}
+
+.troll-warning-tag {
+  color: #ffd166;
+  font-weight: 800;
+}
+
+.troll-ok-tag {
+  color: #95d5b2;
+  font-weight: 700;
 }
 
 /* Game Menu Toggle Button & Modal (Save Game, Load Game, Restart Game) */

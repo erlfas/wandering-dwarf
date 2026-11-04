@@ -550,6 +550,27 @@ export class FishingAndFishManager {
     this.updateBannerUI();
   }
 
+  /**
+   * Called at night when a prowling Troll-Beast charges within 14m while the dwarf is fishing,
+   * spooking the fish school and snapping the line back so nighttime fishing is dangerous!
+   */
+  public interruptFishingFromTroll(): void {
+    if (this.state === 'inactive' || this.state === 'aiming') return;
+    this.releaseAttractedFish();
+    this.state = 'aiming';
+    this.isHoldingDrawBack = false;
+    this.bobberGroup.visible = false;
+    this.fishingLine.visible = false;
+    this.splashRing1.visible = false;
+    this.splashRing2.visible = false;
+    this.dwarf.setRodBend(0);
+    this.updateBannerUI();
+    this.onGrantGold(
+      0,
+      '👹 Night Troll footsteps shook the riverbank and spooked the fish! Defend yourself or flee to a Castle!'
+    );
+  }
+
   private releaseAttractedFish(): void {
     if (this.attractingFish) {
       this.attractingFish.attractedToBobber = false;

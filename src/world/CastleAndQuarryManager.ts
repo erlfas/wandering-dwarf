@@ -6,8 +6,13 @@ import medievalCastleModelUrl from '../../3dmodels/medieval castle 3d model.glb?
 import naturalRockModelUrl from '../../3dmodels/natural rock 3d model.glb?url';
 import stoneFortressModelUrl from '../../3dmodels/stone fortress 3d model.glb?url';
 import woodenJibCraneModelUrl from '../../3dmodels/wooden jib crane 3d model.glb?url';
-import { DwarfCharacter } from '../player/DwarfCharacter';
+import {
+  DwarfCharacter,
+  EquippedShieldId,
+  EquippedWeaponId,
+} from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
+import { ActiveCastleVisit, CastleInteriorTier } from './CastleInteriorManager';
 import { ChunkManager } from './ChunkManager';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
@@ -62,6 +67,182 @@ export const HOUSE_EQUIPMENT_CATALOG: readonly HouseEquipmentDef[] = [
     shortDesc: 'Lay 2 Castle Blocks at once & Quarries auto-cut 1 block / 18s',
   },
 ];
+
+export type CastleArmoryItemId =
+  | 'oak_club'
+  | 'battle_axe'
+  | 'broadsword'
+  | 'runic_greatsword'
+  | 'round_shield'
+  | 'mithril_aegis'
+  | 'keep_stew'
+  | 'roast_boar'
+  | 'kings_feast';
+
+export interface CastleArmoryItemDef {
+  id: CastleArmoryItemId;
+  category: 'weapon' | 'shield' | 'provision';
+  minTier: 1 | 2 | 3;
+  keyHint: string;
+  name: string;
+  icon: string;
+  cost: number;
+  shortDesc: string;
+  weaponId?: EquippedWeaponId;
+  shieldId?: EquippedShieldId;
+}
+
+export const CASTLE_ARMORY_CATALOG: readonly CastleArmoryItemDef[] = [
+  {
+    id: 'oak_club',
+    category: 'weapon',
+    minTier: 1,
+    keyHint: '5',
+    name: 'Iron-Studded Oak Club',
+    icon: '🪵',
+    cost: 120,
+    shortDesc: '22 DMG • Heavy stun blow (15 hits to slay Troll)',
+    weaponId: 'oak_club',
+  },
+  {
+    id: 'battle_axe',
+    category: 'weapon',
+    minTier: 1,
+    keyHint: '6',
+    name: 'Dwarven Bearded Battle-Axe',
+    icon: '🪓',
+    cost: 220,
+    shortDesc: '30 DMG • Cleaving Dwarven steel (11 hits to slay Troll)',
+    weaponId: 'battle_axe',
+  },
+  {
+    id: 'broadsword',
+    category: 'weapon',
+    minTier: 2,
+    keyHint: '7',
+    name: 'Stonewall Broadsword',
+    icon: '⚔️',
+    cost: 360,
+    shortDesc: '40 DMG • Balanced Stronghold blade (8 hits to slay Troll)',
+    weaponId: 'broadsword',
+  },
+  {
+    id: 'runic_greatsword',
+    category: 'weapon',
+    minTier: 3,
+    keyHint: '8',
+    name: "Mountain King's Runic Greatsword",
+    icon: '🗡️',
+    cost: 550,
+    shortDesc: '55 DMG • Golden Runic Shockwave (6 hits to slay Troll)',
+    weaponId: 'runic_greatsword',
+  },
+  {
+    id: 'round_shield',
+    category: 'shield',
+    minTier: 1,
+    keyHint: '9',
+    name: 'Iron-Boss Round Shield',
+    icon: '🛡️',
+    cost: 160,
+    shortDesc: '+25 Max HP • Right-Click blocks 70% Troll damage',
+    shieldId: 'round_shield',
+  },
+  {
+    id: 'mithril_aegis',
+    category: 'shield',
+    minTier: 2,
+    keyHint: '9',
+    name: 'Runic Mithril Aegis Shield',
+    icon: '🔰',
+    cost: 340,
+    shortDesc: '+50 Max HP • Right-Click blocks 85% Troll damage & staggers',
+    shieldId: 'mithril_aegis',
+  },
+  {
+    id: 'keep_stew',
+    category: 'provision',
+    minTier: 1,
+    keyHint: '0',
+    name: 'Border Keep Hearth Stew (+2 🍖)',
+    icon: '🍲',
+    cost: 60,
+    shortDesc: 'Repeatable: +2 Food Rations & restores +40⚡ / +25❤️ now',
+  },
+  {
+    id: 'roast_boar',
+    category: 'provision',
+    minTier: 2,
+    keyHint: '-',
+    name: 'Stronghold Roast Boar Platter (+5 🍖)',
+    icon: '🍖',
+    cost: 125,
+    shortDesc: 'Repeatable: +5 Food Rations & restores 100% Health & Strength',
+  },
+  {
+    id: 'kings_feast',
+    category: 'provision',
+    minTier: 3,
+    keyHint: '=',
+    name: "Mountain King's Golden Feast (+4 🍖)",
+    icon: '👑',
+    cost: 150,
+    shortDesc: "Repeatable: +4 Rations, Full Restore & +25% King's Valor DMG (2m)",
+  },
+];
+
+export const WEAPON_COMBAT_SPECS: Record<
+  EquippedWeaponId,
+  {
+    name: string;
+    icon: string;
+    damage: number;
+    energyCost: number;
+    cooldown: number;
+    hasRunicShockwave: boolean;
+  }
+> = {
+  mallet: {
+    name: "Mason's Mallet",
+    icon: '🔨',
+    damage: 14,
+    energyCost: 8,
+    cooldown: 0.55,
+    hasRunicShockwave: false,
+  },
+  oak_club: {
+    name: 'Iron-Studded Oak Club',
+    icon: '🪵',
+    damage: 22,
+    energyCost: 9,
+    cooldown: 0.58,
+    hasRunicShockwave: false,
+  },
+  battle_axe: {
+    name: 'Bearded Battle-Axe',
+    icon: '🪓',
+    damage: 30,
+    energyCost: 10,
+    cooldown: 0.52,
+    hasRunicShockwave: false,
+  },
+  broadsword: {
+    name: 'Stonewall Broadsword',
+    icon: '⚔️',
+    damage: 40,
+    energyCost: 8,
+    cooldown: 0.44,
+    hasRunicShockwave: false,
+  },
+  runic_greatsword: {
+    name: "King's Runic Greatsword",
+    icon: '🗡️',
+    damage: 55,
+    energyCost: 10,
+    cooldown: 0.48,
+    hasRunicShockwave: true,
+  },
+};
 
 export interface SavedQuarrySite {
   id: string;
@@ -144,6 +325,7 @@ interface CastleInstance {
   ghostMesh: THREE.Mesh;
   beaconArrowGroup: THREE.Group;
   groundTargetRing: THREE.Mesh;
+  doorRingMesh: THREE.Mesh;
 }
 
 export const CASTLE_MILESTONES = [
@@ -2007,13 +2189,21 @@ const tempDropWorld = new THREE.Vector3();
 export class CastleAndQuarryManager {
   public readonly group = new THREE.Group();
 
-  // Energy & Food Survival State
+  // Health, Strength/Energy & Food Survival State
+  public health = 100;
   public energy = 100;
   public foodCount = 2; // Starter rations so the dwarf can test eating right away
   public carriedRawStones = 0;
   public carriedChiseledBlocks = 0;
 
+  // Combat & Castle Armory State
+  public equippedWeaponId: EquippedWeaponId = 'mallet';
+  public equippedShieldId: EquippedShieldId = 'none';
+  public kingsValorTimer = 0;
+  public trollsSlainBonusCount = 0;
+
   private unlockedEquipment = new Set<HouseEquipmentId>();
+  private unlockedArmory = new Set<CastleArmoryItemId>();
   private quarries: QuarryInstance[] = [];
   private castles: CastleInstance[] = [];
   private activeChunkRocks = new Map<number, NaturalRockInstance[]>();
@@ -2028,24 +2218,38 @@ export class CastleAndQuarryManager {
   private levelGuideTimer = 0;
 
   // DOM Elements
+  private healthFillEl: HTMLElement | null;
+  private healthTextEl: HTMLElement | null;
   private energyFillEl: HTMLElement | null;
   private energyTextEl: HTMLElement | null;
   private foodCountEl: HTMLElement | null;
+  private combatGearBadgeEl: HTMLElement | null;
   private eatFoodBtnEl: HTMLButtonElement | null;
   private masonryBannerEl: HTMLElement | null;
   private milestoneHudEl: HTMLElement | null;
   private houseShopEl: HTMLElement | null;
   private houseShopListEl: HTMLElement | null;
+  private castleShopEl: HTMLElement | null;
+  private castleShopTitleEl: HTMLElement | null;
+  private castleShopListEl: HTMLElement | null;
   private toastContainer: HTMLElement | null;
 
+  private lastHealthPct = -1;
+  private lastHealthText = '';
   private lastEnergyPct = -1;
   private lastEnergyText = '';
   private lastFoodText = '';
+  private lastGearBadgeText = '';
   private lastBannerHtml = '';
   private lastBannerVisible = false;
   private lastMilestoneText = '';
 
   public onStateChanged?: () => void;
+  public isInsideCastleFn: () => boolean = () => false;
+  public getActiveCastleVisitFn: () => ActiveCastleVisit | null = () => null;
+  public onRequestEnterCastle?: (visit: ActiveCastleVisit) => void;
+  public onRequestExitCastle?: () => void;
+  public onRequestRestUntilDawn?: () => void;
 
   constructor(
     private config: WorldConfig,
@@ -2059,14 +2263,20 @@ export class CastleAndQuarryManager {
   ) {
     this.group.matrixAutoUpdate = false;
 
+    this.healthFillEl = document.getElementById('health-bar-fill');
+    this.healthTextEl = document.getElementById('health-bar-text');
     this.energyFillEl = document.getElementById('energy-bar-fill');
     this.energyTextEl = document.getElementById('energy-bar-text');
     this.foodCountEl = document.getElementById('food-count-value');
+    this.combatGearBadgeEl = document.getElementById('combat-gear-badge');
     this.eatFoodBtnEl = document.getElementById('eat-food-btn') as HTMLButtonElement | null;
     this.masonryBannerEl = document.getElementById('masonry-banner');
     this.milestoneHudEl = document.getElementById('castle-milestone-pill');
     this.houseShopEl = document.getElementById('house-equipment-shop');
     this.houseShopListEl = document.getElementById('house-equipment-list');
+    this.castleShopEl = document.getElementById('castle-armory-shop');
+    this.castleShopTitleEl = document.getElementById('castle-armory-title');
+    this.castleShopListEl = document.getElementById('castle-armory-list');
     this.toastContainer = document.getElementById('pickup-toasts');
 
     const assets = getSharedMasonryAssets();
@@ -2098,9 +2308,21 @@ export class CastleAndQuarryManager {
     });
 
     this.buildHouseShopDOM();
+    this.buildCastleArmoryShopDOM();
     this.bindEvents();
     this.syncEnergyAndFoodHUD();
     this.syncMilestoneHUD();
+  }
+
+  public getMaxHealth(): number {
+    const shieldBonus =
+      this.equippedShieldId === 'mithril_aegis'
+        ? 50
+        : this.equippedShieldId === 'round_shield'
+          ? 25
+          : 0;
+    const slayerBonus = Math.min(60, this.trollsSlainBonusCount * 10);
+    return 100 + shieldBonus + slayerBonus;
   }
 
   public getMaxEnergy(): number {
@@ -2126,7 +2348,7 @@ export class CastleAndQuarryManager {
       mult *= this.unlockedEquipment.has('stone_hauler') ? 1.08 : 0.86;
     }
     if (this.energy < 12) {
-      mult *= 0.8;
+      mult *= 0.85;
     }
     return mult;
   }
@@ -2153,6 +2375,12 @@ export class CastleAndQuarryManager {
         this.setUpCastleAtPlayer();
       } else if (target.closest('.masonry-action-eat')) {
         this.eatFood(false);
+      } else if (target.closest('.masonry-action-enter-castle')) {
+        this.tryEnterNearestCastle();
+      } else if (target.closest('.masonry-action-exit-castle')) {
+        this.onRequestExitCastle?.();
+      } else if (target.closest('.masonry-action-rest-dawn')) {
+        this.onRequestRestUntilDawn?.();
       }
     });
 
@@ -2169,13 +2397,43 @@ export class CastleAndQuarryManager {
           this.tryInteractAtPlayerPos();
         }
       } else if (e.code === 'Digit5') {
-        this.tryBuyHouseEquipment('chisel_upgrade');
+        if (this.isInsideCastleFn()) {
+          this.tryBuyCastleArmoryItem('oak_club');
+        } else {
+          this.tryBuyHouseEquipment('chisel_upgrade');
+        }
       } else if (e.code === 'Digit6') {
-        this.tryBuyHouseEquipment('stone_hauler');
+        if (this.isInsideCastleFn()) {
+          this.tryBuyCastleArmoryItem('battle_axe');
+        } else {
+          this.tryBuyHouseEquipment('stone_hauler');
+        }
       } else if (e.code === 'Digit7') {
-        this.tryBuyHouseEquipment('ration_kettle');
+        if (this.isInsideCastleFn()) {
+          this.tryBuyCastleArmoryItem('broadsword');
+        } else {
+          this.tryBuyHouseEquipment('ration_kettle');
+        }
       } else if (e.code === 'Digit8') {
-        this.tryBuyHouseEquipment('architect_pulley');
+        if (this.isInsideCastleFn()) {
+          this.tryBuyCastleArmoryItem('runic_greatsword');
+        } else {
+          this.tryBuyHouseEquipment('architect_pulley');
+        }
+      } else if (e.code === 'Digit9' && this.isInsideCastleFn()) {
+        // Key 9 buys Round Shield first, or upgrades to Mithril Aegis in Tier II+
+        const tier = this.getActiveCastleVisitFn()?.tier ?? 1;
+        if (this.unlockedArmory.has('round_shield') && tier >= 2) {
+          this.tryBuyCastleArmoryItem('mithril_aegis');
+        } else {
+          this.tryBuyCastleArmoryItem('round_shield');
+        }
+      } else if (e.code === 'Digit0' && this.isInsideCastleFn()) {
+        this.tryBuyCastleArmoryItem('keep_stew');
+      } else if (e.code === 'Minus' && this.isInsideCastleFn()) {
+        this.tryBuyCastleArmoryItem('roast_boar');
+      } else if (e.code === 'Equal' && this.isInsideCastleFn()) {
+        this.tryBuyCastleArmoryItem('kings_feast');
       }
     });
   }
@@ -2183,9 +2441,9 @@ export class CastleAndQuarryManager {
   /**
    * Called when the dwarf catches a fish or hunts a deer to grant Food Rations for Energy.
    */
-  public addFoodRations(baseAmount: number, _source: 'fish' | 'deer'): void {
+  public addFoodRations(baseAmount: number, _source: 'fish' | 'deer' | 'troll'): void {
     const bonus = this.unlockedEquipment.has('ration_kettle') ? 1 : 0;
-    const gained = Math.max(1, baseAmount + bonus);
+    const gained = Math.max(1, baseAmount + (_source === 'troll' ? 0 : bonus));
     this.foodCount += gained;
     this.syncEnergyAndFoodHUD();
     this.onStateChanged?.();
@@ -2193,24 +2451,30 @@ export class CastleAndQuarryManager {
 
   public eatFood(isAutoEat = false): boolean {
     const maxE = this.getMaxEnergy();
+    const maxH = this.getMaxHealth();
     if (this.foodCount <= 0) {
       if (!isAutoEat) {
         this.playDeniedSound();
         this.showToast(
-          '🍖 No Food Rations left! Catch Fish (F) or Hunt Deer (H) to get Food for Energy!',
+          '🍖 No Food Rations left! Buy Tavern Provisions inside a Castle, or Catch Fish (F) / Hunt Deer (H)!',
           false
         );
       }
       return false;
     }
-    if (this.energy >= maxE - 0.5 && !isAutoEat) {
-      this.showToast(`⚡ Energy is already full (${Math.round(this.energy)}/${maxE})!`, false);
+    if (this.energy >= maxE - 0.5 && this.health >= maxH - 0.5 && !isAutoEat) {
+      this.showToast(
+        `⚡ Strength (${Math.round(this.energy)}/${maxE}) & ❤️ Health (${Math.round(this.health)}/${maxH}) are already full!`,
+        false
+      );
       return false;
     }
 
     this.foodCount -= 1;
-    const restoreAmt = this.unlockedEquipment.has('ration_kettle') ? 65 : 45;
-    this.energy = Math.min(maxE, this.energy + restoreAmt);
+    const restoreE = this.unlockedEquipment.has('ration_kettle') ? 65 : 45;
+    const restoreH = this.unlockedEquipment.has('ration_kettle') ? 40 : 30;
+    this.energy = Math.min(maxE, this.energy + restoreE);
+    this.health = Math.min(maxH, this.health + restoreH);
     this.playEatSound();
     this.dwarf.spawnBurst(
       this.dwarf.root.position.x,
@@ -2220,8 +2484,8 @@ export class CastleAndQuarryManager {
     );
     this.showToast(
       isAutoEat
-        ? `🍖 Auto-Ate Food Ration (+${restoreAmt}⚡ Energy) to keep working! (${this.foodCount} Food left)`
-        : `🍖 Ate Hearty Ration! +${restoreAmt}⚡ Energy (${Math.round(this.energy)}/${maxE}⚡)`,
+        ? `🍖 Auto-Ate Ration (+${restoreE}⚡ Strength, +${restoreH}❤️ Health)! (${this.foodCount} Food left)`
+        : `🍖 Ate Hearty Ration! +${restoreE}⚡ Strength & +${restoreH}❤️ Health (${Math.round(this.energy)}/${maxE}⚡)`,
       true
     );
     this.syncEnergyAndFoodHUD();
@@ -2239,7 +2503,7 @@ export class CastleAndQuarryManager {
     if (this.energy < cost) {
       this.playDeniedSound();
       this.showToast(
-        `⚡ Too tired to ${actionLabel}! Need ${Math.ceil(cost)}⚡ Energy — Catch Fish (F) or Hunt Deer (H) for Food!`,
+        `⚡ Too tired to ${actionLabel}! Need ${Math.ceil(cost)}⚡ Strength — Eat Food (G), buy Castle Stew, or Fish (F) / Hunt (H)!`,
         false
       );
       return false;
@@ -2247,6 +2511,80 @@ export class CastleAndQuarryManager {
     this.energy = Math.max(0, this.energy - cost);
     this.syncEnergyAndFoodHUD();
     return true;
+  }
+
+  // ============================================================================
+  // COMBAT STATS & TROLL SURVIVAL HELPERS
+  // ============================================================================
+  public getCombatStats(): {
+    health: number;
+    maxHealth: number;
+    energy: number;
+    maxEnergy: number;
+    foodCount: number;
+    weaponName: string;
+    weaponIcon: string;
+    weaponDamage: number;
+    weaponEnergyCost: number;
+    weaponCooldown: number;
+    hasRunicShockwave: boolean;
+    shieldId: EquippedShieldId;
+    kingsValorBonus: number;
+  } {
+    const spec = WEAPON_COMBAT_SPECS[this.equippedWeaponId] ?? WEAPON_COMBAT_SPECS.mallet;
+    return {
+      health: this.health,
+      maxHealth: this.getMaxHealth(),
+      energy: this.energy,
+      maxEnergy: this.getMaxEnergy(),
+      foodCount: this.foodCount,
+      weaponName: spec.name,
+      weaponIcon: spec.icon,
+      weaponDamage: spec.damage,
+      weaponEnergyCost: spec.energyCost,
+      weaponCooldown: spec.cooldown,
+      hasRunicShockwave: spec.hasRunicShockwave,
+      shieldId: this.equippedShieldId,
+      kingsValorBonus: this.kingsValorTimer > 0 ? 1.25 : 1.0,
+    };
+  }
+
+  public consumeCombatEnergy(cost: number): { hadEnough: boolean; remainingEnergy: number } {
+    if (this.energy < cost && this.foodCount > 0) {
+      // Auto-eat a ration in combat if strength drops below weapon swing cost!
+      this.eatFood(true);
+    }
+    const hadEnough = this.energy >= 15;
+    this.energy = Math.max(0, this.energy - cost);
+    this.syncEnergyAndFoodHUD();
+    return { hadEnough, remainingEnergy: this.energy };
+  }
+
+  public applyPlayerDamage(damage: number, _sourceTitle: string): { defeated: boolean } {
+    this.health = Math.max(0, this.health - damage);
+    this.syncEnergyAndFoodHUD();
+    if (this.health <= 0) {
+      return { defeated: true };
+    }
+    return { defeated: false };
+  }
+
+  public healAndRestoreFull(): void {
+    this.health = this.getMaxHealth();
+    this.energy = this.getMaxEnergy();
+    this.syncEnergyAndFoodHUD();
+  }
+
+  public setTrollsSlainBonusCount(count: number): void {
+    this.trollsSlainBonusCount = Math.max(0, count);
+    this.health = Math.min(this.getMaxHealth(), this.health + 10);
+    this.syncEnergyAndFoodHUD();
+  }
+
+  public getCompletedCastlePositions(): Array<{ x: number; z: number; blocksPlaced: number }> {
+    return this.castles
+      .filter((c) => c.blocksPlaced >= 8)
+      .map((c) => ({ x: c.x, z: c.z, blocksPlaced: c.blocksPlaced }));
   }
 
   /**
@@ -2670,6 +3008,12 @@ export class CastleAndQuarryManager {
     const groundTargetRing = new THREE.Mesh(assets.targetRingGeo, assets.targetRingMat);
     root.add(groundTargetRing);
 
+    // Glowing Sanctuary Doorway Ring on the lowered timber drawbridge (`z = +6.0m`) when Tier I+ (`blocksPlaced >= 8`)
+    const doorRingMesh = new THREE.Mesh(assets.workRingGeo, assets.workRingMat);
+    doorRingMesh.position.set(0, 0.48, 6.0);
+    doorRingMesh.visible = saved.blocksPlaced >= 8;
+    root.add(doorRingMesh);
+
     this.group.add(root);
 
     const inst: CastleInstance = {
@@ -2688,6 +3032,7 @@ export class CastleAndQuarryManager {
       ghostMesh,
       beaconArrowGroup,
       groundTargetRing,
+      doorRingMesh,
     };
     this.syncCastleSlotHintVisuals(inst);
     return inst;
@@ -2705,6 +3050,8 @@ export class CastleAndQuarryManager {
     const totalSlots = assets.castleSlots.length;
     const completedTier = this.getCompletedMilestoneTier(castle.blocksPlaced);
     const activeTier: 1 | 2 | 3 = completedTier < 3 ? ((completedTier + 1) as 1 | 2 | 3) : 3;
+
+    castle.doorRingMesh.visible = completedTier >= 1;
 
     // Pre-warm current and next Castle Tier `.glb` models asynchronously (only attach callback if not yet loaded!)
     if (completedTier !== 0 && !sharedCastleTierGlbAssets[completedTier]) {
@@ -2787,13 +3134,64 @@ export class CastleAndQuarryManager {
     castle.groundTargetRing.visible = true;
   }
 
+  public tryEnterNearestCastle(): boolean {
+    if (this.isInsideCastleFn() || this.isInsideHutFn()) return false;
+    const px = this.dwarf.root.position.x;
+    const pz = this.dwarf.root.position.z;
+    const enterable = this.getNearestEnterableCastle(px, pz);
+    if (!enterable || enterable.doorDist > 7.5) return false;
+    const tier = this.getCompletedMilestoneTier(enterable.castle.blocksPlaced);
+    if (tier === 0) return false;
+
+    this.onRequestEnterCastle?.({
+      id: enterable.castle.id,
+      name: enterable.castle.name,
+      tier: tier as CastleInteriorTier,
+      worldX: enterable.castle.x,
+      worldY: enterable.castle.y,
+      worldZ: enterable.castle.z,
+      rotationY: enterable.castle.rotationY,
+    });
+    return true;
+  }
+
+  private getNearestEnterableCastle(
+    wx: number,
+    wz: number
+  ): { castle: CastleInstance; doorDist: number; doorX: number; doorZ: number } | null {
+    let best: CastleInstance | null = null;
+    let bestDoorDist = Infinity;
+    let bestDoorX = 0;
+    let bestDoorZ = 0;
+    for (const c of this.castles) {
+      if (c.blocksPlaced < 8) continue;
+      const doorX = c.x + Math.sin(c.rotationY) * 6.0;
+      const doorZ = c.z + Math.cos(c.rotationY) * 6.0;
+      const d = Math.hypot(wx - doorX, wz - doorZ);
+      if (d < bestDoorDist) {
+        bestDoorDist = d;
+        best = c;
+        bestDoorX = doorX;
+        bestDoorZ = doorZ;
+      }
+    }
+    return best ? { castle: best, doorDist: bestDoorDist, doorX: bestDoorX, doorZ: bestDoorZ } : null;
+  }
+
   /**
    * Context-sensitive `E` interaction for:
+   * 0. If inside a Castle: Exit Castle (when near door) or Rest Until Dawn (when near Throne/Hearth)
    * 1. Placing carried Chiseled Block(s) onto the active Castle Slot
-   * 2. Chiseling carried Raw Stone(s) at a Quarry Workbench (or picking up stockpiled blocks)
-   * 3. Picking up a nearby Natural Stone (`natural rock 3d model.glb`)
+   * 2. Entering a completed Tier I / II / III Castle (`blocksPlaced >= 8`) at its lowered drawbridge
+   * 3. Chiseling carried Raw Stone(s) at a Quarry Workbench (or picking up stockpiled blocks)
+   * 4. Picking up a nearby Natural Stone (`natural rock 3d model.glb`)
    */
   public tryInteractAtPlayerPos(): boolean {
+    if (this.isInsideCastleFn()) {
+      this.onRequestExitCastle?.();
+      return true;
+    }
+
     const px = this.dwarf.root.position.x;
     const pz = this.dwarf.root.position.z;
 
@@ -2814,6 +3212,12 @@ export class CastleAndQuarryManager {
           return this.placeBlocksOnCastle(activeCastle);
         }
       }
+    }
+
+    // 2. Check if standing at the lowered drawbridge of any Tier I+ Castle (`blocksPlaced >= 8`) to enter its Interior!
+    const enterable = this.getNearestEnterableCastle(px, pz);
+    if (enterable && enterable.doorDist <= 5.6) {
+      return this.tryEnterNearestCastle();
     }
 
     // 2. Check if near a Quarry Workbench
@@ -3007,12 +3411,50 @@ export class CastleAndQuarryManager {
     playerPos: THREE.Vector3,
     isMovingSprinting = false
   ): void {
+    if (this.kingsValorTimer > 0) {
+      this.kingsValorTimer = Math.max(0, this.kingsValorTimer - dt);
+      if (this.kingsValorTimer === 0) {
+        this.syncEnergyAndFoodHUD();
+      }
+    }
+
     const insideHut = this.isInsideHutFn();
+    const insideCastle = this.isInsideCastleFn();
     this.syncHouseShopVisibility(insideHut);
+    this.syncCastleShopVisibility(insideCastle);
 
     if (insideHut) {
       this.footCompassMesh.visible = false;
       this.setBanner(false, '');
+      return;
+    }
+
+    if (insideCastle) {
+      this.footCompassMesh.visible = false;
+      // Warm castle hearth gently recovers +6 Strength/sec and +4 Health/sec while inside sanctuary!
+      const maxE = this.getMaxEnergy();
+      const maxH = this.getMaxHealth();
+      if (this.energy < maxE || this.health < maxH) {
+        this.energy = Math.min(maxE, this.energy + 6.0 * dt);
+        this.health = Math.min(maxH, this.health + 4.0 * dt);
+        this.syncEnergyAndFoodHUD();
+      }
+
+      const visit = this.getActiveCastleVisitFn();
+      const tierLabel =
+        visit?.tier === 3
+          ? "Tier III Mountain King's Grand Citadel"
+          : visit?.tier === 2
+            ? 'Tier II Stonewall Stronghold'
+            : 'Tier I Dwarven Border Keep';
+      const bannerHtml =
+        `<div class="masonry-main-row">` +
+        `<span>🏰 <strong>Inside ${visit?.name ?? 'Castle'} (${tierLabel})</strong> • 🛡️ <span class="masonry-tag level-ok">Sanctuary Safe from Night Trolls</span> • Buy Weapons, Shields &amp; Food (<kbd>5</kbd>–<kbd>=</kbd>)</span>` +
+        `<div style="display:flex;gap:6px;flex-wrap:wrap">` +
+        `<button type="button" class="hut-action-pill masonry-action-rest-dawn">☀️ Rest Until Dawn (R)</button>` +
+        `<button type="button" class="hut-action-pill masonry-action-exit-castle">🚪 Step Outside (E / Esc)</button>` +
+        `</div></div>`;
+      this.setBanner(true, bannerHtml);
       return;
     }
 
@@ -3316,6 +3758,11 @@ export class CastleAndQuarryManager {
         this.syncCastleSlotHintVisuals(c);
       }
 
+      if (c.doorRingMesh.visible && dSq < 60 * 60) {
+        const doorPulse = 1.0 + Math.sin(elapsedTime * 4.2) * 0.1;
+        c.doorRingMesh.scale.setScalar(doorPulse);
+      }
+
       if (c.blocksPlaced >= totalSlots || dSq > 120 * 120) continue;
 
       const bob = Math.sin(elapsedTime * 4.2) * 0.28;
@@ -3446,9 +3893,22 @@ export class CastleAndQuarryManager {
         }
       }
     }
-    // Case 3: Empty-handed -> Check if standing right next to a Quarry with blocks, a Natural Stone, or show Castle/Quarry hint
+    // Case 3: Empty-handed -> Check if standing at a Castle Drawbridge, Quarry with blocks, a Natural Stone, or show Castle/Quarry hint
     else {
-      if (nearestQuarry && Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz) <= 4.8 && nearestQuarry.stockpiledBlocks > 0) {
+      const enterable = this.getNearestEnterableCastle(px, pz);
+      if (enterable && enterable.doorDist <= 6.2) {
+        const tier = this.getCompletedMilestoneTier(enterable.castle.blocksPlaced);
+        const tierTitle =
+          tier === 3
+            ? "Mountain King's Grand Citadel"
+            : tier === 2
+              ? 'Stonewall Stronghold'
+              : 'Dwarven Border Keep';
+        bannerHtml =
+          `<div class="masonry-main-row"><span>🏰 <strong>${enterable.castle.name} (${tierTitle})</strong> • 🛡️ <span class="masonry-tag level-ok">Sanctuary &amp; Armory Ready</span> • Enter to buy Weapons, Shields &amp; Food or shelter from Trolls!</span>` +
+          `<button type="button" class="hut-action-pill masonry-action-enter-castle">🏰 Enter Castle &amp; Armory (E)</button></div>` +
+          (enterable.castle.blocksPlaced < 30 ? this.buildCastleProgressStripHtml(enterable.castle) : '');
+      } else if (nearestQuarry && Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz) <= 4.8 && nearestQuarry.stockpiledBlocks > 0) {
         bannerHtml =
           `<div class="masonry-main-row"><span>⛏️ <strong>Stone Quarry Stockpile</strong> • <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Chiseled Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
           `<button type="button" class="hut-action-pill masonry-action-work">🧱 Pick Up Blocks (E)</button></div>` +
@@ -3924,9 +4384,245 @@ export class CastleAndQuarryManager {
   }
 
   // ============================================================================
+  // CASTLE ARMORY & TAVERN PROVISION SHOP (Inside Tier I / II / III Castles)
+  // ============================================================================
+  private buildCastleArmoryShopDOM(): void {
+    if (!this.castleShopListEl) return;
+    this.castleShopListEl.innerHTML = '';
+
+    for (const def of CASTLE_ARMORY_CATALOG) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'relic-card locked';
+      btn.dataset.armoryId = def.id;
+      btn.title = `${def.name}: ${def.shortDesc} (Press ${def.keyHint} inside Castle)`;
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'relic-icon';
+      iconSpan.textContent = def.icon;
+
+      const tierTag =
+        def.minTier === 3 ? 'Tier III' : def.minTier === 2 ? 'Tier II+' : 'Tier I+';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'relic-name';
+      nameSpan.innerHTML = `<kbd class="relic-key">${def.keyHint}</kbd> ${def.name} <span class="armory-tier-badge">${tierTag}</span><div class="eq-sub-desc">${def.shortDesc}</div>`;
+
+      const costSpan = document.createElement('span');
+      costSpan.className = 'relic-cost';
+      costSpan.textContent = `${def.cost}g`;
+
+      btn.appendChild(iconSpan);
+      btn.appendChild(nameSpan);
+      btn.appendChild(costSpan);
+
+      btn.addEventListener('click', () => {
+        this.tryBuyCastleArmoryItem(def.id);
+      });
+
+      this.castleShopListEl.appendChild(btn);
+    }
+    this.renderCastleArmoryShop();
+  }
+
+  private syncCastleShopVisibility(insideCastle: boolean): void {
+    if (!this.castleShopEl) return;
+    const isHidden = this.castleShopEl.classList.contains('hidden');
+    if (insideCastle && isHidden) {
+      this.castleShopEl.classList.remove('hidden');
+      this.renderCastleArmoryShop();
+    } else if (!insideCastle && !isHidden) {
+      this.castleShopEl.classList.add('hidden');
+    }
+  }
+
+  public renderCastleArmoryShop(): void {
+    if (!this.castleShopListEl) return;
+    const gold = this.getGold();
+    const visit = this.getActiveCastleVisitFn();
+    const currentTier = visit?.tier ?? 1;
+
+    if (this.castleShopTitleEl) {
+      const tierTitle =
+        currentTier === 3
+          ? "👑 Grand Citadel Royal Armory & Feast Hall"
+          : currentTier === 2
+            ? '🏯 Stonewall Stronghold Armory & Banquet'
+            : '🏰 Border Keep Armory & Hearth Provisions';
+      this.castleShopTitleEl.textContent = tierTitle;
+    }
+
+    const buttons = this.castleShopListEl.querySelectorAll<HTMLButtonElement>(
+      'button[data-armory-id]'
+    );
+    buttons.forEach((btn) => {
+      const id = btn.dataset.armoryId as CastleArmoryItemId;
+      const def = CASTLE_ARMORY_CATALOG.find((d) => d.id === id);
+      if (!def) return;
+
+      const isProvision = def.category === 'provision';
+      const owned = !isProvision && this.unlockedArmory.has(id);
+      const isEquipped =
+        (def.weaponId && this.equippedWeaponId === def.weaponId) ||
+        (def.shieldId && this.equippedShieldId === def.shieldId);
+      const tierLocked = currentTier < def.minTier;
+      const canAfford = !owned && !tierLocked && gold >= def.cost;
+
+      const state = owned
+        ? 'owned'
+        : tierLocked
+          ? 'locked'
+          : canAfford
+            ? 'affordable'
+            : 'locked';
+      btn.className = `relic-card ${state}`;
+
+      const costSpan = btn.querySelector('.relic-cost');
+      if (costSpan) {
+        if (owned) {
+          costSpan.className = 'relic-cost owned-badge';
+          costSpan.textContent = isEquipped ? 'EQUIPPED' : 'EQUIP';
+        } else if (tierLocked) {
+          costSpan.className = 'relic-cost';
+          costSpan.textContent = `🔒 T${def.minTier}`;
+        } else {
+          costSpan.className = 'relic-cost';
+          costSpan.textContent = `${def.cost}g`;
+        }
+      }
+    });
+  }
+
+  public tryBuyCastleArmoryItem(id: CastleArmoryItemId): boolean {
+    if (!this.isInsideCastleFn()) {
+      this.showToast(
+        '🏰 Enter a completed Castle (Press E at a Castle Drawbridge) to buy Weapons, Shields & Tavern Food!',
+        false
+      );
+      return false;
+    }
+
+    const def = CASTLE_ARMORY_CATALOG.find((d) => d.id === id);
+    if (!def) return false;
+
+    const visit = this.getActiveCastleVisitFn();
+    const currentTier = visit?.tier ?? 1;
+
+    // Allow equipping an already-owned weapon or shield for free!
+    if (def.category !== 'provision' && this.unlockedArmory.has(id)) {
+      if (def.weaponId) {
+        this.equippedWeaponId = def.weaponId;
+      }
+      if (def.shieldId) {
+        this.equippedShieldId = def.shieldId;
+        this.health = Math.min(this.getMaxHealth(), this.health);
+      }
+      this.dwarf.setEquippedCombatGear(this.equippedWeaponId, this.equippedShieldId);
+      this.renderCastleArmoryShop();
+      this.syncEnergyAndFoodHUD();
+      this.showToast(`${def.icon} Equipped ${def.name}!`, true);
+      this.onStateChanged?.();
+      return true;
+    }
+
+    if (currentTier < def.minTier) {
+      this.playDeniedSound();
+      const neededBlocks = def.minTier === 3 ? 30 : 18;
+      this.showToast(
+        `🔒 ${def.name} requires a Tier ${def.minTier === 3 ? 'III Grand Citadel' : 'II Stronghold'} (${neededBlocks} Castle Blocks)!`,
+        false
+      );
+      return false;
+    }
+
+    if (!this.spendGold(def.cost)) {
+      this.playDeniedSound();
+      this.showToast(`🪙 Need ${def.cost} Gold to buy ${def.name} in this Castle!`, false);
+      return false;
+    }
+
+    if (def.category === 'provision') {
+      // Repeatable Tavern Food & Feast purchase!
+      if (id === 'keep_stew') {
+        this.foodCount += 2;
+        this.energy = Math.min(this.getMaxEnergy(), this.energy + 40);
+        this.health = Math.min(this.getMaxHealth(), this.health + 25);
+        this.playEatSound();
+        this.showToast(
+          `🍲 Bought Border Keep Hearth Stew! +2 🍖 Rations, +40⚡ Strength & +25❤️ Health!`,
+          true
+        );
+      } else if (id === 'roast_boar') {
+        this.foodCount += 5;
+        this.energy = this.getMaxEnergy();
+        this.health = this.getMaxHealth();
+        this.playEatSound();
+        this.showToast(
+          `🍖 Bought Stronghold Roast Boar Platter! +5 🍖 Rations & 100% Full Health/Strength!`,
+          true
+        );
+      } else if (id === 'kings_feast') {
+        this.foodCount += 4;
+        this.energy = this.getMaxEnergy();
+        this.health = this.getMaxHealth();
+        this.kingsValorTimer = 120.0;
+        this.playMilestoneFanfare();
+        this.showToast(
+          `👑 Mountain King's Golden Feast! +4 🍖 Rations, Full Restore & +25% King's Valor Damage for 2m!`,
+          true
+        );
+      }
+    } else {
+      this.unlockedArmory.add(id);
+      if (def.weaponId) {
+        this.equippedWeaponId = def.weaponId;
+      }
+      if (def.shieldId) {
+        this.equippedShieldId = def.shieldId;
+        this.health = this.getMaxHealth();
+      }
+      this.dwarf.setEquippedCombatGear(this.equippedWeaponId, this.equippedShieldId);
+      this.playMilestoneFanfare();
+      this.showToast(
+        `${def.icon} Forged & Equipped ${def.name}! (${def.shortDesc})`,
+        true
+      );
+    }
+
+    this.dwarf.spawnBurst(
+      this.dwarf.root.position.x,
+      this.dwarf.root.position.y + 0.9,
+      this.dwarf.root.position.z,
+      16
+    );
+    this.renderCastleArmoryShop();
+    this.syncEnergyAndFoodHUD();
+    this.onStateChanged?.();
+    return true;
+  }
+
+  // ============================================================================
   // HUD & PERSISTENCE HELPERS
   // ============================================================================
-  private syncEnergyAndFoodHUD(): void {
+  public syncEnergyAndFoodHUD(): void {
+    // 1. Health Bar (`❤️`)
+    const maxH = this.getMaxHealth();
+    this.health = Math.min(maxH, this.health);
+    const hPct = THREE.MathUtils.clamp(Math.round((this.health / maxH) * 100), 0, 100);
+    if (hPct !== this.lastHealthPct && this.healthFillEl) {
+      this.lastHealthPct = hPct;
+      this.healthFillEl.style.width = `${hPct}%`;
+      this.healthFillEl.style.background =
+        hPct <= 25
+          ? 'linear-gradient(90deg, #ef233c, #ff4d6d)'
+          : 'linear-gradient(90deg, #38b000, #70e000)';
+    }
+    const hText = `❤️ ${Math.round(this.health)}/${maxH}`;
+    if (hText !== this.lastHealthText && this.healthTextEl) {
+      this.lastHealthText = hText;
+      this.healthTextEl.textContent = hText;
+    }
+
+    // 2. Strength / Energy Bar (`⚡`)
     const maxE = this.getMaxEnergy();
     const pct = THREE.MathUtils.clamp(Math.round((this.energy / maxE) * 100), 0, 100);
     if (pct !== this.lastEnergyPct && this.energyFillEl) {
@@ -3935,7 +4631,7 @@ export class CastleAndQuarryManager {
       this.energyFillEl.style.background =
         pct <= 20
           ? 'linear-gradient(90deg, #ef233c, #ff7b00)'
-          : 'linear-gradient(90deg, #52b788, #95d5b2)';
+          : 'linear-gradient(90deg, #f4a261, #ffd166)';
     }
 
     const eText = `⚡ ${Math.round(this.energy)}/${maxE}`;
@@ -3944,10 +4640,28 @@ export class CastleAndQuarryManager {
       this.energyTextEl.textContent = eText;
     }
 
+    // 3. Food Rations (`🍖`)
     const fText = `🍖 ${this.foodCount}`;
     if (fText !== this.lastFoodText && this.foodCountEl) {
       this.lastFoodText = fText;
       this.foodCountEl.textContent = fText;
+    }
+
+    // 4. Equipped Weapon & Shield Badge (`#combat-gear-badge`)
+    if (this.combatGearBadgeEl) {
+      const wSpec = WEAPON_COMBAT_SPECS[this.equippedWeaponId] ?? WEAPON_COMBAT_SPECS.mallet;
+      const shieldIcon =
+        this.equippedShieldId === 'mithril_aegis'
+          ? ' • 🔰 Aegis'
+          : this.equippedShieldId === 'round_shield'
+            ? ' • 🛡️ Shield'
+            : '';
+      const valorTag = this.kingsValorTimer > 0 ? ' • 👑 +25%' : '';
+      const gearText = `${wSpec.icon} ${wSpec.name} (${wSpec.damage} DMG)${shieldIcon}${valorTag}`;
+      if (gearText !== this.lastGearBadgeText) {
+        this.lastGearBadgeText = gearText;
+        this.combatGearBadgeEl.textContent = gearText;
+      }
     }
   }
 
@@ -4029,6 +4743,10 @@ export class CastleAndQuarryManager {
     return Array.from(this.unlockedEquipment);
   }
 
+  public getUnlockedArmoryIds(): string[] {
+    return Array.from(this.unlockedArmory);
+  }
+
   public restoreProgress(
     quarries?: SavedQuarrySite[],
     castles?: SavedCastleSite[],
@@ -4036,7 +4754,12 @@ export class CastleAndQuarryManager {
     energy?: number,
     foodCount?: number,
     carriedRawStones?: number,
-    carriedChiseledBlocks?: number
+    carriedChiseledBlocks?: number,
+    health?: number,
+    unlockedArmory?: string[],
+    equippedWeapon?: string,
+    equippedShield?: string,
+    trollsSlain?: number
   ): void {
     this.clearPlacedInstances();
 
@@ -4048,8 +4771,38 @@ export class CastleAndQuarryManager {
       }
     }
 
+    if (unlockedArmory) {
+      for (const id of unlockedArmory) {
+        if (CASTLE_ARMORY_CATALOG.some((a) => a.id === id)) {
+          this.unlockedArmory.add(id as CastleArmoryItemId);
+        }
+      }
+    }
+
+    const validWeapons: EquippedWeaponId[] = [
+      'mallet',
+      'oak_club',
+      'battle_axe',
+      'broadsword',
+      'runic_greatsword',
+    ];
+    this.equippedWeaponId = validWeapons.includes(equippedWeapon as EquippedWeaponId)
+      ? (equippedWeapon as EquippedWeaponId)
+      : 'mallet';
+
+    const validShields: EquippedShieldId[] = ['none', 'round_shield', 'mithril_aegis'];
+    this.equippedShieldId = validShields.includes(equippedShield as EquippedShieldId)
+      ? (equippedShield as EquippedShieldId)
+      : 'none';
+
+    this.trollsSlainBonusCount = typeof trollsSlain === 'number' ? Math.max(0, trollsSlain) : 0;
+    this.dwarf.setEquippedCombatGear(this.equippedWeaponId, this.equippedShieldId);
+
+    const maxH = this.getMaxHealth();
+    this.health = typeof health === 'number' ? THREE.MathUtils.clamp(health, 20, maxH) : maxH;
+
     const maxE = this.getMaxEnergy();
-    this.energy = typeof energy === 'number' ? THREE.MathUtils.clamp(energy, 10, maxE) : maxE;
+    this.energy = typeof energy === 'number' ? THREE.MathUtils.clamp(energy, 15, maxE) : maxE;
     this.foodCount = typeof foodCount === 'number' ? Math.max(0, Math.floor(foodCount)) : 2;
     this.carriedRawStones =
       typeof carriedRawStones === 'number' ? Math.max(0, Math.floor(carriedRawStones)) : 0;
@@ -4073,6 +4826,7 @@ export class CastleAndQuarryManager {
     }
 
     this.renderHouseShop();
+    this.renderCastleArmoryShop();
     this.syncEnergyAndFoodHUD();
     this.syncMilestoneHUD();
   }
@@ -4094,6 +4848,7 @@ export class CastleAndQuarryManager {
     }
     this.quarryBonusRocks.length = 0;
     this.unlockedEquipment.clear();
+    this.unlockedArmory.clear();
   }
 
   public reset(): void {
@@ -4107,12 +4862,19 @@ export class CastleAndQuarryManager {
     this.activeChunkRocks.clear();
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
+    this.equippedWeaponId = 'mallet';
+    this.equippedShieldId = 'none';
+    this.kingsValorTimer = 0;
+    this.trollsSlainBonusCount = 0;
+    this.dwarf.setEquippedCombatGear('mallet', 'none');
+    this.health = 100;
     this.energy = 100;
     this.foodCount = 2;
     this.carriedRawStones = 0;
     this.carriedChiseledBlocks = 0;
     this.dwarf.setCarriedLoad(0, 0);
     this.renderHouseShop();
+    this.renderCastleArmoryShop();
     this.syncEnergyAndFoodHUD();
     this.syncMilestoneHUD();
   }

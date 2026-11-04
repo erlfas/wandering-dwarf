@@ -58,6 +58,8 @@
             <span class="dot-sep">•</span>
             <span id="artefacts-value">0 Artefacts</span>
             <span class="dot-sep">•</span>
+            <span id="trolls-slain-value" title="Troll Slayer Trophies (+10 Max HP &amp; +5% Melee DMG per Troll)">👹 0 Trolls</span>
+            <span class="dot-sep">•</span>
             <span id="castle-milestone-pill">🏰 Castles: 0 • Milestones: 0</span>
             <span class="dot-sep">•</span>
             <span id="nearest-chest-hint">Scanning...</span>
@@ -80,6 +82,9 @@
       <!-- Active Dwarven Hut Proximity / Interior HUD Banner -->
       <div id="hut-banner" class="hidden"></div>
 
+      <!-- Active Nighttime Troll-Beast Defeat Tracker Banner -->
+      <div id="troll-combat-banner" class="hidden"></div>
+
       <!-- Active Stone Quarry & Castle Block-by-Block Hint Banner -->
       <div id="masonry-banner" class="hidden"></div>
 
@@ -92,21 +97,37 @@
         <div id="house-equipment-list"></div>
       </div>
 
-      <!-- Bottom-Left Backpack, Energy Bar & Food Rations HUD (matching art/castle.jpg & art/quarry.jpg) -->
-      <div id="energy-survival-hud" title="Energy &amp; Food Rations (Catch Fish with F or Hunt Deer with H for Food)">
+      <!-- Castle Armory & Tavern Provisions Shop (Visible when inside a Tier I / II / III Castle) -->
+      <div id="castle-armory-shop" class="hidden">
+        <div class="relic-shop-header">
+          <span id="castle-armory-title">🏰 CASTLE ARMORY &amp; TAVERN</span>
+          <span class="relic-shop-sub">Keys 5–0, -, =</span>
+        </div>
+        <div id="castle-armory-list"></div>
+      </div>
+
+      <!-- Bottom-Left Backpack, Health Bar, Strength/Energy Bar, Food Rations & Equipped Weapon HUD (matching art/gameplay_protect_against_enemy.jpg) -->
+      <div id="energy-survival-hud" title="Health, Strength &amp; Food Rations (Eat Food with G, Buy Tavern Stew in Castles, or Fish F / Hunt H)">
         <div class="backpack-badge">🎒</div>
         <div class="energy-bars-wrap">
           <div class="energy-top-row">
+            <span id="health-bar-text">❤️ 100/100</span>
             <span id="energy-bar-text">⚡ 100/100</span>
-            <span class="food-pill" title="Food Rations from Fishing &amp; Deer Hunting">
+            <span class="food-pill" title="Food Rations for Strength &amp; Health">
               <span id="food-count-value">🍖 2</span>
             </span>
-            <button id="eat-food-btn" type="button" title="Eat Food Ration to Restore Energy (G)">
+            <button id="eat-food-btn" type="button" title="Eat Food Ration to Restore Strength &amp; Health (G)">
               🍖 Eat (<kbd>G</kbd>)
             </button>
           </div>
-          <div class="energy-bar-track">
+          <div class="health-bar-track" title="Dwarf Health (Restored by Eating Food or Resting in a Castle)">
+            <div id="health-bar-fill" style="width: 100%"></div>
+          </div>
+          <div class="energy-bar-track" title="Dwarf Strength / Energy (Needed for Masonry &amp; Fighting Night Trolls!)">
             <div id="energy-bar-fill" style="width: 100%"></div>
+          </div>
+          <div id="combat-gear-badge" title="Equipped Melee Weapon &amp; Shield (Upgrade in any Castle Armory)">
+            🔨 Mason's Mallet (14 DMG)
           </div>
         </div>
       </div>
@@ -246,20 +267,20 @@
           <span><kbd>Shift</kbd> Sprint</span>
           <span><kbd>Space</kbd> Jump / Glide</span>
           <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
-          <span><kbd>E</kbd> Lift Stone / Chisel / Build / House</span>
-          <span><kbd>Q</kbd> Set Up Quarry</span>
-          <span><kbd>K</kbd> Start Castle</span>
+          <span><kbd>E</kbd> Lift / Build / Enter Castle &amp; House</span>
+          <span><kbd>J</kbd>/<kbd>Click</kbd> Fight Troll</span>
+          <span><kbd>R-Click</kbd> Shield Block</span>
+          <span><kbd>Q</kbd> Quarry</span>
+          <span><kbd>K</kbd> Castle</span>
           <span><kbd>G</kbd> Eat Food</span>
-          <span><kbd>M</kbd> World Map</span>
-          <span><kbd>O</kbd> Game Menu</span>
-          <span><kbd>F</kbd> Fish (Food)</span>
-          <span><kbd>H</kbd> Hunt (Food)</span>
-          <span><kbd>5</kbd>-<kbd>8</kbd> House Shop</span>
+          <span><kbd>R</kbd> Rest Dawn</span>
+          <span><kbd>M</kbd> Map</span>
+          <span><kbd>O</kbd> Menu</span>
+          <span><kbd>F</kbd> Fish</span>
+          <span><kbd>H</kbd> Hunt</span>
+          <span><kbd>5</kbd>-<kbd>=</kbd> Shops</span>
           <span><kbd>B</kbd> Forge</span>
-          <span><kbd>T</kbd> Waypoint</span>
           <span><kbd>N</kbd> Day/Night</span>
-          <span><kbd>V</kbd> View</span>
-          <span><kbd>P</kbd> Music</span>
         </div>
       </div>
     </div>
