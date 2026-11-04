@@ -49,6 +49,9 @@
             <button id="world-map-toggle" type="button" title="Open Discovered World Map (M)">
               🗺️ Map (M)
             </button>
+            <button id="game-menu-toggle" type="button" title="Open Game Menu — Save, Load &amp; Restart Game (O)">
+              ⚙️ Menu (O)
+            </button>
           </div>
           <div class="sub-row">
             <span id="chests-value">0 Chests</span>
@@ -184,6 +187,52 @@
         </div>
       </div>
 
+      <!-- Game Menu Modal (Save Game, Load Game & Restart Game) -->
+      <div id="game-menu-modal" class="hidden">
+        <div class="game-menu-frame">
+          <div class="game-menu-header">
+            <div>
+              <div class="game-menu-title">⚙️ DWARVEN CHRONICLE — GAME MENU</div>
+              <div id="game-menu-subtitle">Save, Load, or Restart your expedition &amp; castle construction</div>
+            </div>
+            <button id="game-menu-close" type="button" class="map-tool-btn close-btn" title="Close Menu (O or Esc)">
+              ✕ Close (<kbd>O</kbd>)
+            </button>
+          </div>
+
+          <div id="game-menu-current-summary" class="game-menu-summary"></div>
+
+          <div class="game-menu-primary-actions">
+            <button id="game-menu-save-btn" type="button" class="game-menu-btn save">
+              <span class="gm-btn-icon">💾</span>
+              <span class="gm-btn-text">
+                <strong>Save Game</strong>
+                <small>Save current world, quarries &amp; castles now</small>
+              </span>
+            </button>
+            <button id="game-menu-load-btn" type="button" class="game-menu-btn load">
+              <span class="gm-btn-icon">📂</span>
+              <span class="gm-btn-text">
+                <strong>Load Game</strong>
+                <small>Restore your latest saved game state</small>
+              </span>
+            </button>
+            <button id="game-menu-restart-btn" type="button" class="game-menu-btn restart">
+              <span class="gm-btn-icon">🔄</span>
+              <span class="gm-btn-text">
+                <strong>Restart Game</strong>
+                <small>Reset all progress &amp; start fresh at spawn</small>
+              </span>
+            </button>
+          </div>
+
+          <div class="game-menu-slots-title">📜 SAVE SLOTS (Optional Manual Checkpoints)</div>
+          <div id="game-menu-slots-list" class="game-menu-slots-list"></div>
+
+          <div id="game-menu-status" class="game-menu-status">Auto-save is active • Press O or Esc anytime to open this menu</div>
+        </div>
+      </div>
+
       <div id="stats-badge">
         <div class="badge-header">
           <div class="badge-title">PHASE 3: FOREST GROVES, PONDS &amp; RIVERS</div>
@@ -202,6 +251,7 @@
           <span><kbd>K</kbd> Start Castle</span>
           <span><kbd>G</kbd> Eat Food</span>
           <span><kbd>M</kbd> World Map</span>
+          <span><kbd>O</kbd> Game Menu</span>
           <span><kbd>F</kbd> Fish (Food)</span>
           <span><kbd>H</kbd> Hunt (Food)</span>
           <span><kbd>5</kbd>-<kbd>8</kbd> House Shop</span>

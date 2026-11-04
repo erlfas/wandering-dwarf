@@ -242,6 +242,12 @@ export class DebugOverlay {
       };
       this.gui.add(actions, 'resetProgress').name('↺ Reset Saved Progress');
     }
+
+    // World Planner is closed by default so the 3D viewport is clean on startup
+    forestFolder.close();
+    trackFolder.close();
+    waterFolder.close();
+    this.gui.close();
   }
 
   public syncDisplay(full = false): void {

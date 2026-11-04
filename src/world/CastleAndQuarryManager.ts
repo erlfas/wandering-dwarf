@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import borderKeepModelUrl from '../../3dmodels/dwarven border keep 3d model.glb?url';
+import dwarvenWorkbenchModelUrl from '../../3dmodels/dwarven workbench 3d model.glb?url';
 import medievalCastleModelUrl from '../../3dmodels/medieval castle 3d model.glb?url';
 import naturalRockModelUrl from '../../3dmodels/natural rock 3d model.glb?url';
 import stoneFortressModelUrl from '../../3dmodels/stone fortress 3d model.glb?url';
+import woodenJibCraneModelUrl from '../../3dmodels/wooden jib crane 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { ChunkManager } from './ChunkManager';
@@ -103,7 +105,10 @@ interface QuarryInstance {
   stockpiledBlocks: number;
   autoCutTimer: number;
   chiselStoneTimer: number;
+  isNearLOD: boolean;
   root: THREE.Group;
+  workbenchMesh: THREE.Mesh;
+  jibCraneMesh: THREE.Mesh;
   benchRockMesh: THREE.Mesh;
   craneWheelMesh: THREE.Mesh;
   workRingMesh: THREE.Mesh;
@@ -135,6 +140,7 @@ interface CastleInstance {
   root: THREE.Group;
   completedGlbMesh: THREE.Mesh;
   slotMeshes: THREE.Mesh[];
+  slotMaterials: Array<THREE.Material | THREE.Material[]>;
   ghostMesh: THREE.Mesh;
   beaconArrowGroup: THREE.Group;
   groundTargetRing: THREE.Mesh;
@@ -397,6 +403,166 @@ export function ensureCastleTierModelLoaded(
   );
 }
 
+let sharedWorkbenchGeo: THREE.BufferGeometry | null = null;
+let sharedWorkbenchMat: THREE.MeshStandardMaterial | null = null;
+let sharedJibCraneGeo: THREE.BufferGeometry | null = null;
+let sharedJibCraneMat: THREE.MeshStandardMaterial | null = null;
+let quarryPropsLoadStarted = false;
+const onQuarryPropsLoadedCallbacks: Array<() => void> = [];
+
+/**
+ * Asynchronously loads and optimizes the two Quarry `.glb` models:
+ * 1. `3dmodels/dwarven workbench 3d model.glb` (`18,242` tris, `6.27 MB` textures)
+ *    normalized to `2.15m` width (`~0.76m` height, `~1.72m` depth) with base at `Y = 0`.
+ * 2. `3dmodels/wooden jib crane 3d model.glb` (`19,812` tris, `9.59 MB` textures)
+ *    normalized to `4.35m` height with base at `Y = 0`.
+ * Strips `KHR_materials_specular` and secondary PBR PNG/JPEG textures in `beforeRoot` before
+ * `ImageBitmap` decoding, guards `computeVertexNormals()`, welds vertices, and caches module-scope
+ * geometry/material singletons for close-range (`dist <= 1.8` chunks) Quarry LOD.
+ */
+export function loadQuarryPropModels(onLoaded?: () => void): void {
+  if (sharedWorkbenchGeo && sharedWorkbenchMat && sharedJibCraneGeo && sharedJibCraneMat) {
+    onLoaded?.();
+    return;
+  }
+  if (onLoaded) {
+    onQuarryPropsLoadedCallbacks.push(onLoaded);
+  }
+  if (quarryPropsLoadStarted) return;
+  quarryPropsLoadStarted = true;
+
+  const loader = createOptimizedGlbLoader();
+
+  const notifyListeners = () => {
+    for (const cb of onQuarryPropsLoadedCallbacks) {
+      cb();
+    }
+    if (sharedWorkbenchGeo && sharedJibCraneGeo) {
+      onQuarryPropsLoadedCallbacks.length = 0;
+    }
+  };
+
+  loader.load(
+    dwarvenWorkbenchModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanX = Math.max(0.01, box.max.x - box.min.x);
+      const scaleFactor = 2.15 / spanX;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      geo = mergeVertices(geo, 1e-4);
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.82,
+        metalness: 0.08,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedWorkbenchGeo = geo;
+      sharedWorkbenchMat = mat;
+      notifyListeners();
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load dwarven workbench 3D model:', err);
+    }
+  );
+
+  loader.load(
+    woodenJibCraneModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry.clone();
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanY = Math.max(0.01, box.max.y - box.min.y);
+      const scaleFactor = 4.35 / spanY;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      geo = mergeVertices(geo, 1e-4);
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.84,
+        metalness: 0.06,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedJibCraneGeo = geo;
+      sharedJibCraneMat = mat;
+      notifyListeners();
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load wooden jib crane 3D model:', err);
+    }
+  );
+}
+
 function formatCompassDir(dx: number, dz: number): string {
   const angle = Math.atan2(dx, -dz);
   const octant = Math.round((angle * 4) / Math.PI + 8) % 8;
@@ -407,6 +573,8 @@ function formatCompassDir(dx: number, dz: number): string {
 interface SharedMasonryAssets {
   fallbackRockGeo: THREE.BufferGeometry;
   fallbackRockMat: THREE.MeshStandardMaterial;
+  fallbackWorkbenchGeo: THREE.BufferGeometry;
+  fallbackJibCraneGeo: THREE.BufferGeometry;
   rockRingGeo: THREE.BufferGeometry;
   rockRingMat: THREE.MeshBasicMaterial;
   quarryPadGeo: THREE.BufferGeometry;
@@ -424,6 +592,7 @@ interface SharedMasonryAssets {
   bannerGoldMat: THREE.MeshStandardMaterial;
   torchFlameMat: THREE.MeshBasicMaterial;
   ghostSlotMat: THREE.MeshBasicMaterial;
+  blueprintSlotMat: THREE.MeshBasicMaterial;
   workRingGeo: THREE.BufferGeometry;
   workRingMat: THREE.MeshBasicMaterial;
   targetRingGeo: THREE.BufferGeometry;
@@ -1582,9 +1751,9 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     opacity: 0.55,
   });
 
-  // Quarry paved foundation & rocks
-  const padCyl = new THREE.CylinderGeometry(4.4, 4.8, 0.24, 20);
-  padCyl.translate(0, 0.12, 0);
+  // Quarry paved foundation & rocks (top surface at Y = +0.24, deep skirt down to Y = -0.40)
+  const padCyl = new THREE.CylinderGeometry(4.4, 4.9, 0.64, 24);
+  padCyl.translate(0, -0.08, 0);
   const rimBlock1 = new THREE.BoxGeometry(1.1, 0.45, 0.75);
   rimBlock1.translate(-3.1, 0.32, -1.8);
   const rimBlock2 = new THREE.BoxGeometry(0.95, 0.65, 0.85);
@@ -1600,35 +1769,46 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     metalness: 0.05,
   });
 
-  // Quarry Timber Workbench + Wooden Derrick Crane + Minecart Body + Sleepers (merged into 1 timber mesh)
-  const timberParts: THREE.BufferGeometry[] = [];
-  // 1. Center Chisel Workbench (at 0, 0, 0)
-  const benchTop = new THREE.BoxGeometry(1.45, 0.14, 0.95);
-  benchTop.translate(0, 0.78, 0);
-  timberParts.push(benchTop);
+  // Low-poly procedural fallback for Dwarven Workbench (`dist > 1.8` chunks) with base at Y = 0
+  const wbParts: THREE.BufferGeometry[] = [];
+  const benchTop = new THREE.BoxGeometry(2.05, 0.14, 1.55);
+  benchTop.translate(0, 0.69, 0);
+  wbParts.push(benchTop);
   const legOffsets = [
-    [-0.58, 0.38, -0.35],
-    [0.58, 0.38, -0.35],
-    [-0.58, 0.38, 0.35],
-    [0.58, 0.38, 0.35],
+    [-0.82, 0.31, -0.58],
+    [0.82, 0.31, -0.58],
+    [-0.82, 0.31, 0.58],
+    [0.82, 0.31, 0.58],
   ];
   for (const [lx, ly, lz] of legOffsets) {
-    const leg = new THREE.BoxGeometry(0.12, 0.76, 0.12);
+    const leg = new THREE.BoxGeometry(0.14, 0.62, 0.14);
     leg.translate(lx, ly, lz);
-    timberParts.push(leg);
+    wbParts.push(leg);
   }
-  // 2. Wooden Quarry Crane / Derrick at (-2.2, 0, -1.1)
+  const fallbackWorkbenchGeo = mergeGeometries(wbParts, false);
+  for (const p of wbParts) p.dispose();
+  fallbackWorkbenchGeo.computeBoundingBox();
+  fallbackWorkbenchGeo.computeBoundingSphere();
+
+  // Low-poly procedural fallback for Wooden Jib Crane (`dist > 1.8` chunks) with base at Y = 0
+  const craneParts: THREE.BufferGeometry[] = [];
   const craneMast = new THREE.CylinderGeometry(0.14, 0.18, 4.2, 8);
-  craneMast.translate(-2.2, 2.1, -1.1);
-  timberParts.push(craneMast);
-  const craneBoom = new THREE.CylinderGeometry(0.1, 0.13, 3.6, 8);
+  craneMast.translate(-0.35, 2.1, 0);
+  craneParts.push(craneMast);
+  const craneBoom = new THREE.CylinderGeometry(0.1, 0.13, 3.5, 8);
   craneBoom.rotateZ(-0.62);
-  craneBoom.translate(-1.15, 3.15, -1.1);
-  timberParts.push(craneBoom);
+  craneBoom.translate(0.7, 3.1, 0);
+  craneParts.push(craneBoom);
   const craneStrut = new THREE.BoxGeometry(1.4, 0.16, 0.18);
-  craneStrut.translate(-1.55, 1.9, -1.1);
-  timberParts.push(craneStrut);
-  // 3. Wooden Minecart body at (+2.35, 0.52, -1.15)
+  craneStrut.translate(0.3, 1.85, 0);
+  craneParts.push(craneStrut);
+  const fallbackJibCraneGeo = mergeGeometries(craneParts, false);
+  for (const p of craneParts) p.dispose();
+  fallbackJibCraneGeo.computeBoundingBox();
+  fallbackJibCraneGeo.computeBoundingSphere();
+
+  // Quarry Wooden Minecart Body + Sleepers at (+2.35, 0.56, -1.15)
+  const timberParts: THREE.BufferGeometry[] = [];
   const cartBox = new THREE.BoxGeometry(1.15, 0.58, 0.78);
   cartBox.translate(2.35, 0.56, -1.15);
   timberParts.push(cartBox);
@@ -1646,7 +1826,7 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     metalness: 0.06,
   });
 
-  // Quarry Iron Rails, Minecart Wheels & Crane Hoist Cable
+  // Quarry Iron Rails & Minecart Track
   const ironParts: THREE.BufferGeometry[] = [];
   const rail1 = new THREE.BoxGeometry(2.6, 0.06, 0.06);
   rail1.translate(2.35, 0.29, -1.45);
@@ -1654,9 +1834,6 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
   const rail2 = new THREE.BoxGeometry(2.6, 0.06, 0.06);
   rail2.translate(2.35, 0.29, -0.85);
   ironParts.push(rail2);
-  const cable = new THREE.CylinderGeometry(0.02, 0.02, 2.3, 6);
-  cable.translate(-0.15, 2.9, -1.1);
-  ironParts.push(cable);
   const quarryIronGeo = mergeGeometries(ironParts, false);
   for (const p of ironParts) p.dispose();
   const quarryIronMat = new THREE.MeshStandardMaterial({
@@ -1703,7 +1880,15 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     color: 0x48cae4,
     wireframe: true,
     transparent: true,
-    opacity: 0.82,
+    opacity: 0.85,
+  });
+
+  // Subtle golden architectural blueprint wireframe for all remaining unplaced slots of the active Tier
+  const blueprintSlotMat = new THREE.MeshBasicMaterial({
+    color: 0xffd166,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.24,
   });
 
   const workRingGeo = new THREE.RingGeometry(0.95, 1.25, 24);
@@ -1778,6 +1963,8 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
   sharedMasonryAssets = {
     fallbackRockGeo,
     fallbackRockMat,
+    fallbackWorkbenchGeo,
+    fallbackJibCraneGeo,
     rockRingGeo,
     rockRingMat,
     quarryPadGeo,
@@ -1795,6 +1982,7 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     bannerGoldMat,
     torchFlameMat,
     ghostSlotMat,
+    blueprintSlotMat,
     workRingGeo,
     workRingMat,
     targetRingGeo,
@@ -1900,6 +2088,12 @@ export class CastleAndQuarryManager {
       for (const r of this.quarryBonusRocks) {
         r.mesh.geometry = geo;
         r.mesh.material = mat;
+      }
+    });
+
+    loadQuarryPropModels(() => {
+      for (const q of this.quarries) {
+        this.syncQuarryPropVisuals(q);
       }
     });
 
@@ -2266,6 +2460,22 @@ export class CastleAndQuarryManager {
     padMesh.receiveShadow = true;
     root.add(padMesh);
 
+    // 1. Dwarven Workbench (`dwarven workbench 3d model.glb` at close range, procedural fallback at far range)
+    const workbenchMesh = new THREE.Mesh(assets.fallbackWorkbenchGeo, assets.quarryTimberMat);
+    workbenchMesh.position.set(0, 0.24, -0.05);
+    workbenchMesh.castShadow = true;
+    workbenchMesh.receiveShadow = true;
+    root.add(workbenchMesh);
+
+    // 2. Wooden Jib Crane (`wooden jib crane 3d model.glb` at close range, procedural fallback at far range)
+    const jibCraneMesh = new THREE.Mesh(assets.fallbackJibCraneGeo, assets.quarryTimberMat);
+    jibCraneMesh.position.set(-1.85, 0.24, -1.25);
+    jibCraneMesh.rotation.y = 0.35;
+    jibCraneMesh.castShadow = true;
+    jibCraneMesh.receiveShadow = true;
+    root.add(jibCraneMesh);
+
+    // 3. Wooden Minecart & Iron Track
     const timberMesh = new THREE.Mesh(assets.quarryTimberGeo, assets.quarryTimberMat);
     timberMesh.castShadow = true;
     timberMesh.receiveShadow = true;
@@ -2276,27 +2486,28 @@ export class CastleAndQuarryManager {
     root.add(ironMesh);
 
     const craneWheelMesh = new THREE.Mesh(assets.craneWheelGeo, assets.quarryIronMat);
-    craneWheelMesh.position.set(-0.15, 4.05, -1.1);
+    craneWheelMesh.position.set(-0.65, 4.15, -1.25);
     root.add(craneWheelMesh);
 
-    // Raw boulder resting on top of the chiseling workbench while being chiseled
+    // Raw boulder resting on top of the chiseling workbench while being chiseled (Y = 0.24 pad + 0.76 bench = 1.00m)
     const useGlbRock = Boolean(sharedNaturalRockGeo && sharedNaturalRockMat);
     const benchRockMesh = new THREE.Mesh(
       useGlbRock ? sharedNaturalRockGeo! : assets.fallbackRockGeo,
       useGlbRock ? sharedNaturalRockMat! : assets.fallbackRockMat
     );
-    benchRockMesh.position.set(0, 0.85, 0);
+    benchRockMesh.position.set(0, 1.0, -0.05);
     benchRockMesh.scale.setScalar(0.68);
     benchRockMesh.castShadow = true;
+    benchRockMesh.receiveShadow = false;
     benchRockMesh.visible = false;
     root.add(benchRockMesh);
 
     // Glowing work ring in front of the chiseling bench
     const workRingMesh = new THREE.Mesh(assets.workRingGeo, assets.workRingMat);
-    workRingMesh.position.set(0, 0.26, 1.35);
+    workRingMesh.position.set(0, 0.26, 1.48);
     root.add(workRingMesh);
 
-    // Visual stack of chiseled ashlar stone blocks on the left pallet (-1.9, 0.25, +1.2)
+    // Visual stack of chiseled ashlar stone blocks on the left pallet (-2.15..-1.53, 0.39, +0.95..1.39)
     const stockpileMeshes: THREE.Mesh[] = [];
     for (let i = 0; i < 16; i++) {
       const col = i % 2;
@@ -2313,7 +2524,7 @@ export class CastleAndQuarryManager {
 
     this.group.add(root);
 
-    return {
+    const inst: QuarryInstance = {
       id: saved.id,
       x: saved.x,
       y: saved.y,
@@ -2322,12 +2533,46 @@ export class CastleAndQuarryManager {
       stockpiledBlocks: saved.stockpiledBlocks,
       autoCutTimer: 0,
       chiselStoneTimer: 0,
+      isNearLOD: true,
       root,
+      workbenchMesh,
+      jibCraneMesh,
       benchRockMesh,
       craneWheelMesh,
       workRingMesh,
       stockpileMeshes,
     };
+    this.syncQuarryPropVisuals(inst);
+    return inst;
+  }
+
+  private syncQuarryPropVisuals(q: QuarryInstance): void {
+    const assets = getSharedMasonryAssets();
+    if (q.isNearLOD && sharedWorkbenchGeo && sharedWorkbenchMat) {
+      q.workbenchMesh.geometry = sharedWorkbenchGeo;
+      q.workbenchMesh.material = sharedWorkbenchMat;
+      q.workbenchMesh.castShadow = true;
+      q.workbenchMesh.receiveShadow = false;
+    } else {
+      q.workbenchMesh.geometry = assets.fallbackWorkbenchGeo;
+      q.workbenchMesh.material = assets.quarryTimberMat;
+      q.workbenchMesh.castShadow = true;
+      q.workbenchMesh.receiveShadow = true;
+    }
+
+    if (q.isNearLOD && sharedJibCraneGeo && sharedJibCraneMat) {
+      q.jibCraneMesh.geometry = sharedJibCraneGeo;
+      q.jibCraneMesh.material = sharedJibCraneMat;
+      q.jibCraneMesh.castShadow = true;
+      q.jibCraneMesh.receiveShadow = false;
+      q.craneWheelMesh.visible = false;
+    } else {
+      q.jibCraneMesh.geometry = assets.fallbackJibCraneGeo;
+      q.jibCraneMesh.material = assets.quarryTimberMat;
+      q.jibCraneMesh.castShadow = true;
+      q.jibCraneMesh.receiveShadow = true;
+      q.craneWheelMesh.visible = true;
+    }
   }
 
   private syncQuarryStockpileVisuals(q: QuarryInstance): void {
@@ -2380,6 +2625,7 @@ export class CastleAndQuarryManager {
                   : assets.ashlarStoneMat;
 
     const slotMeshes: THREE.Mesh[] = [];
+    const slotMaterials: Array<THREE.Material | THREE.Material[]> = [];
     for (let i = 0; i < assets.castleSlots.length; i++) {
       const slot = assets.castleSlots[i];
       const geo = assets.castleSlotGeos[slot.geoIndex];
@@ -2394,6 +2640,7 @@ export class CastleAndQuarryManager {
       m.receiveShadow = true;
       m.visible = i < saved.blocksPlaced;
       slotMeshes.push(m);
+      slotMaterials.push(mat);
       root.add(m);
     }
 
@@ -2437,6 +2684,7 @@ export class CastleAndQuarryManager {
       root,
       completedGlbMesh,
       slotMeshes,
+      slotMaterials,
       ghostMesh,
       beaconArrowGroup,
       groundTargetRing,
@@ -2456,16 +2704,16 @@ export class CastleAndQuarryManager {
     const assets = getSharedMasonryAssets();
     const totalSlots = assets.castleSlots.length;
     const completedTier = this.getCompletedMilestoneTier(castle.blocksPlaced);
+    const activeTier: 1 | 2 | 3 = completedTier < 3 ? ((completedTier + 1) as 1 | 2 | 3) : 3;
 
-    // Pre-warm current and next Castle Tier `.glb` models asynchronously so milestone transitions are instant
-    if (completedTier !== 0) {
+    // Pre-warm current and next Castle Tier `.glb` models asynchronously (only attach callback if not yet loaded!)
+    if (completedTier !== 0 && !sharedCastleTierGlbAssets[completedTier]) {
       ensureCastleTierModelLoaded(completedTier, () => {
         this.syncCastleSlotHintVisuals(castle);
       });
     }
-    if (completedTier < 3) {
-      const nextTierToWarm = (completedTier + 1) as 1 | 2 | 3;
-      ensureCastleTierModelLoaded(nextTierToWarm);
+    if (completedTier < 3 && !sharedCastleTierGlbAssets[activeTier]) {
+      ensureCastleTierModelLoaded(activeTier);
     }
 
     const tierGlbAsset = completedTier !== 0 ? sharedCastleTierGlbAssets[completedTier] : undefined;
@@ -2479,19 +2727,29 @@ export class CastleAndQuarryManager {
       castle.completedGlbMesh.visible = false;
     }
 
-    // When `showGlbModel` is active for `completedTier`, hide individual slots of `tier <= completedTier`
-    // (since they are replaced by the sculpted `.glb` castle model) while keeping any in-progress
-    // blocks of the next tier (`slot.tier > completedTier && i < castle.blocksPlaced`) visible!
+    // 1. Placed blocks of `slot.tier > completedTier` (or all placed blocks if GLB is not shown) render solid masonry.
+    // 2. Remaining unplaced blocks of `slot.tier === activeTier` (`i > castle.blocksPlaced`) render as a
+    //    translucent Golden Architectural Blueprint (`blueprintSlotMat`) so the player always sees the full
+    //    remaining silhouette of the castle tier they are currently building!
     for (let i = 0; i < totalSlots; i++) {
       const slot = assets.castleSlots[i];
       const isPlaced = i < castle.blocksPlaced;
-      if (!isPlaced) {
-        castle.slotMeshes[i].visible = false;
-      } else if (showGlbModel && slot.tier <= completedTier) {
-        castle.slotMeshes[i].visible = false;
-      } else {
+      if (isPlaced) {
+        if (showGlbModel && slot.tier <= completedTier) {
+          castle.slotMeshes[i].visible = false;
+        } else {
+          castle.slotMeshes[i].material = castle.slotMaterials[i];
+          castle.slotMeshes[i].visible = true;
+          castle.slotMeshes[i].castShadow = castle.isNearGlbLOD;
+          castle.slotMeshes[i].receiveShadow = true;
+        }
+      } else if (i > castle.blocksPlaced && slot.tier === activeTier && castle.isNearGlbLOD) {
+        castle.slotMeshes[i].material = assets.blueprintSlotMat;
         castle.slotMeshes[i].visible = true;
-        castle.slotMeshes[i].castShadow = castle.isNearGlbLOD;
+        castle.slotMeshes[i].castShadow = false;
+        castle.slotMeshes[i].receiveShadow = false;
+      } else {
+        castle.slotMeshes[i].visible = false;
       }
     }
 
@@ -2516,7 +2774,11 @@ export class CastleAndQuarryManager {
 
     const dropWorldX = castle.x + nextSlot.groundDropLocal.x;
     const dropWorldZ = castle.z + nextSlot.groundDropLocal.z;
-    const dropGroundY = this.chunkManager.getSurfaceHeight(dropWorldX, dropWorldZ);
+    const dropGroundY = this.getWalkableSurfaceHeight(
+      dropWorldX,
+      dropWorldZ,
+      this.chunkManager.getSurfaceHeight(dropWorldX, dropWorldZ)
+    );
     castle.groundTargetRing.position.set(
       nextSlot.groundDropLocal.x,
       dropGroundY - castle.y + 0.14,
@@ -2996,6 +3258,7 @@ export class CastleAndQuarryManager {
 
   private updateQuarries(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
     const hasPulley = this.unlockedEquipment.has('architect_pulley');
+    const nearGlbDistSq = Math.pow(this.config.chunkSize * 1.8, 2);
 
     for (const q of this.quarries) {
       // Passive auto-chisel bonus block when owning Royal Architect's Pulley Rig
@@ -3019,7 +3282,16 @@ export class CastleAndQuarryManager {
 
       const dx = playerPos.x - q.x;
       const dz = playerPos.z - q.z;
-      if (dx * dx + dz * dz < 45 * 45) {
+      const dSq = dx * dx + dz * dz;
+
+      // Close-range GLB LOD toggle (`dist <= 1.8` chunks / ~86.4m) for Workbench & Jib Crane .glb models
+      const wantNearLOD = dSq <= nearGlbDistSq;
+      if (wantNearLOD !== q.isNearLOD) {
+        q.isNearLOD = wantNearLOD;
+        this.syncQuarryPropVisuals(q);
+      }
+
+      if (dSq < 45 * 45) {
         q.craneWheelMesh.rotation.z = elapsedTime * 1.4;
         const pulse = 1.0 + Math.sin(elapsedTime * 4.0) * 0.08;
         q.workRingMesh.scale.setScalar(pulse);
@@ -3056,6 +3328,48 @@ export class CastleAndQuarryManager {
     }
   }
 
+  private buildCastleProgressStripHtml(castle: CastleInstance): string {
+    const b = castle.blocksPlaced;
+    const tierIdx = CASTLE_MILESTONES.findIndex((m) => b < m.blocksRequired);
+    const activeM =
+      tierIdx >= 0 ? CASTLE_MILESTONES[tierIdx] : CASTLE_MILESTONES[CASTLE_MILESTONES.length - 1];
+    const prevReq = tierIdx > 0 ? CASTLE_MILESTONES[tierIdx - 1].blocksRequired : 0;
+    const tierTotal = activeM.blocksRequired - prevReq;
+    const tierDone = Math.max(0, Math.min(tierTotal, b - prevReq));
+    const blocksLeftInTier = Math.max(0, activeM.blocksRequired - b);
+    const blocksLeftTotal = Math.max(0, 30 - b);
+    const tierPct = Math.round((tierDone / Math.max(1, tierTotal)) * 100);
+
+    const t1Done = b >= 8;
+    const t2Done = b >= 18;
+    const t3Done = b >= 30;
+
+    const pill1 = t1Done
+      ? `<span class="castle-tier-step done">✅ Tier I Keep (8/8)</span>`
+      : `<span class="castle-tier-step active">🔨 Tier I Keep (${b}/8 • ${8 - b} left)</span>`;
+    const pill2 = t2Done
+      ? `<span class="castle-tier-step done">✅ Tier II Stronghold (18/18)</span>`
+      : t1Done
+        ? `<span class="castle-tier-step active">🔨 Tier II Stronghold (${b - 8}/10 • ${18 - b} left)</span>`
+        : `<span class="castle-tier-step locked">🔒 Tier II Stronghold (+10)</span>`;
+    const pill3 = t3Done
+      ? `<span class="castle-tier-step done">👑 Tier III Citadel (30/30)</span>`
+      : t2Done
+        ? `<span class="castle-tier-step active">🔨 Tier III Citadel (${b - 18}/12 • ${30 - b} left)</span>`
+        : `<span class="castle-tier-step locked">🔒 Tier III Citadel (+12)</span>`;
+
+    return (
+      `<div class="castle-progress-strip">` +
+      `<div class="castle-progress-header">` +
+      `<span>🏗️ <strong>${activeM.title}:</strong> ${tierDone}/${tierTotal} Tier Blocks (${b}/30 Total)</span>` +
+      `<span class="castle-left-highlight">⏳ <strong>${blocksLeftInTier} Block${blocksLeftInTier === 1 ? '' : 's'} Left</strong> for ${activeM.title} (${blocksLeftTotal} left for Grand Citadel)</span>` +
+      `</div>` +
+      `<div class="castle-progress-track"><div class="castle-progress-fill" style="width:${tierPct}%"></div></div>` +
+      `<div class="castle-tier-roadmap">${pill1}<span class="tier-arrow">➔</span>${pill2}<span class="tier-arrow">➔</span>${pill3}</div>` +
+      `</div>`
+    );
+  }
+
   private updateGuidanceAndBanner(elapsedTime: number, playerPos: THREE.Vector3): void {
     const px = playerPos.x;
     const pz = playerPos.z;
@@ -3079,8 +3393,8 @@ export class CastleAndQuarryManager {
     if (this.carriedChiseledBlocks > 0) {
       if (!activeCastle) {
         bannerHtml =
-          `<span>🧱 <strong>Carrying ${this.carriedChiseledBlocks} Castle Block${this.carriedChiseledBlocks > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to a Level Place &amp; Press <kbd>K</kbd> to Start Building a Castle!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button>`;
+          `<div class="masonry-main-row"><span>🧱 <strong>Carrying ${this.carriedChiseledBlocks} Castle Block${this.carriedChiseledBlocks > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to a Level Place &amp; Press <kbd>K</kbd> to Start Building a Castle!</span>` +
+          `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
       } else {
         const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
         const dropX = activeCastle.x + nextSlot.groundDropLocal.x;
@@ -3096,12 +3410,14 @@ export class CastleAndQuarryManager {
 
         if (dist <= 4.8 || Math.hypot(activeCastle.x - px, activeCastle.z - pz) <= 8.8) {
           bannerHtml =
-            `<span>🏰 <strong>${activeCastle.name}</strong> • <span class="masonry-tag hint">📍 NEXT BLOCK (#${activeCastle.blocksPlaced + 1}/${milestone.blocksRequired}): ${nextSlot.label} (${nextSlot.hintLocation})</span></span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block Now (E)</button>`;
+            `<div class="masonry-main-row"><span>🏰 <strong>${activeCastle.name}</strong> • <span class="masonry-tag hint">📍 NEXT BLOCK (#${activeCastle.blocksPlaced + 1}/${milestone.blocksRequired}): ${nextSlot.label} (${nextSlot.hintLocation})</span></span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">🧱 Place Block Now (E)</button></div>` +
+            this.buildCastleProgressStripHtml(activeCastle);
         } else {
           bannerHtml =
-            `<span>🧭 <strong>BLOCK PLACEMENT HINT:</strong> Carry Block <strong>${dist.toFixed(0)}m ${dir}</strong> to <span class="masonry-tag hint">📍 ${nextSlot.label} (${nextSlot.hintLocation})</span> on ${activeCastle.name} (${activeCastle.blocksPlaced}/${milestone.blocksRequired})</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-castle">🏰 New Castle (K)</button>`;
+            `<div class="masonry-main-row"><span>🧭 <strong>BLOCK PLACEMENT HINT:</strong> Carry Block <strong>${dist.toFixed(0)}m ${dir}</strong> to <span class="masonry-tag hint">📍 ${nextSlot.label} (${nextSlot.hintLocation})</span> on ${activeCastle.name}</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-castle">🏰 New Castle (K)</button></div>` +
+            this.buildCastleProgressStripHtml(activeCastle);
         }
       }
     }
@@ -3109,8 +3425,8 @@ export class CastleAndQuarryManager {
     else if (this.carriedRawStones > 0) {
       if (!nearestQuarry) {
         bannerHtml =
-          `<span>🪨 <strong>Carrying ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to any Level Place &amp; Press <kbd>Q</kbd> to Set Up a Quarry!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`;
+          `<div class="masonry-main-row"><span>🪨 <strong>Carrying ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''}</strong> • ${levelBadge} Walk to any Level Place &amp; Press <kbd>Q</kbd> to Set Up a Quarry!</span>` +
+          `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button></div>`;
       } else {
         guideTargetX = nearestQuarry.x;
         guideTargetZ = nearestQuarry.z;
@@ -3119,12 +3435,14 @@ export class CastleAndQuarryManager {
         const dir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
         if (dist <= 4.8) {
           bannerHtml =
-            `<span>⛏️ <strong>At Stone Quarry Workbench</strong> • Ready to chisel ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''} into Castle Blocks!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel into Blocks (E)</button>`;
+            `<div class="masonry-main-row"><span>⛏️ <strong>At Stone Quarry Workbench</strong> • Ready to chisel ${this.carriedRawStones} Natural Stone${this.carriedRawStones > 1 ? 's' : ''} into Castle Blocks!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel into Blocks (E)</button></div>` +
+            (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
         } else {
           bannerHtml =
-            `<span>🧭 <strong>QUARRY HINT:</strong> Carry Stone <strong>${dist.toFixed(0)}m ${dir}</strong> to your <span class="masonry-tag">⛏️ Quarry Workbench</span> and press <kbd>E</kbd> to chisel into Blocks!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ New Quarry Here (Q)</button>`;
+            `<div class="masonry-main-row"><span>🧭 <strong>QUARRY HINT:</strong> Carry Stone <strong>${dist.toFixed(0)}m ${dir}</strong> to your <span class="masonry-tag">⛏️ Quarry Workbench</span> and press <kbd>E</kbd> to chisel into Blocks!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ New Quarry Here (Q)</button></div>` +
+            (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
         }
       }
     }
@@ -3132,12 +3450,14 @@ export class CastleAndQuarryManager {
     else {
       if (nearestQuarry && Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz) <= 4.8 && nearestQuarry.stockpiledBlocks > 0) {
         bannerHtml =
-          `<span>⛏️ <strong>Stone Quarry Stockpile</strong> • <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Chiseled Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
-          `<button type="button" class="hut-action-pill masonry-action-work">🧱 Pick Up Blocks (E)</button>`;
+          `<div class="masonry-main-row"><span>⛏️ <strong>Stone Quarry Stockpile</strong> • <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Chiseled Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
+          `<button type="button" class="hut-action-pill masonry-action-work">🧱 Pick Up Blocks (E)</button></div>` +
+          (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
       } else if (nearestRock && nearestRock.dist <= 3.6) {
         bannerHtml =
-          `<span>🪨 <strong>Natural Stone Nearby</strong> (${nearestRock.dist.toFixed(1)}m) • Lift stone to carry to a Quarry &amp; chisel into Castle Blocks!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift Natural Stone (E)</button>`;
+          `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone Nearby</strong> (${nearestRock.dist.toFixed(1)}m) • Lift stone to carry to a Quarry &amp; chisel into Castle Blocks!</span>` +
+          `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift Natural Stone (E)</button></div>` +
+          (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
       } else if (activeCastle) {
         const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
         if (nearestQuarry && nearestQuarry.stockpiledBlocks > 0) {
@@ -3147,18 +3467,21 @@ export class CastleAndQuarryManager {
           const qDist = Math.hypot(nearestQuarry.x - px, nearestQuarry.z - pz);
           const qDir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
           bannerHtml =
-            `<span>🏰 <strong>Next Castle Block:</strong> <span class="masonry-tag hint">${nextSlot.label}</span> • Pick up stockpiled blocks at Quarry (<strong>${qDist.toFixed(0)}m ${qDir}</strong>)!</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Or Lift Nearest Stone (E)</button>`;
+            `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block:</strong> <span class="masonry-tag hint">${nextSlot.label}</span> • Pick up stockpiled blocks at Quarry (<strong>${qDist.toFixed(0)}m ${qDir}</strong>)!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Or Lift Nearest Stone (E)</button></div>` +
+            this.buildCastleProgressStripHtml(activeCastle);
         } else if (nearestRock) {
           guideTargetX = nearestRock.rock.wx;
           guideTargetZ = nearestRock.rock.wz;
           guideColor = 0xffe066;
           const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
           bannerHtml =
-            `<span>🏰 <strong>Next Castle Block (#${activeCastle.blocksPlaced + 1}):</strong> <span class="masonry-tag hint">${nextSlot.label} (${nextSlot.hintLocation})</span> • Gather Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>)!</span>` +
+            `<div class="masonry-main-row"><span>🏰 <strong>Next Castle Block (#${activeCastle.blocksPlaced + 1}):</strong> <span class="masonry-tag hint">${nextSlot.label} (${nextSlot.hintLocation})</span> • Gather Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>)!</span>` +
             (nearestQuarry
               ? ''
-              : `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`);
+              : `<button type="button" class="hut-action-pill masonry-action-quarry">⛏️ Set Up Quarry (Q)</button>`) +
+            `</div>` +
+            this.buildCastleProgressStripHtml(activeCastle);
         }
       } else if (this.quarries.length > 0 && nearestRock) {
         guideTargetX = nearestRock.rock.wx;
@@ -3166,8 +3489,8 @@ export class CastleAndQuarryManager {
         guideColor = 0xffe066;
         const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
         bannerHtml =
-          `<span>⛏️ <strong>Quarry Ready!</strong> Gather a Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>) or press <kbd>K</kbd> on level ground to start a Castle!</span>` +
-          `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button>`;
+          `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Ready!</strong> Gather a Natural Stone (<strong>${nearestRock.dist.toFixed(0)}m ${rDir}</strong>, press <kbd>E</kbd>) or press <kbd>K</kbd> on level ground to start a Castle!</span>` +
+          `<button type="button" class="hut-action-pill masonry-action-castle">🏰 Start Castle Here (K)</button></div>`;
       }
     }
 
@@ -3252,46 +3575,246 @@ export class CastleAndQuarryManager {
   }
 
   /**
-   * Resolves 2D circle-circle collisions between the player and placed Quarry workbenches
-   * and Castle towers/walls.
+   * Returns the walkable surface elevation at `(wx, wz)`, raising `baseGroundY` onto the top surface
+   * of any Quarry paved foundation (`q.y + 0.24`) or Castle stepped plinth / lowered drawbridge / courtyard
+   * so the dwarf's feet rest directly upon the ground of the Quarry and Castle rather than sinking in.
    */
-  public resolveObstacleCollision(pos: THREE.Vector3, playerRadius = 0.38): void {
+  public getWalkableSurfaceHeight(wx: number, wz: number, baseGroundY: number): number {
+    let bestY = baseGroundY;
+
+    // 1. Quarry paved stone pad (radius 4.4m flat top at q.y + 0.24, outer bevel 4.4m..4.95m)
     for (const q of this.quarries) {
-      const dx = pos.x - q.x;
-      const dz = pos.z - q.z;
-      const minDist = 0.85 + playerRadius;
-      const dSq = dx * dx + dz * dz;
-      if (dSq < minDist * minDist && dSq > 0.0001) {
-        const d = Math.sqrt(dSq);
-        const push = (minDist - d) / d;
-        pos.x += dx * push;
-        pos.z += dz * push;
+      const dx = wx - q.x;
+      const dz = wz - q.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq <= 4.95 * 4.95) {
+        const dist = Math.sqrt(distSq);
+        const padTopY = q.y + 0.24;
+        if (dist <= 4.42) {
+          if (padTopY > bestY) bestY = padTopY;
+        } else {
+          const t = THREE.MathUtils.clamp((4.95 - dist) / (4.95 - 4.42), 0, 1);
+          const rampY = THREE.MathUtils.lerp(baseGroundY, Math.max(baseGroundY, padTopY), t);
+          if (rampY > bestY) bestY = rampY;
+        }
       }
     }
 
+    // 2. Castle stepped foundation plinth, lowered timber drawbridge, and inner courtyard slab
     for (const c of this.castles) {
-      if (c.blocksPlaced < 2) continue;
-      // Gatehouse & Corner Tower colliders
-      const pillars = [
-        [-2.3, 4.2, 1.35],
-        [2.3, 4.2, 1.35],
-      ];
-      if (c.blocksPlaced >= 10) {
-        pillars.push([-5.5, 4.2, 1.8], [5.5, 4.2, 1.8], [-5.5, -4.4, 1.8], [5.5, -4.4, 1.8]);
+      if (c.blocksPlaced < 1) continue;
+      const dx = wx - c.x;
+      const dz = wz - c.z;
+      if (dx * dx + dz * dz > 12 * 12) continue;
+
+      const cos = Math.cos(c.rotationY);
+      const sin = Math.sin(c.rotationY);
+      const lx = dx * cos - dz * sin;
+      const lz = dx * sin + dz * cos;
+
+      // Slot 0 (`blocksPlaced >= 1`): Border Keep Stepped Plinth (`|lx| <= 3.35, 0.9 <= lz <= 6.35`)
+      if (Math.abs(lx) <= 3.35 && lz >= 0.9 && lz <= 6.35) {
+        const plinthY = c.y + 0.44;
+        if (plinthY > bestY) bestY = plinthY;
       }
-      for (const [ox, oz, rad] of pillars) {
-        const wx = c.x + ox;
-        const wz = c.z + oz;
-        const dx = pos.x - wx;
-        const dz = pos.z - wz;
-        const minDist = rad + playerRadius;
-        const dSq = dx * dx + dz * dz;
-        if (dSq < minDist * minDist && dSq > 0.0001) {
+
+      // Slot 6 (`blocksPlaced >= 7`): Lowered Timber Drawbridge ramp (`|lx| <= 1.15, 4.75 <= lz <= 7.20`)
+      if (c.blocksPlaced >= 7 && Math.abs(lx) <= 1.15 && lz >= 4.75 && lz <= 7.2) {
+        const t = THREE.MathUtils.clamp((7.2 - lz) / (7.2 - 4.75), 0, 1);
+        const bridgeY = c.y + THREE.MathUtils.lerp(0.28, 0.76, t);
+        if (bridgeY > bestY) bestY = bridgeY;
+      }
+
+      // Slot 14 (`blocksPlaced >= 15`): Stronghold Inner Courtyard Terrace (`|lx| <= 5.6, -4.2 <= lz <= 3.4`)
+      if (c.blocksPlaced >= 15 && Math.abs(lx) <= 5.6 && lz >= -4.2 && lz <= 3.4) {
+        const courtY = c.y + 0.45;
+        if (courtY > bestY) bestY = courtY;
+      }
+    }
+
+    return bestY;
+  }
+
+  /**
+   * Resolves 2D collisions in local structure space between the player (`pos`, `playerRadius`)
+   * and all Quarry structures (Workbench, Wooden Jib Crane, Minecart, Rim Boulders, Block Stockpile)
+   * as well as all Castle constructions (every placed block slot `1..blocksPlaced` and completed
+   * Tier I / II / III `.glb` castles) so the dwarf can never walk through constructions.
+   */
+  public resolveObstacleCollision(pos: THREE.Vector3, playerRadius = 0.38): void {
+    const pushOutLocalBox = (
+      originX: number,
+      originZ: number,
+      cos: number,
+      sin: number,
+      minX: number,
+      maxX: number,
+      minZ: number,
+      maxZ: number
+    ) => {
+      const dx = pos.x - originX;
+      const dz = pos.z - originZ;
+      const lx = dx * cos - dz * sin;
+      const lz = dx * sin + dz * cos;
+
+      const exMinX = minX - playerRadius;
+      const exMaxX = maxX + playerRadius;
+      const exMinZ = minZ - playerRadius;
+      const exMaxZ = maxZ + playerRadius;
+
+      if (lx > exMinX && lx < exMaxX && lz > exMinZ && lz < exMaxZ) {
+        const penLeft = lx - exMinX;
+        const penRight = exMaxX - lx;
+        const penBack = lz - exMinZ;
+        const penFront = exMaxZ - lz;
+        const minPen = Math.min(penLeft, penRight, penBack, penFront);
+
+        let nlx = lx;
+        let nlz = lz;
+        if (minPen === penLeft) nlx = exMinX;
+        else if (minPen === penRight) nlx = exMaxX;
+        else if (minPen === penBack) nlz = exMinZ;
+        else nlz = exMaxZ;
+
+        pos.x = originX + nlx * cos + nlz * sin;
+        pos.z = originZ - nlx * sin + nlz * cos;
+      }
+    };
+
+    const pushOutLocalCircle = (
+      originX: number,
+      originZ: number,
+      cos: number,
+      sin: number,
+      cx: number,
+      cz: number,
+      radius: number
+    ) => {
+      const wx = originX + cx * cos + cz * sin;
+      const wz = originZ - cx * sin + cz * cos;
+      const dx = pos.x - wx;
+      const dz = pos.z - wz;
+      const minDist = radius + playerRadius;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < minDist * minDist) {
+        if (dSq > 0.0001) {
           const d = Math.sqrt(dSq);
           const push = (minDist - d) / d;
           pos.x += dx * push;
           pos.z += dz * push;
+        } else {
+          pos.z += minDist;
         }
+      }
+    };
+
+    // 1. Quarry Colliders (Workbench, Wooden Jib Crane, Minecart & Rails, Rim Rocks, Stockpile)
+    for (const q of this.quarries) {
+      const qdx = pos.x - q.x;
+      const qdz = pos.z - q.z;
+      if (qdx * qdx + qdz * qdz > 7.5 * 7.5) continue;
+
+      const cos = Math.cos(q.rotationY);
+      const sin = Math.sin(q.rotationY);
+
+      // Center Dwarven Workbench (`dwarven workbench 3d model.glb` at (0, 0.24, -0.05))
+      pushOutLocalBox(q.x, q.z, cos, sin, -1.08, 1.08, -0.88, 0.78);
+      // Wooden Jib Crane (`wooden jib crane 3d model.glb` at (-1.85, 0.24, -1.25))
+      pushOutLocalBox(q.x, q.z, cos, sin, -2.65, -1.05, -2.05, -0.45);
+      // Wooden Minecart & Iron Track at (+2.35, 0.56, -1.15)
+      pushOutLocalBox(q.x, q.z, cos, sin, 1.15, 3.55, -1.62, -0.68);
+      // Quarry Rim Boulders at (-3.1, -1.8) & (-2.8, -2.5)
+      pushOutLocalBox(q.x, q.z, cos, sin, -3.68, -2.22, -2.95, -1.35);
+      // Stockpiled Ashlar Blocks pallet when non-empty
+      if (q.stockpiledBlocks > 0) {
+        pushOutLocalBox(q.x, q.z, cos, sin, -2.48, -1.2, 0.72, 1.62);
+      }
+    }
+
+    // 2. Castle Colliders (Every placed architectural block & completed Tier I / II / III .glb models)
+    for (const c of this.castles) {
+      if (c.blocksPlaced < 2) continue;
+      const cdx = pos.x - c.x;
+      const cdz = pos.z - c.z;
+      if (cdx * cdx + cdz * cdz > 16.0 * 16.0) continue;
+
+      const cos = Math.cos(c.rotationY);
+      const sin = Math.sin(c.rotationY);
+      const b = c.blocksPlaced;
+
+      // Slot 1 (`b >= 2`): West Gatehouse Pillar & Torch
+      if (b >= 2) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -2.95, -0.88, 3.25, 5.65);
+      }
+      // Slot 2 (`b >= 3`): East Gatehouse Pillar & Torch
+      if (b >= 3) {
+        pushOutLocalBox(c.x, c.z, cos, sin, 0.88, 2.95, 3.25, 5.65);
+      }
+      // Slot 3 (`b >= 4`): Border Keep Side & Rear Fortified Walls
+      if (b >= 4) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -2.95, -1.2, 0.85, 3.7);
+        pushOutLocalBox(c.x, c.z, cos, sin, 1.2, 2.95, 0.85, 3.7);
+        pushOutLocalBox(c.x, c.z, cos, sin, -2.95, 2.95, 0.72, 2.18);
+      }
+      // Slots 4..7 (`b >= 5`): Arched Portal, Iron-Bound Oak Double Doors & Completed Tier I Border Keep
+      if (b >= 5) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -3.02, 3.02, 0.72, 5.65);
+      }
+
+      // Slot 8 (`b >= 9`): South-West Round Corner Watchtower at (-6.2, 3.6)
+      if (b >= 9) {
+        pushOutLocalCircle(c.x, c.z, cos, sin, -6.2, 3.6, 2.15);
+      }
+      // Slot 9 (`b >= 10`): South-East Round Corner Watchtower at (6.2, 3.6)
+      if (b >= 10) {
+        pushOutLocalCircle(c.x, c.z, cos, sin, 6.2, 3.6, 2.15);
+      }
+      // Slot 10 (`b >= 11`): West Front & Side Curtain Wall with Stepped Buttress
+      if (b >= 11) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -5.65, -2.85, 2.45, 4.55);
+        pushOutLocalBox(c.x, c.z, cos, sin, -6.9, -5.3, -4.25, 3.65);
+      }
+      // Slot 11 (`b >= 12`): East Front & Side Curtain Wall with Stepped Buttress
+      if (b >= 12) {
+        pushOutLocalBox(c.x, c.z, cos, sin, 2.85, 5.65, 2.45, 4.55);
+        pushOutLocalBox(c.x, c.z, cos, sin, 5.3, 6.9, -4.25, 3.65);
+      }
+      // Slot 12 (`b >= 13`): North-West Rear Round Watchtower at (-6.2, -4.4)
+      if (b >= 13) {
+        pushOutLocalCircle(c.x, c.z, cos, sin, -6.2, -4.4, 2.15);
+      }
+      // Slot 13 (`b >= 14`): North-East Rear Round Watchtower at (6.2, -4.4)
+      if (b >= 14) {
+        pushOutLocalCircle(c.x, c.z, cos, sin, 6.2, -4.4, 2.15);
+      }
+      // Slot 14 (`b >= 15`): North Rear Curtain Wall
+      if (b >= 15) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -6.0, 6.0, -5.2, -3.6);
+      }
+      // Slot 15 (`b >= 16`): Central Stronghold Keep Bastion
+      if (b >= 16) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -2.95, 2.95, -2.55, 2.35);
+      }
+      // Completed Tier II (`b >= 18`): Stonewall Stronghold full fortified enclosure
+      if (b >= 18) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -6.85, 6.85, -5.15, 4.55);
+      }
+      // Slot 18 (`b >= 19`): Left Rampart Stepped Stone Staircase
+      if (b >= 19) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -4.35, -2.75, -0.35, 2.55);
+      }
+      // Slot 19 (`b >= 20`): Inner Citadel Royal Hall Bastion
+      if (b >= 20) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -3.35, 3.35, -4.15, -1.05);
+      }
+      // Slot 20 (`b >= 21`): West Inner Watch-Turret Shaft
+      if (b >= 21) {
+        pushOutLocalCircle(c.x, c.z, cos, sin, -2.05, -0.65, 1.28);
+      }
+      // Completed Tier III (`b >= 30`): Mountain King's Grand Citadel full footprint
+      if (b >= 30) {
+        pushOutLocalBox(c.x, c.z, cos, sin, -7.65, 7.65, -6.05, 5.25);
+        pushOutLocalBox(c.x, c.z, cos, sin, -3.45, 3.45, 3.2, 5.95);
       }
     }
   }
@@ -3442,10 +3965,13 @@ export class CastleAndQuarryManager {
     const nextM =
       CASTLE_MILESTONES.find((m) => bestBlocks < m.blocksRequired) ??
       CASTLE_MILESTONES[CASTLE_MILESTONES.length - 1];
+    const blocksLeft = Math.max(0, nextM.blocksRequired - bestBlocks);
     const text =
       this.castles.length === 0
         ? `🏰 Castles: 0 • Milestones: 0`
-        : `🏰 ${bestBlocks}/${nextM.blocksRequired} Blocks • 🏆 ${totalMilestones} Milestone${totalMilestones === 1 ? '' : 's'}`;
+        : bestBlocks >= 30
+          ? `🏰 30/30 Blocks (Complete!) • 🏆 ${totalMilestones} Milestones`
+          : `🏰 ${bestBlocks}/${nextM.blocksRequired} Blocks (${blocksLeft} left) • 🏆 ${totalMilestones} Milestone${totalMilestones === 1 ? '' : 's'}`;
 
     if (text !== this.lastMilestoneText) {
       this.lastMilestoneText = text;

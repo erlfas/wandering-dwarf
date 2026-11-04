@@ -1,6 +1,7 @@
 import { SavedCastleSite, SavedQuarrySite } from './CastleAndQuarryManager';
 
 const STORAGE_KEY = 'procedural_world_progress_v1';
+const SLOT_KEY_PREFIX = 'procedural_world_save_slot_v1_';
 
 export interface SavedBeaconWaypoint {
   id: string;
@@ -19,6 +20,7 @@ export interface SavedDiscoveredHut {
 
 export interface SavedProgress {
   version: 1;
+  savedAt?: number;
   seed: number;
   playerPos: { x: number; y: number; z: number };
   heading: number;
@@ -43,9 +45,8 @@ export interface SavedProgress {
   carriedChiseledBlocks?: number;
 }
 
-export function loadProgress(): SavedProgress | null {
+function parseSavedProgress(raw: string | null): SavedProgress | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw) as Partial<SavedProgress>;
     if (
@@ -62,6 +63,7 @@ export function loadProgress(): SavedProgress | null {
     }
     return {
       version: 1,
+      savedAt: typeof data.savedAt === 'number' ? data.savedAt : Date.now(),
       seed: data.seed,
       playerPos: {
         x: data.playerPos.x,
@@ -123,8 +125,17 @@ export function loadProgress(): SavedProgress | null {
   }
 }
 
+export function loadProgress(): SavedProgress | null {
+  try {
+    return parseSavedProgress(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
 export function saveProgress(state: SavedProgress): void {
   try {
+    state.savedAt = Date.now();
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     // Ignore storage quota or private browsing errors
@@ -136,5 +147,24 @@ export function clearProgress(): void {
     window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     // Ignore errors
+  }
+}
+
+export function saveProgressToSlot(slot: 1 | 2 | 3, state: SavedProgress): void {
+  try {
+    state.savedAt = Date.now();
+    const serialized = JSON.stringify(state);
+    window.localStorage.setItem(`${SLOT_KEY_PREFIX}${slot}`, serialized);
+    window.localStorage.setItem(STORAGE_KEY, serialized);
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function loadProgressFromSlot(slot: 1 | 2 | 3): SavedProgress | null {
+  try {
+    return parseSavedProgress(window.localStorage.getItem(`${SLOT_KEY_PREFIX}${slot}`));
+  } catch {
+    return null;
   }
 }

@@ -1105,29 +1105,133 @@ kbd {
   font-weight: 700;
 }
 
-/* Active Stone Quarry & Castle Block-by-Block Hint Banner */
+/* Active Stone Quarry & Castle Block-by-Block Hint Banner (Docked at Top-Right so it never blocks the center view) */
 #masonry-banner {
   position: absolute;
-  top: 96px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 44px;
+  right: 16px;
+  left: auto;
+  transform: none;
+  width: min(415px, 44vw);
   display: flex;
-  align-items: center;
-  gap: 12px;
-  background: linear-gradient(135deg, rgba(28, 34, 42, 0.94), rgba(20, 24, 30, 0.92));
-  border: 1px solid rgba(114, 239, 221, 0.72);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  background: linear-gradient(135deg, rgba(24, 30, 38, 0.92), rgba(16, 20, 26, 0.91));
+  backdrop-filter: blur(6px);
+  border: 1.5px solid rgba(114, 239, 221, 0.68);
   color: #f8f9fa;
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
-  padding: 7px 14px;
-  border-radius: 999px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42), 0 0 16px rgba(72, 202, 228, 0.24);
-  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.44), 0 0 14px rgba(72, 202, 228, 0.18);
+  white-space: normal;
+  line-height: 1.35;
   pointer-events: auto;
 }
 
 #masonry-banner.hidden {
   display: none;
+}
+
+.masonry-main-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.masonry-main-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.masonry-main-row > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.castle-progress-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.castle-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 10.5px;
+  color: #e9ecef;
+}
+
+.castle-left-highlight {
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.16);
+  border: 1px solid rgba(255, 209, 102, 0.5);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 10px;
+}
+
+.castle-progress-track {
+  width: 100%;
+  height: 6px;
+  background: rgba(10, 14, 18, 0.85);
+  border: 1px solid rgba(144, 224, 239, 0.35);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.castle-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #48cae4, #ffd166);
+  border-radius: 999px;
+  transition: width 0.22s ease;
+}
+
+.castle-tier-roadmap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 9.5px;
+  margin-top: 1px;
+}
+
+.castle-tier-step {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.castle-tier-step.done {
+  background: rgba(82, 183, 136, 0.24);
+  border: 1px solid rgba(149, 213, 178, 0.65);
+  color: #b7e4c7;
+}
+
+.castle-tier-step.active {
+  background: rgba(72, 202, 228, 0.24);
+  border: 1px solid rgba(144, 224, 239, 0.85);
+  color: #caf0f8;
+}
+
+.castle-tier-step.locked {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #adb5bd;
+}
+
+.tier-arrow {
+  color: rgba(255, 209, 102, 0.7);
+  font-size: 10px;
 }
 
 .masonry-tag {
@@ -1286,3 +1390,256 @@ kbd {
   border-radius: 999px;
   transition: width 0.18s ease;
 }
+
+/* Game Menu Toggle Button & Modal (Save Game, Load Game, Restart Game) */
+#game-menu-toggle {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-left: 4px;
+  background: rgba(255, 209, 102, 0.22);
+  border: 1px solid rgba(255, 209, 102, 0.65);
+  color: #ffe89e;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+#game-menu-toggle:hover,
+#game-menu-toggle.active {
+  background: rgba(255, 209, 102, 0.42);
+  border-color: #ffd166;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+#game-menu-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(10, 14, 18, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: auto;
+}
+
+#game-menu-modal.hidden {
+  display: none;
+}
+
+.game-menu-frame {
+  width: min(640px, 94vw);
+  background: linear-gradient(160deg, rgba(28, 22, 16, 0.97), rgba(18, 15, 12, 0.98));
+  border: 2px solid rgba(255, 209, 102, 0.6);
+  border-radius: 14px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.7), 0 0 26px rgba(255, 183, 3, 0.18);
+  padding: 18px 20px;
+  color: #fff6e0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.game-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 209, 102, 0.25);
+}
+
+.game-menu-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  color: #ffd166;
+}
+
+#game-menu-subtitle {
+  font-size: 11px;
+  color: #d8ccb8;
+  margin-top: 2px;
+}
+
+.game-menu-summary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 209, 102, 0.28);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #f8f1e5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.game-menu-primary-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.game-menu-btn {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px;
+  border-radius: 11px;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  color: #fff8e7;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.game-menu-btn:hover {
+  transform: translateY(-2px);
+}
+
+.game-menu-btn.save {
+  background: linear-gradient(135deg, rgba(82, 183, 136, 0.28), rgba(45, 106, 79, 0.36));
+  border-color: rgba(149, 213, 178, 0.72);
+}
+
+.game-menu-btn.save:hover {
+  background: linear-gradient(135deg, rgba(82, 183, 136, 0.45), rgba(45, 106, 79, 0.55));
+}
+
+.game-menu-btn.load {
+  background: linear-gradient(135deg, rgba(72, 202, 228, 0.26), rgba(0, 119, 182, 0.34));
+  border-color: rgba(144, 224, 239, 0.72);
+}
+
+.game-menu-btn.load:hover {
+  background: linear-gradient(135deg, rgba(72, 202, 228, 0.44), rgba(0, 119, 182, 0.52));
+}
+
+.game-menu-btn.restart {
+  background: linear-gradient(135deg, rgba(239, 35, 60, 0.26), rgba(164, 19, 60, 0.34));
+  border-color: rgba(255, 117, 143, 0.68);
+}
+
+.game-menu-btn.restart:hover {
+  background: linear-gradient(135deg, rgba(239, 35, 60, 0.45), rgba(164, 19, 60, 0.55));
+}
+
+.gm-btn-icon {
+  font-size: 22px;
+}
+
+.gm-btn-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gm-btn-text strong {
+  font-size: 13px;
+  color: #ffffff;
+}
+
+.gm-btn-text small {
+  font-size: 10px;
+  color: #d8ccb8;
+  line-height: 1.2;
+}
+
+.game-menu-slots-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.7px;
+  color: #ffd166;
+  margin-top: 2px;
+}
+
+.game-menu-slots-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.game-save-slot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+
+.game-save-slot-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.game-save-slot-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #ffe89e;
+}
+
+.game-save-slot-meta {
+  font-size: 11px;
+  color: #cbd5e1;
+}
+
+.game-save-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slot-action-btn {
+  cursor: pointer;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  transition: all 0.14s ease;
+}
+
+.slot-action-btn.save {
+  background: rgba(82, 183, 136, 0.24);
+  border-color: rgba(149, 213, 178, 0.65);
+  color: #d8f3dc;
+}
+
+.slot-action-btn.save:hover {
+  background: rgba(82, 183, 136, 0.45);
+}
+
+.slot-action-btn.load {
+  background: rgba(72, 202, 228, 0.24);
+  border-color: rgba(144, 224, 239, 0.65);
+  color: #caf0f8;
+}
+
+.slot-action-btn.load:hover:not(:disabled) {
+  background: rgba(72, 202, 228, 0.45);
+}
+
+.slot-action-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.game-menu-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: #95d5b2;
+  text-align: center;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+

@@ -520,6 +520,7 @@ export class ExplorerCamera {
           0.38,
           this.heightAboveGround
         );
+        this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
       }
       const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
       if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
@@ -562,27 +563,39 @@ export class ExplorerCamera {
             actualSpeed = 0;
           }
         }
+      } else if (this.config.cameraMode === 'dwarf' && !insideHut) {
+        // Ensure placing a Quarry or Castle Block while stationary immediately resolves collision
+        this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
       }
     }
 
     this.currentSpeed = actualSpeed;
 
-    // Evaluate surface floor height (reusing cached groundY when stationary)
+    // Evaluate surface floor height (reusing cached terrain/bridge groundY when stationary,
+    // while always applying Quarry & Castle walkable surface height so feet rest on pads/plinths)
     let groundY = this.lastGroundY;
     if (insideHut) {
       groundY = this.hutManager!.getInteriorFloorHeight(groundY);
       this.lastGroundY = groundY;
-    } else if (
-      this.playerPos.x !== this.lastGroundSampleX ||
-      this.playerPos.z !== this.lastGroundSampleZ
-    ) {
-      this.lastGroundSampleX = this.playerPos.x;
-      this.lastGroundSampleZ = this.playerPos.z;
-      const rawGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
-      groundY = this.landmarkManager
-        ? this.landmarkManager.getBridgeDeckHeight(this.playerPos.x, this.playerPos.z, rawGroundY)
-        : rawGroundY;
-      this.lastGroundY = groundY;
+    } else {
+      if (
+        this.playerPos.x !== this.lastGroundSampleX ||
+        this.playerPos.z !== this.lastGroundSampleZ
+      ) {
+        this.lastGroundSampleX = this.playerPos.x;
+        this.lastGroundSampleZ = this.playerPos.z;
+        const rawGroundY = this.chunkManager.getSurfaceHeight(this.playerPos.x, this.playerPos.z);
+        this.lastGroundY = this.landmarkManager
+          ? this.landmarkManager.getBridgeDeckHeight(this.playerPos.x, this.playerPos.z, rawGroundY)
+          : rawGroundY;
+      }
+      groundY = this.castleManager
+        ? this.castleManager.getWalkableSurfaceHeight(
+            this.playerPos.x,
+            this.playerPos.z,
+            this.lastGroundY
+          )
+        : this.lastGroundY;
     }
     isSwimming =
       !insideHut &&

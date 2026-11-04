@@ -17,7 +17,14 @@ import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
 import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { WaterReflectionController } from './world/WaterMesh';
-import { clearProgress, loadProgress, SavedProgress, saveProgress } from './world/ProgressStorage';
+import {
+  clearProgress,
+  loadProgress,
+  loadProgressFromSlot,
+  SavedProgress,
+  saveProgress,
+  saveProgressToSlot,
+} from './world/ProgressStorage';
 
 const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
@@ -454,7 +461,98 @@ worldMap.restoreProgress(
   savedProgress?.exploredTrail
 );
 
-// 7. Live Terrain & Grass Planner GUI + Background Music
+function restartNewGame(): void {
+  clearProgress();
+  config.seed = defaultWorldConfig.seed;
+  noise.reseed(config.seed);
+  treasureManager.resetProgress();
+  relicStore.reset();
+  landmarkManager.reset();
+  livingWorldManager.rebuildAll();
+  challengeManager.reset();
+  fishingManager.exitFishingMode();
+  fishingManager.rebuildAll();
+  huntingManager.exitHuntingMode();
+  huntingManager.rebuildAll();
+  hutManager.reset();
+  castleAndQuarryManager.reset();
+  syncBeaconFog();
+  explorer.resetToOrigin();
+  chunkManager.rebuildAll(
+    explorer.playerPos.x,
+    explorer.playerPos.y,
+    explorer.playerPos.z
+  );
+  worldMap.reset();
+  debugOverlay.syncDisplay(true);
+  lastSavedX = explorer.playerPos.x;
+  lastSavedZ = explorer.playerPos.z;
+  lastSavedYaw = explorer.yaw;
+}
+
+function applyLoadedGameState(loaded: SavedProgress): void {
+  hutManager.exitCurrentHut(true);
+  fishingManager.exitFishingMode();
+  huntingManager.exitHuntingMode();
+  if (config.seed !== loaded.seed) {
+    config.seed = loaded.seed;
+    noise.reseed(config.seed);
+  }
+  treasureManager.resetProgress();
+  treasureManager.restoreProgress(
+    loaded.score,
+    loaded.chestsCollected,
+    loaded.collectedIds
+  );
+  hutManager.reset();
+  hutManager.restoreProgress(loaded.artefactsCollected);
+  relicStore.reset();
+  relicStore.restoreUnlocked(loaded.unlockedRelics);
+  landmarkManager.reset();
+  landmarkManager.restoreLitBeacons(loaded.litBeacons);
+  challengeManager.reset();
+
+  explorer.setPose(
+    loaded.playerPos.x,
+    loaded.playerPos.z,
+    loaded.heading,
+    loaded.yaw,
+    loaded.pitch,
+    loaded.distance
+  );
+  chunkManager.rebuildAll(
+    explorer.playerPos.x,
+    explorer.playerPos.y,
+    explorer.playerPos.z
+  );
+  treasureManager.rebuildAll();
+  livingWorldManager.rebuildAll();
+  fishingManager.rebuildAll();
+  huntingManager.rebuildAll();
+  castleAndQuarryManager.restoreProgress(
+    loaded.quarries,
+    loaded.castles,
+    loaded.unlockedHouseEquipment,
+    loaded.energy,
+    loaded.foodCount,
+    loaded.carriedRawStones,
+    loaded.carriedChiseledBlocks
+  );
+  worldMap.reset();
+  worldMap.restoreProgress(
+    loaded.discoveredCells,
+    loaded.discoveredHuts,
+    loaded.exploredTrail
+  );
+  syncBeaconFog();
+  debugOverlay.syncDisplay(true);
+  saveProgress(loaded);
+  lastSavedX = explorer.playerPos.x;
+  lastSavedZ = explorer.playerPos.z;
+  lastSavedYaw = explorer.yaw;
+}
+
+// 7. Live Terrain & Grass Planner GUI + Background Music + Game Menu (Save / Load / Restart)
 const debugOverlay = new DebugOverlay(
   config,
   noise,
@@ -463,38 +561,170 @@ const debugOverlay = new DebugOverlay(
   fog,
   () => explorer.playerPos,
   persistCurrentProgress,
-  () => {
-    clearProgress();
-    config.seed = defaultWorldConfig.seed;
-    noise.reseed(config.seed);
-    treasureManager.resetProgress();
-    relicStore.reset();
-    landmarkManager.reset();
-    livingWorldManager.rebuildAll();
-    challengeManager.reset();
-    fishingManager.exitFishingMode();
-    fishingManager.rebuildAll();
-    huntingManager.exitHuntingMode();
-    huntingManager.rebuildAll();
-    hutManager.reset();
-    castleAndQuarryManager.reset();
-    syncBeaconFog();
-    explorer.resetToOrigin();
-    chunkManager.rebuildAll(
-      explorer.playerPos.x,
-      explorer.playerPos.y,
-      explorer.playerPos.z
-    );
-    worldMap.reset();
-    debugOverlay.syncDisplay();
-    lastSavedX = explorer.playerPos.x;
-    lastSavedZ = explorer.playerPos.z;
-    lastSavedYaw = explorer.yaw;
-  },
+  restartNewGame,
   () => {
     worldMap.invalidateTerrainTiles();
   }
 );
+
+const gameMenuModalEl = document.getElementById('game-menu-modal');
+const gameMenuToggleBtn = document.getElementById('game-menu-toggle');
+const gameMenuCloseBtn = document.getElementById('game-menu-close');
+const gameMenuSaveBtn = document.getElementById('game-menu-save-btn');
+const gameMenuLoadBtn = document.getElementById('game-menu-load-btn');
+const gameMenuRestartBtn = document.getElementById('game-menu-restart-btn');
+const gameMenuSummaryEl = document.getElementById('game-menu-current-summary');
+const gameMenuSlotsListEl = document.getElementById('game-menu-slots-list');
+const gameMenuStatusEl = document.getElementById('game-menu-status');
+
+function formatSaveSummary(state: SavedProgress): string {
+  const castles = state.castles ?? [];
+  const quarries = state.quarries ?? [];
+  const totalBlocks = castles.reduce((acc, c) => acc + (c.blocksPlaced || 0), 0);
+  const timeStr = state.savedAt
+    ? new Date(state.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : 'Saved';
+  return `🕒 ${timeStr} • 🪙 ${state.score} Gold • 🏰 ${castles.length} Castle (${totalBlocks} Blocks) • ⛏️ ${quarries.length} Quarry • 📦 ${state.chestsCollected} Chests`;
+}
+
+function renderGameMenu(): void {
+  if (!gameMenuSummaryEl || !gameMenuSlotsListEl) return;
+  const current = populateSaveState();
+  const castles = current.castles ?? [];
+  const quarries = current.quarries ?? [];
+  const totalBlocks = castles.reduce((acc, c) => acc + (c.blocksPlaced || 0), 0);
+  gameMenuSummaryEl.innerHTML =
+    `<span><strong>Current Session:</strong></span>` +
+    `<span>🪙 <strong>${current.score}</strong> Gold</span>` +
+    `<span>🏰 <strong>${castles.length}</strong> Castle (${totalBlocks}/30 Blocks)</span>` +
+    `<span>⛏️ <strong>${quarries.length}</strong> Quarry</span>` +
+    `<span>⚡ <strong>${current.energy}</strong> Energy • 🍖 <strong>${current.foodCount}</strong> Food</span>` +
+    `<span>📍 Pos (${Math.round(current.playerPos.x)}, ${Math.round(current.playerPos.z)})</span>`;
+
+  gameMenuSlotsListEl.innerHTML = '';
+  for (const slot of [1, 2, 3] as const) {
+    const slotData = loadProgressFromSlot(slot);
+    const row = document.createElement('div');
+    row.className = 'game-save-slot-row';
+
+    const info = document.createElement('div');
+    info.className = 'game-save-slot-info';
+    info.innerHTML =
+      `<div class="game-save-slot-title">📜 Save Slot ${slot}</div>` +
+      `<div class="game-save-slot-meta">${slotData ? formatSaveSummary(slotData) : 'Empty Slot — Click Save to store a checkpoint here'}</div>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'game-save-slot-actions';
+
+    const saveSlotBtn = document.createElement('button');
+    saveSlotBtn.type = 'button';
+    saveSlotBtn.className = 'slot-action-btn save';
+    saveSlotBtn.textContent = `💾 Save Slot ${slot}`;
+    saveSlotBtn.addEventListener('click', () => {
+      saveProgressToSlot(slot, populateSaveState());
+      if (gameMenuStatusEl) {
+        gameMenuStatusEl.textContent = `✅ Saved game to Slot ${slot}!`;
+      }
+      treasureManager.grantBonusGold(0, `💾 Game Saved to Slot ${slot}!`);
+      renderGameMenu();
+    });
+
+    const loadSlotBtn = document.createElement('button');
+    loadSlotBtn.type = 'button';
+    loadSlotBtn.className = 'slot-action-btn load';
+    loadSlotBtn.textContent = `📂 Load Slot ${slot}`;
+    loadSlotBtn.disabled = !slotData;
+    loadSlotBtn.addEventListener('click', () => {
+      const fresh = loadProgressFromSlot(slot);
+      if (!fresh) return;
+      applyLoadedGameState(fresh);
+      if (gameMenuStatusEl) {
+        gameMenuStatusEl.textContent = `📂 Loaded game from Slot ${slot}!`;
+      }
+      treasureManager.grantBonusGold(0, `📂 Loaded Game from Slot ${slot}!`);
+      setGameMenuOpen(false);
+    });
+
+    actions.appendChild(saveSlotBtn);
+    actions.appendChild(loadSlotBtn);
+    row.appendChild(info);
+    row.appendChild(actions);
+    gameMenuSlotsListEl.appendChild(row);
+  }
+}
+
+function isGameMenuOpen(): boolean {
+  return Boolean(gameMenuModalEl && !gameMenuModalEl.classList.contains('hidden'));
+}
+
+function setGameMenuOpen(open: boolean): void {
+  if (!gameMenuModalEl) return;
+  gameMenuModalEl.classList.toggle('hidden', !open);
+  gameMenuToggleBtn?.classList.toggle('active', open);
+  if (open) {
+    renderGameMenu();
+  }
+}
+
+gameMenuToggleBtn?.addEventListener('click', () => {
+  setGameMenuOpen(!isGameMenuOpen());
+});
+gameMenuCloseBtn?.addEventListener('click', () => {
+  setGameMenuOpen(false);
+});
+gameMenuModalEl?.addEventListener('click', (e) => {
+  if (e.target === gameMenuModalEl) {
+    setGameMenuOpen(false);
+  }
+});
+
+gameMenuSaveBtn?.addEventListener('click', () => {
+  persistCurrentProgress(true);
+  saveProgressToSlot(1, populateSaveState());
+  if (gameMenuStatusEl) {
+    gameMenuStatusEl.textContent = '💾 Game Saved! (Saved to Quick-Save & Slot 1)';
+  }
+  treasureManager.grantBonusGold(0, '💾 Game Saved!');
+  renderGameMenu();
+});
+
+gameMenuLoadBtn?.addEventListener('click', () => {
+  const loaded = loadProgress() ?? loadProgressFromSlot(1);
+  if (!loaded) {
+    if (gameMenuStatusEl) {
+      gameMenuStatusEl.textContent = '⚠️ No saved game found yet — click Save Game first!';
+    }
+    return;
+  }
+  applyLoadedGameState(loaded);
+  if (gameMenuStatusEl) {
+    gameMenuStatusEl.textContent = '📂 Saved Game Loaded!';
+  }
+  treasureManager.grantBonusGold(0, '📂 Saved Game Loaded!');
+  setGameMenuOpen(false);
+});
+
+gameMenuRestartBtn?.addEventListener('click', () => {
+  restartNewGame();
+  if (gameMenuStatusEl) {
+    gameMenuStatusEl.textContent = '🔄 Game Restarted! Fresh world & progress ready.';
+  }
+  treasureManager.grantBonusGold(0, '🔄 Game Restarted!');
+  setGameMenuOpen(false);
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.code === 'KeyO') {
+    setGameMenuOpen(!isGameMenuOpen());
+  } else if (e.code === 'Escape') {
+    if (isGameMenuOpen()) {
+      setGameMenuOpen(false);
+    } else if (!worldMap.isMapOpen()) {
+      setGameMenuOpen(true);
+    }
+  }
+});
 const bgm = new BackgroundMusic();
 challengeManager.onChallengeStateChange = (active) => {
   if (active) {
