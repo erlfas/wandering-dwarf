@@ -279,6 +279,10 @@ export class ChallengeManager {
     this.getSurfaceHeightFn = fn;
   }
 
+  public getCompletedCount(): number {
+    return this.completedArchIds.size;
+  }
+
   private sampleGroundHeight(wx: number, wz: number): number {
     return this.getSurfaceHeightFn ? this.getSurfaceHeightFn(wx, wz) : this.noise.getHeight(wx, wz);
   }

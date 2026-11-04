@@ -182,6 +182,10 @@ export class TrollCombatManager {
   private defeatRestorePending = false;
   private defeatRestoreTimer = 0;
   private isBlockingInput = false;
+  private lastBlockRaiseTime = -999;
+  private lastElapsedTime = 0;
+  public hasIronAegisFn: () => boolean = () => false;
+  public onPerfectParryReward?: () => void;
 
   // ElevenLabs Audio Elements
   private ominousLoopAudio: HTMLAudioElement;
@@ -484,6 +488,9 @@ export class TrollCombatManager {
       if (e.code === 'KeyX') {
         this.tryPlayerMeleeAttack();
       } else if (e.code === 'ShiftRight' || e.code === 'KeyZ') {
+        if (!this.isBlockingInput) {
+          this.lastBlockRaiseTime = this.lastElapsedTime;
+        }
         this.isBlockingInput = true;
         this.dwarf.setShieldBlocking(true);
       }
@@ -508,6 +515,9 @@ export class TrollCombatManager {
         // Holding Right-Click also raises the Dwarf's Shield when a Troll is nearby!
         const nearest = this.getNearestActiveTroll(this.dwarf.root.position);
         if (nearest && nearest.dist <= 9.0) {
+          if (!this.isBlockingInput) {
+            this.lastBlockRaiseTime = this.lastElapsedTime;
+          }
           this.isBlockingInput = true;
           this.dwarf.setShieldBlocking(true);
         }
@@ -743,7 +753,57 @@ export class TrollCombatManager {
     }
   }
 
+  public tryHitTrollWithArrow(arrowPos: THREE.Vector3, baseDamage = 38): boolean {
+    if (this.defeatRestorePending) return false;
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = arrowPos.x - t.pos.x;
+      const dz = arrowPos.z - t.pos.z;
+      const dy = arrowPos.y - t.pos.y;
+      if (dx * dx + dz * dz <= 2.35 * 2.35 && dy >= -0.4 && dy <= 3.1) {
+        const stats = this.getCombatStats();
+        const trophyMult = 1.0 + Math.min(0.3, this.trollsSlain * 0.05);
+        const dmg = Math.max(12, Math.round(baseDamage * trophyMult * stats.kingsValorBonus));
+        this.applyDamageToTroll(t, dmg, this.dwarf.root.position, false);
+        t.staggerTimer = Math.max(t.staggerTimer, 0.55);
+        if (t.hp > 0) {
+          this.showToast(
+            `🏹 Dwarven War-Arrow pierced ${t.title} for -${dmg} HP! (${t.hp}/${t.maxHp} HP left)`,
+            true
+          );
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public stunNearbyTrollsWithWarhorn(playerPos: THREE.Vector3, radius = 15.0): number {
+    let stunnedCount = 0;
+    const rSq = radius * radius;
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = t.pos.x - playerPos.x;
+      const dz = t.pos.z - playerPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq <= rSq) {
+        stunnedCount++;
+        const len = Math.sqrt(dSq) || 1;
+        t.pos.x += (dx / len) * 2.2;
+        t.pos.z += (dz / len) * 2.2;
+        t.pos.y = this.sampleGroundHeight(t.pos.x, t.pos.z);
+        t.state = 'chase';
+        t.attackTimer = 0;
+        t.attackCooldown = 2.6;
+        t.staggerTimer = 2.4;
+        this.applyDamageToTroll(t, 22, playerPos, false);
+      }
+    }
+    return stunnedCount;
+  }
+
   public update(dt: number, elapsedTime: number, playerPos: THREE.Vector3, cameraPos: THREE.Vector3): void {
+    this.lastElapsedTime = elapsedTime;
     if (this.playerAttackCooldown > 0) {
       this.playerAttackCooldown = Math.max(0, this.playerAttackCooldown - dt);
     }
@@ -993,16 +1053,42 @@ export class TrollCombatManager {
     const stats = this.getCombatStats();
     const isShieldEquipped = stats.shieldId !== 'none';
     const isActivelyBlocking = this.dwarf.isShieldBlocking();
+    const hasIronAegis = this.hasIronAegisFn();
 
     // Check if the Dwarf has enough Strength (⚡) from eating food to brace against the Troll's blow!
     const blockEnergyCost = stats.shieldId === 'mithril_aegis' ? 5 : 8;
     const hasStrength = stats.energy >= 15;
+
+    // Check for ⚡ PERFECT SHIELD PARRY (raising shield within 0.42s, or 0.55s with Iron Aegis, of the smash impact!)
+    const parryWindow = hasIronAegis ? 0.55 : 0.42;
+    if (
+      hasStrength &&
+      isShieldEquipped &&
+      isActivelyBlocking &&
+      this.lastElapsedTime - this.lastBlockRaiseTime <= parryWindow
+    ) {
+      this.dwarf.triggerBlockImpact();
+      this.playOneShotPool(this.blockAudioPool, 0.95, () => this.playFallbackShieldSynth());
+      this.onPerfectParryReward?.();
+      const reflectDmg = stats.shieldId === 'mithril_aegis' ? 36 : 25;
+      troll.staggerTimer = 1.65;
+      troll.attackCooldown = 2.4;
+      this.applyDamageToTroll(troll, reflectDmg, this.dwarf.root.position, false);
+      this.showToast(
+        `⚡ PERFECT SHIELD PARRY! Deflected ${troll.title} for 0 ❤️ damage, +15⚡ Strength & reflected ${reflectDmg} DMG!`,
+        true
+      );
+      return;
+    }
 
     let incomingDamage = 24; // Base Troll club smash damage
 
     if (!hasStrength) {
       // WITHOUT ENOUGH STRENGTH (< 15⚡): Dwarf is easily defeated (2.5x crushing damage = 58 HP!)
       incomingDamage = 58;
+      if (hasIronAegis) {
+        incomingDamage = Math.max(1, Math.round(incomingDamage * 0.8));
+      }
       this.showToast(
         `💥 CRUSHING BLOW (-${incomingDamage} ❤️)! You have NO STRENGTH (${Math.round(stats.energy)}⚡) — Eat Food (G) or Escape to a Castle!`,
         false
@@ -1022,6 +1108,9 @@ export class TrollCombatManager {
         );
       } else {
         incomingDamage = isActivelyBlocking ? 3 : 6;
+        if (hasIronAegis) {
+          incomingDamage = Math.max(1, Math.round(incomingDamage * 0.8));
+        }
         this.showToast(
           `🛡️ Iron-Boss Shield Blocked ${troll.title}'s Club! (-${incomingDamage} ❤️, -${blockEnergyCost}⚡ Strength)`,
           false
@@ -1030,7 +1119,7 @@ export class TrollCombatManager {
     } else {
       // Has Strength, but no Shield yet
       this.onConsumeCombatEnergy(5);
-      incomingDamage = 22;
+      incomingDamage = hasIronAegis ? 17 : 22;
       this.showToast(
         `👹 ${troll.title} smashed you (-${incomingDamage} ❤️)! Buy a Round Shield (Key 9) inside a Castle!`,
         false

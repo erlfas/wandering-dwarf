@@ -13,6 +13,7 @@ export interface ArtefactDefinition {
   icon: string;
   gold: number;
   accentColor: number;
+  blessingSummary: string;
 }
 
 export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
@@ -22,6 +23,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '👑',
     gold: 150,
     accentColor: 0xffd166,
+    blessingSummary: '+25% Gold from all sources & unlocks Royal Crown',
   },
   {
     id: 'astral_hammer',
@@ -29,6 +31,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '🔨',
     gold: 150,
     accentColor: 0x48cae4,
+    blessingSummary: '35% chance to chisel +1 free bonus Castle Block',
   },
   {
     id: 'mountain_chalice',
@@ -36,6 +39,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '🏆',
     gold: 150,
     accentColor: 0xffb703,
+    blessingSummary: '+35% Health & Energy restored from all Food & Feasts',
   },
   {
     id: 'heartstone_gem',
@@ -43,6 +47,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '💎',
     gold: 175,
     accentColor: 0x72efdd,
+    blessingSummary: 'Passively regenerates +1.0❤️ & +2.5⚡ every second',
   },
   {
     id: 'runic_tablet',
@@ -50,6 +55,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '📜',
     gold: 150,
     accentColor: 0x90e0ef,
+    blessingSummary: '+35% bonus Renown XP from Decrees & Contracts',
   },
   {
     id: 'iron_aegis',
@@ -57,6 +63,7 @@ export const ARTEFACT_CATALOG: readonly ArtefactDefinition[] = [
     icon: '🛡️',
     gold: 150,
     accentColor: 0xf4a261,
+    blessingSummary: '-20% incoming Troll smash damage & wider Shield Parry',
   },
 ];
 
@@ -506,6 +513,7 @@ export class HutManager {
   private interiorFloorY = 0;
   private lastHearthWarmthTime = -999;
   private nextArtefactCursor = 0;
+  private collectedArtefactIds = new Set<string>();
 
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -586,11 +594,35 @@ export class HutManager {
     return this.activeHut ? this.interiorFloorY : fallbackY;
   }
 
-  public restoreProgress(artefactsCollected: number | undefined): void {
+  public hasArtefact(id: string): boolean {
+    return this.collectedArtefactIds.has(id);
+  }
+
+  public getCollectedArtefactIds(): string[] {
+    return Array.from(this.collectedArtefactIds);
+  }
+
+  public restoreProgress(
+    artefactsCollected: number | undefined,
+    collectedArtefactIds?: string[]
+  ): void {
     this.artefactsCollected =
       typeof artefactsCollected === 'number' && artefactsCollected >= 0
         ? Math.floor(artefactsCollected)
         : 0;
+    this.collectedArtefactIds.clear();
+    if (Array.isArray(collectedArtefactIds) && collectedArtefactIds.length > 0) {
+      for (const id of collectedArtefactIds) {
+        if (typeof id === 'string') {
+          this.collectedArtefactIds.add(id);
+        }
+      }
+    } else if (this.artefactsCollected > 0) {
+      // Backfill unique artefact IDs for saves from before individual ID tracking
+      for (let i = 0; i < Math.min(ARTEFACT_CATALOG.length, this.artefactsCollected); i++) {
+        this.collectedArtefactIds.add(ARTEFACT_CATALOG[i].id);
+      }
+    }
     this.nextArtefactCursor = this.artefactsCollected;
     this.syncArtefactHUD();
   }
@@ -600,6 +632,7 @@ export class HutManager {
       this.exitCurrentHut(true);
     }
     this.artefactsCollected = 0;
+    this.collectedArtefactIds.clear();
     this.nextArtefactCursor = 0;
     this.syncArtefactHUD();
     this.rebuildAll();
@@ -739,10 +772,17 @@ export class HutManager {
     this.artefactCollectedInVisit = false;
     this.interiorFloorY = hut.worldY + 0.25;
 
-    // Select the next Dwarven Artefact to spawn inside the hut (always guaranteed!)
+    // Select the next Dwarven Artefact to spawn inside the hut (prioritize uncollected sacred artefacts first!)
     const assets = getSharedHutAssets();
-    const artIdx =
+    let artIdx =
       Math.abs(hut.cx * 5 + hut.cz * 11 + this.nextArtefactCursor) % ARTEFACT_CATALOG.length;
+    for (let step = 0; step < ARTEFACT_CATALOG.length; step++) {
+      const candidateIdx = (artIdx + step) % ARTEFACT_CATALOG.length;
+      if (!this.collectedArtefactIds.has(ARTEFACT_CATALOG[candidateIdx].id)) {
+        artIdx = candidateIdx;
+        break;
+      }
+    }
     this.nextArtefactCursor++;
     this.currentArtefactDef = ARTEFACT_CATALOG[artIdx];
     this.artefactGoldMesh.geometry = assets.artefactGoldGeos[artIdx];
@@ -816,6 +856,8 @@ export class HutManager {
     if (!this.activeHut || this.artefactCollectedInVisit) return;
     this.artefactCollectedInVisit = true;
     this.artefactsCollected += 1;
+    const def = this.currentArtefactDef;
+    this.collectedArtefactIds.add(def.id);
     this.artefactFloatingGroup.visible = false;
     this.artefactRingMesh.visible = false;
     this.syncArtefactHUD();
@@ -826,10 +868,9 @@ export class HutManager {
     this.dwarf.spawnBurst(ax, ay, az, 18);
     this.playArtefactFanfare();
 
-    const def = this.currentArtefactDef;
     this.onGrantArtefactReward(
       def.gold,
-      `${def.icon} Artefact Collected: ${def.name}! (+${def.gold} Gold)`
+      `${def.icon} Attuned ${def.name}! (+${def.gold}🪙 | Blessing: ${def.blessingSummary})`
     );
     this.onArtefactCollected?.();
   }

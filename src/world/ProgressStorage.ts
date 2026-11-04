@@ -1,3 +1,4 @@
+import { ActiveGuildContract } from './AssignmentManager';
 import { SavedCastleSite, SavedQuarrySite } from './CastleAndQuarryManager';
 
 const STORAGE_KEY = 'procedural_world_progress_v1';
@@ -48,6 +49,13 @@ export interface SavedProgress {
   equippedWeapon?: string;
   equippedShield?: string;
   trollsSlain?: number;
+  collectedArtefactIds?: string[];
+  completedChronicleIds?: string[];
+  renownXp?: number;
+  activeContract?: ActiveGuildContract | null;
+  blocksChiseledTotal?: number;
+  fishCaughtTotal?: number;
+  deerHuntedTotal?: number;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {
@@ -131,6 +139,18 @@ function parseSavedProgress(raw: string | null): SavedProgress | null {
       equippedWeapon: typeof data.equippedWeapon === 'string' ? data.equippedWeapon : 'mallet',
       equippedShield: typeof data.equippedShield === 'string' ? data.equippedShield : 'none',
       trollsSlain: typeof data.trollsSlain === 'number' ? data.trollsSlain : 0,
+      collectedArtefactIds: Array.isArray(data.collectedArtefactIds)
+        ? data.collectedArtefactIds.filter((s): s is string => typeof s === 'string')
+        : [],
+      completedChronicleIds: Array.isArray(data.completedChronicleIds)
+        ? data.completedChronicleIds.filter((s): s is string => typeof s === 'string')
+        : [],
+      renownXp: typeof data.renownXp === 'number' ? data.renownXp : undefined,
+      activeContract: data.activeContract ?? null,
+      blocksChiseledTotal:
+        typeof data.blocksChiseledTotal === 'number' ? data.blocksChiseledTotal : 0,
+      fishCaughtTotal: typeof data.fishCaughtTotal === 'number' ? data.fishCaughtTotal : 0,
+      deerHuntedTotal: typeof data.deerHuntedTotal === 'number' ? data.deerHuntedTotal : 0,
     };
   } catch {
     return null;

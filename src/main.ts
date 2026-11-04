@@ -18,6 +18,11 @@ import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { CastleInteriorManager } from './world/CastleInteriorManager';
 import { TrollCombatManager } from './world/TrollCombatManager';
+import {
+  AssignmentManager,
+  AssignmentSnapshot,
+  playWarhornBlastSound,
+} from './world/AssignmentManager';
 import { WaterReflectionController } from './world/WaterMesh';
 import {
   clearProgress,
@@ -408,6 +413,99 @@ challengeManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 fishingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 huntingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 
+// Wire Sacred Artefact Blessings, Perfect Shield Parry & Ranged Bow vs Night Trolls
+treasureManager.hasDurinCrownFn = () => hutManager?.hasArtefact('durin_crown') ?? false;
+castleAndQuarryManager.hasArtefactFn = (id) => hutManager?.hasArtefact(id) ?? false;
+trollCombatManager.hasIronAegisFn = () => hutManager?.hasArtefact('iron_aegis') ?? false;
+trollCombatManager.onPerfectParryReward = () => {
+  castleAndQuarryManager.restoreEnergyAndHealth(15, 5);
+};
+huntingManager.onTryHitTrollWithArrow = (arrowPos) =>
+  trollCombatManager.tryHitTrollWithArrow(arrowPos, 38);
+
+const reusableAssignmentSnapshot: AssignmentSnapshot = {
+  chestsOpened: 0,
+  beaconsLit: 0,
+  foodCollectedTotal: 0,
+  relicsUnlocked: 0,
+  houseToolsOwned: 0,
+  artefactsCollected: 0,
+  collectedArtefactIds: [],
+  quarriesBuilt: 0,
+  blocksChiseledTotal: 0,
+  bestCastleBlocks: 0,
+  totalBlocksPlaced: 0,
+  weaponsOwned: 0,
+  shieldsOwned: 0,
+  trollsSlain: 0,
+  challengesCompleted: 0,
+  fishCaughtTotal: 0,
+  deerHuntedTotal: 0,
+};
+
+const assignmentManager = new AssignmentManager({
+  getSnapshot: () => {
+    reusableAssignmentSnapshot.chestsOpened = treasureManager.chestsCollected;
+    reusableAssignmentSnapshot.beaconsLit = landmarkManager.getLitBeaconCount();
+    reusableAssignmentSnapshot.foodCollectedTotal = castleAndQuarryManager.foodCount;
+    reusableAssignmentSnapshot.relicsUnlocked = relicStore.getUnlockedIds().length;
+    reusableAssignmentSnapshot.houseToolsOwned =
+      castleAndQuarryManager.getUnlockedEquipmentIds().length;
+    reusableAssignmentSnapshot.artefactsCollected = hutManager.artefactsCollected;
+    reusableAssignmentSnapshot.collectedArtefactIds = hutManager.getCollectedArtefactIds();
+    reusableAssignmentSnapshot.quarriesBuilt = castleAndQuarryManager.getQuarryCount();
+    reusableAssignmentSnapshot.blocksChiseledTotal = castleAndQuarryManager.blocksChiseledTotal;
+    reusableAssignmentSnapshot.bestCastleBlocks = castleAndQuarryManager.getBestCastleBlocks();
+    reusableAssignmentSnapshot.totalBlocksPlaced = castleAndQuarryManager.getTotalBlocksPlaced();
+    reusableAssignmentSnapshot.weaponsOwned = castleAndQuarryManager.getWeaponsOwnedCount();
+    reusableAssignmentSnapshot.shieldsOwned = castleAndQuarryManager.getShieldsOwnedCount();
+    reusableAssignmentSnapshot.trollsSlain = trollCombatManager.trollsSlain;
+    reusableAssignmentSnapshot.challengesCompleted = challengeManager.getCompletedCount();
+    reusableAssignmentSnapshot.fishCaughtTotal = fishingManager.fishCaughtCount;
+    reusableAssignmentSnapshot.deerHuntedTotal = huntingManager.getDeerHuntedCount();
+    return reusableAssignmentSnapshot;
+  },
+  onGrantReward: (gold, food, message) => {
+    treasureManager.grantBonusGold(gold, message);
+    if (food > 0) {
+      castleAndQuarryManager.addFoodRations(food, 'deer');
+    }
+    relicStore.renderShop();
+    castleAndQuarryManager.renderHouseShop();
+    castleAndQuarryManager.renderCastleArmoryShop();
+    persistCurrentProgress(false);
+  },
+  onRankChanged: (rankDef) => {
+    castleAndQuarryManager.setRankBonuses(
+      rankDef.maxHpBonus,
+      rankDef.maxEnergyBonus,
+      rankDef.damageMult,
+      rankDef.carrySpeedBonus
+    );
+    dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
+  },
+  onTriggerWarhorn: () => {
+    playWarhornBlastSound();
+    dwarf.triggerWarhornAnimation();
+    castleAndQuarryManager.triggerWarhornRally(14);
+    const stunned = trollCombatManager.stunNearbyTrollsWithWarhorn(explorer.playerPos, 15.0);
+    const stunNote =
+      stunned > 0 ? ` & Stunned ${stunned} Night Troll${stunned > 1 ? 's' : ''}!` : '!';
+    treasureManager.grantBonusGold(
+      0,
+      `📯 Warhorn of Khazad! +25⚡ Strength, +15❤️ Health, +25% Speed & Melee Damage (14s)${stunNote}`
+    );
+  },
+});
+
+hutManager.onArtefactCollected = () => {
+  dwarf.setProgressionVisuals(
+    assignmentManager.getCurrentRank(),
+    hutManager.hasArtefact('durin_crown')
+  );
+  persistCurrentProgress(false);
+};
+
 function syncBeaconFog(): void {
   const litCount = landmarkManager.getLitBeaconCount();
   // Lighting Watchtower Beacons clears up to 40% of distant horizon mist!
@@ -421,10 +519,15 @@ if (savedProgress) {
     savedProgress.chestsCollected,
     savedProgress.collectedIds
   );
-  hutManager.restoreProgress(savedProgress.artefactsCollected);
+  hutManager.restoreProgress(
+    savedProgress.artefactsCollected,
+    savedProgress.collectedArtefactIds
+  );
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
   trollCombatManager.restoreProgress(savedProgress.trollsSlain);
+  fishingManager.fishCaughtCount = savedProgress.fishCaughtTotal ?? 0;
+  huntingManager.setDeerHuntedCount(savedProgress.deerHuntedTotal ?? 0);
   castleAndQuarryManager.restoreProgress(
     savedProgress.quarries,
     savedProgress.castles,
@@ -437,8 +540,22 @@ if (savedProgress) {
     savedProgress.unlockedArmory,
     savedProgress.equippedWeapon,
     savedProgress.equippedShield,
-    savedProgress.trollsSlain
+    savedProgress.trollsSlain,
+    savedProgress.blocksChiseledTotal
   );
+  assignmentManager.loadState({
+    completedChronicleIds: savedProgress.completedChronicleIds,
+    renownXp: savedProgress.renownXp,
+    activeContract: savedProgress.activeContract,
+  });
+  const rankDef = assignmentManager.getRankDef();
+  castleAndQuarryManager.setRankBonuses(
+    rankDef.maxHpBonus,
+    rankDef.maxEnergyBonus,
+    rankDef.damageMult,
+    rankDef.carrySpeedBonus
+  );
+  dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
   syncBeaconFog();
   explorer.setPose(
     savedProgress.playerPos.x,
@@ -514,6 +631,13 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.equippedWeapon = castleAndQuarryManager.equippedWeaponId;
   reusableSaveState.equippedShield = castleAndQuarryManager.equippedShieldId;
   reusableSaveState.trollsSlain = trollCombatManager.trollsSlain;
+  reusableSaveState.collectedArtefactIds = hutManager.getCollectedArtefactIds();
+  reusableSaveState.completedChronicleIds = assignmentManager.getCompletedChronicleIds();
+  reusableSaveState.renownXp = assignmentManager.getRenownXp();
+  reusableSaveState.activeContract = assignmentManager.getActiveContract();
+  reusableSaveState.blocksChiseledTotal = castleAndQuarryManager.blocksChiseledTotal;
+  reusableSaveState.fishCaughtTotal = fishingManager.fishCaughtCount;
+  reusableSaveState.deerHuntedTotal = huntingManager.getDeerHuntedCount();
   return reusableSaveState;
 }
 
@@ -608,6 +732,15 @@ function restartNewGame(): void {
   castleInteriorManager.exitCurrentCastle(true);
   trollCombatManager.reset();
   castleAndQuarryManager.reset();
+  fishingManager.fishCaughtCount = 0;
+  huntingManager.setDeerHuntedCount(0);
+  assignmentManager.loadState({
+    completedChronicleIds: [],
+    renownXp: 0,
+    activeContract: null,
+  });
+  castleAndQuarryManager.setRankBonuses(0, 0, 1.0, 0);
+  dwarf.setProgressionVisuals(1, false);
   syncBeaconFog();
   explorer.resetToOrigin();
   chunkManager.rebuildAll(
@@ -638,7 +771,7 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.collectedIds
   );
   hutManager.reset();
-  hutManager.restoreProgress(loaded.artefactsCollected);
+  hutManager.restoreProgress(loaded.artefactsCollected, loaded.collectedArtefactIds);
   relicStore.reset();
   relicStore.restoreUnlocked(loaded.unlockedRelics);
   landmarkManager.reset();
@@ -646,6 +779,8 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   challengeManager.reset();
   trollCombatManager.despawnAllTrolls(false);
   trollCombatManager.restoreProgress(loaded.trollsSlain);
+  fishingManager.fishCaughtCount = loaded.fishCaughtTotal ?? 0;
+  huntingManager.setDeerHuntedCount(loaded.deerHuntedTotal ?? 0);
 
   explorer.setPose(
     loaded.playerPos.x,
@@ -676,8 +811,22 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.unlockedArmory,
     loaded.equippedWeapon,
     loaded.equippedShield,
-    loaded.trollsSlain
+    loaded.trollsSlain,
+    loaded.blocksChiseledTotal
   );
+  assignmentManager.loadState({
+    completedChronicleIds: loaded.completedChronicleIds,
+    renownXp: loaded.renownXp,
+    activeContract: loaded.activeContract,
+  });
+  const rankDef = assignmentManager.getRankDef();
+  castleAndQuarryManager.setRankBonuses(
+    rankDef.maxHpBonus,
+    rankDef.maxEnergyBonus,
+    rankDef.damageMult,
+    rankDef.carrySpeedBonus
+  );
+  dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
   worldMap.reset();
   worldMap.restoreProgress(
     loaded.discoveredCells,
@@ -858,6 +1007,10 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'KeyO') {
     setGameMenuOpen(!isGameMenuOpen());
+  } else if (e.code === 'KeyJ') {
+    assignmentManager.togglePanelExpanded();
+  } else if (e.code === 'KeyV') {
+    assignmentManager.tryBlowWarhorn();
   } else if (e.code === 'Escape') {
     if (isGameMenuOpen()) {
       setGameMenuOpen(false);
@@ -943,6 +1096,7 @@ function animate(): void {
     explorer.isSprintingNow()
   );
   trollCombatManager.update(dt, elapsedTime, explorer.playerPos, camera.position);
+  assignmentManager.update(dt);
 
   if (!insideInterior) {
     chunkManager.update(px, py, pz, elapsedTime, false);

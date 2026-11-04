@@ -452,6 +452,8 @@ export class TreasureManager {
     this.getSurfaceHeightFn = fn;
   }
 
+  public hasDurinCrownFn: () => boolean = () => false;
+
   private sampleGroundHeight(wx: number, wz: number): number {
     return this.getSurfaceHeightFn ? this.getSurfaceHeightFn(wx, wz) : this.noise.getHeight(wx, wz);
   }
@@ -1024,7 +1026,8 @@ export class TreasureManager {
     this.streakTimer = this.streakDuration;
     const streakMult = this.getStreakMultiplier();
     const lodestoneMult = hasLodestone ? 1.5 : 1.0;
-    const earnedPoints = Math.round(chest.points * lodestoneMult * streakMult);
+    const crownMult = this.hasDurinCrownFn() ? 1.25 : 1.0;
+    const earnedPoints = Math.round(chest.points * lodestoneMult * streakMult * crownMult);
 
     this.score += earnedPoints;
     this.chestsCollected += 1;
@@ -1111,7 +1114,8 @@ export class TreasureManager {
     this.streakTimer = this.streakDuration;
     const streakMult = this.getStreakMultiplier();
     const lodestoneMult = hasLodestone ? 1.5 : 1.0;
-    const earned = Math.round(dig.points * lodestoneMult * streakMult);
+    const crownMult = this.hasDurinCrownFn() ? 1.25 : 1.0;
+    const earned = Math.round(dig.points * lodestoneMult * streakMult * crownMult);
 
     this.score += earned;
     this.chestsCollected += 1;
@@ -1129,14 +1133,16 @@ export class TreasureManager {
   }
 
   public grantBonusGold(amount: number, toastMessage: string): void {
-    this.score = Math.max(0, this.score + amount);
-    if (amount > 0 && this.streakCount > 0) {
+    const finalAmount =
+      amount > 0 && this.hasDurinCrownFn() ? Math.round(amount * 1.25) : amount;
+    this.score = Math.max(0, this.score + finalAmount);
+    if (finalAmount > 0 && this.streakCount > 0) {
       this.streakTimer = this.streakDuration;
     }
     this.syncHUDTotals();
     this.syncStreakHUD();
-    this.showToast(toastMessage, amount >= 0);
-    if (amount !== 0) {
+    this.showToast(toastMessage, finalAmount >= 0);
+    if (finalAmount !== 0) {
       this.onChestCollected?.(false);
     }
   }
@@ -1156,7 +1162,8 @@ export class TreasureManager {
 
     const mult = this.getStreakMultiplier();
     const lodestoneMult = hasLodestone ? 1.5 : 1.0;
-    const earned = Math.max(1, Math.round(baseGold * lodestoneMult * mult));
+    const crownMult = this.hasDurinCrownFn() ? 1.25 : 1.0;
+    const earned = Math.max(1, Math.round(baseGold * lodestoneMult * mult * crownMult));
     this.score += earned;
     this.syncHUDTotals();
     this.syncStreakHUD();
@@ -1187,7 +1194,8 @@ export class TreasureManager {
 
     const mult = this.getStreakMultiplier();
     const lodestoneMult = hasLodestone ? 1.5 : 1.0;
-    const earned = Math.round(baseGold * lodestoneMult * mult);
+    const crownMult = this.hasDurinCrownFn() ? 1.25 : 1.0;
+    const earned = Math.round(baseGold * lodestoneMult * mult * crownMult);
     this.score += earned;
     if (isFinalBonus) {
       this.chestsCollected += 1;

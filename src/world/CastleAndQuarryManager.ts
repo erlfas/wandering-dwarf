@@ -2222,7 +2222,14 @@ export class CastleAndQuarryManager {
   public equippedWeaponId: EquippedWeaponId = 'mallet';
   public equippedShieldId: EquippedShieldId = 'none';
   public kingsValorTimer = 0;
+  public warhornRallyTimer = 0;
   public trollsSlainBonusCount = 0;
+  public blocksChiseledTotal = 0;
+  private rankMaxHpBonus = 0;
+  private rankMaxEnergyBonus = 0;
+  private rankDamageMult = 1.0;
+  private rankCarrySpeedBonus = 0;
+  public hasArtefactFn: (id: string) => boolean = () => false;
 
   private unlockedEquipment = new Set<HouseEquipmentId>();
   private unlockedArmory = new Set<CastleArmoryItemId>();
@@ -2342,6 +2349,80 @@ export class CastleAndQuarryManager {
     this.syncMilestoneHUD();
   }
 
+  public setRankBonuses(
+    maxHpBonus: number,
+    maxEnergyBonus: number,
+    damageMult: number,
+    carrySpeedBonus: number
+  ): void {
+    const prevMaxH = this.getMaxHealth();
+    const prevMaxE = this.getMaxEnergy();
+    this.rankMaxHpBonus = Math.max(0, maxHpBonus);
+    this.rankMaxEnergyBonus = Math.max(0, maxEnergyBonus);
+    this.rankDamageMult = Math.max(1.0, damageMult);
+    this.rankCarrySpeedBonus = Math.max(0, carrySpeedBonus);
+    const newMaxH = this.getMaxHealth();
+    const newMaxE = this.getMaxEnergy();
+    if (newMaxH > prevMaxH) {
+      this.health = Math.min(newMaxH, this.health + (newMaxH - prevMaxH));
+    }
+    if (newMaxE > prevMaxE) {
+      this.energy = Math.min(newMaxE, this.energy + (newMaxE - prevMaxE));
+    }
+    this.syncEnergyAndFoodHUD();
+  }
+
+  public triggerWarhornRally(durationSec = 14): void {
+    this.warhornRallyTimer = Math.max(this.warhornRallyTimer, durationSec);
+    this.restoreEnergyAndHealth(25, 15);
+  }
+
+  public restoreEnergyAndHealth(energyGain: number, healthGain: number): void {
+    const maxE = this.getMaxEnergy();
+    const maxH = this.getMaxHealth();
+    this.energy = Math.min(maxE, this.energy + Math.max(0, energyGain));
+    this.health = Math.min(maxH, this.health + Math.max(0, healthGain));
+    this.syncEnergyAndFoodHUD();
+  }
+
+  public getQuarryCount(): number {
+    return this.quarries.length;
+  }
+
+  public getBestCastleBlocks(): number {
+    let best = 0;
+    for (const c of this.castles) {
+      if (c.blocksPlaced > best) best = c.blocksPlaced;
+    }
+    return best;
+  }
+
+  public getTotalBlocksPlaced(): number {
+    let total = 0;
+    for (const c of this.castles) {
+      total += c.blocksPlaced;
+    }
+    return total;
+  }
+
+  public getWeaponsOwnedCount(): number {
+    let count = 0;
+    for (const id of this.unlockedArmory) {
+      const def = CASTLE_ARMORY_CATALOG.find((a) => a.id === id);
+      if (def?.weaponId) count++;
+    }
+    return count;
+  }
+
+  public getShieldsOwnedCount(): number {
+    let count = 0;
+    for (const id of this.unlockedArmory) {
+      const def = CASTLE_ARMORY_CATALOG.find((a) => a.id === id);
+      if (def?.shieldId) count++;
+    }
+    return count;
+  }
+
   public getMaxHealth(): number {
     const shieldBonus =
       this.equippedShieldId === 'mithril_aegis'
@@ -2350,11 +2431,12 @@ export class CastleAndQuarryManager {
           ? 25
           : 0;
     const slayerBonus = Math.min(60, this.trollsSlainBonusCount * 10);
-    return 100 + shieldBonus + slayerBonus;
+    return 100 + shieldBonus + slayerBonus + this.rankMaxHpBonus;
   }
 
   public getMaxEnergy(): number {
-    return this.unlockedEquipment.has('ration_kettle') ? 160 : 100;
+    const base = this.unlockedEquipment.has('ration_kettle') ? 160 : 100;
+    return base + this.rankMaxEnergyBonus;
   }
 
   public getMaxRawStonesCarry(): number {
@@ -2370,10 +2452,13 @@ export class CastleAndQuarryManager {
   }
 
   public getCarrySpeedMultiplier(): number {
-    let mult = 1.0;
+    let mult = 1.0 + this.rankCarrySpeedBonus * 0.4;
     const isCarrying = this.carriedRawStones > 0 || this.carriedChiseledBlocks > 0;
     if (isCarrying) {
-      mult *= this.unlockedEquipment.has('stone_hauler') ? 1.08 : 0.86;
+      mult *= (this.unlockedEquipment.has('stone_hauler') ? 1.08 : 0.86) + this.rankCarrySpeedBonus * 0.6;
+    }
+    if (this.warhornRallyTimer > 0) {
+      mult *= 1.25;
     }
     if (this.energy < 12) {
       mult *= 0.85;
@@ -2502,8 +2587,9 @@ export class CastleAndQuarryManager {
     }
 
     this.foodCount -= 1;
-    const restoreE = this.unlockedEquipment.has('ration_kettle') ? 65 : 45;
-    const restoreH = this.unlockedEquipment.has('ration_kettle') ? 40 : 30;
+    const chaliceMult = this.hasArtefactFn('mountain_chalice') ? 1.35 : 1.0;
+    const restoreE = Math.round((this.unlockedEquipment.has('ration_kettle') ? 65 : 45) * chaliceMult);
+    const restoreH = Math.round((this.unlockedEquipment.has('ration_kettle') ? 40 : 30) * chaliceMult);
     this.energy = Math.min(maxE, this.energy + restoreE);
     this.health = Math.min(maxH, this.health + restoreH);
     this.playEatSound();
@@ -2563,6 +2649,8 @@ export class CastleAndQuarryManager {
     kingsValorBonus: number;
   } {
     const spec = WEAPON_COMBAT_SPECS[this.equippedWeaponId] ?? WEAPON_COMBAT_SPECS.mallet;
+    const warhornMult = this.warhornRallyTimer > 0 ? 1.25 : 1.0;
+    const valorMult = (this.kingsValorTimer > 0 ? 1.25 : 1.0) * warhornMult;
     return {
       health: this.health,
       maxHealth: this.getMaxHealth(),
@@ -2571,12 +2659,12 @@ export class CastleAndQuarryManager {
       foodCount: this.foodCount,
       weaponName: spec.name,
       weaponIcon: spec.icon,
-      weaponDamage: spec.damage,
+      weaponDamage: Math.round(spec.damage * this.rankDamageMult),
       weaponEnergyCost: spec.energyCost,
       weaponCooldown: spec.cooldown,
       hasRunicShockwave: spec.hasRunicShockwave,
       shieldId: this.equippedShieldId,
-      kingsValorBonus: this.kingsValorTimer > 0 ? 1.25 : 1.0,
+      kingsValorBonus: valorMult,
     };
   }
 
@@ -3403,7 +3491,17 @@ export class CastleAndQuarryManager {
 
     const stonesUsed = this.carriedRawStones;
     const blocksPerStone = this.unlockedEquipment.has('chisel_upgrade') ? 2 : 1;
-    const producedBlocks = stonesUsed * blocksPerStone;
+    const hasAstralHammer = this.hasArtefactFn('astral_hammer');
+    let astralBonus = 0;
+    if (hasAstralHammer) {
+      for (let i = 0; i < stonesUsed; i++) {
+        if (Math.random() < 0.35) {
+          astralBonus += 1;
+        }
+      }
+    }
+    const producedBlocks = stonesUsed * blocksPerStone + astralBonus;
+    this.blocksChiseledTotal += producedBlocks;
     this.carriedRawStones = 0;
 
     // Place blocks directly into the dwarf's arms up to carry capacity; store any overflow on the Quarry stockpile!
@@ -3427,8 +3525,9 @@ export class CastleAndQuarryManager {
       this.castles.length === 0
         ? 'Carry to a level place and press K to start building a Castle!'
         : 'Follow the arrow to the highlighted Castle Slot and press E!';
+    const astralTag = astralBonus > 0 ? ` (🔨 +${astralBonus} Astral Hammer Bonus!)` : '';
     this.showToast(
-      `⛏️ Chiseled ${stonesUsed} Stone${stonesUsed > 1 ? 's' : ''} → +${producedBlocks} Castle Block${producedBlocks > 1 ? 's' : ''}! (-${energyCost.toFixed(0)}⚡) • ${nextHint}`,
+      `⛏️ Chiseled ${stonesUsed} Stone${stonesUsed > 1 ? 's' : ''} → +${producedBlocks} Castle Block${producedBlocks > 1 ? 's' : ''}${astralTag}! (-${energyCost.toFixed(0)}⚡) • ${nextHint}`,
       true
     );
     this.onStateChanged?.();
@@ -3508,6 +3607,27 @@ export class CastleAndQuarryManager {
     if (this.kingsValorTimer > 0) {
       this.kingsValorTimer = Math.max(0, this.kingsValorTimer - dt);
       if (this.kingsValorTimer === 0) {
+        this.syncEnergyAndFoodHUD();
+      }
+    }
+    if (this.warhornRallyTimer > 0) {
+      this.warhornRallyTimer = Math.max(0, this.warhornRallyTimer - dt);
+      if (this.warhornRallyTimer === 0) {
+        this.syncEnergyAndFoodHUD();
+      }
+    }
+
+    // Passive Heartstone of the Deep & Rank V High King regeneration
+    const hasHeartstone = this.hasArtefactFn('heartstone_gem');
+    const isHighKing = this.rankMaxHpBonus >= 80;
+    if (hasHeartstone || isHighKing) {
+      const regenE = (hasHeartstone ? 2.5 : 0) + (isHighKing ? 1.5 : 0);
+      const regenH = (hasHeartstone ? 1.0 : 0) + (isHighKing ? 0.8 : 0);
+      const maxE = this.getMaxEnergy();
+      const maxH = this.getMaxHealth();
+      if (this.energy < maxE || this.health < maxH) {
+        this.energy = Math.min(maxE, this.energy + regenE * dt);
+        this.health = Math.min(maxH, this.health + regenH * dt);
         this.syncEnergyAndFoodHUD();
       }
     }
@@ -4778,8 +4898,16 @@ export class CastleAndQuarryManager {
           : this.equippedShieldId === 'round_shield'
             ? ' • 🛡️ Shield'
             : '';
-      const valorTag = this.kingsValorTimer > 0 ? ' • 👑 +25%' : '';
-      const gearText = `${wSpec.icon} ${wSpec.name} (${wSpec.damage} DMG)${shieldIcon}${valorTag}`;
+      const valorTag =
+        this.kingsValorTimer > 0 && this.warhornRallyTimer > 0
+          ? ' • 👑📯 +56%'
+          : this.kingsValorTimer > 0
+            ? ' • 👑 +25%'
+            : this.warhornRallyTimer > 0
+              ? ' • 📯 +25%'
+              : '';
+      const effDmg = Math.round(wSpec.damage * this.rankDamageMult);
+      const gearText = `${wSpec.icon} ${wSpec.name} (${effDmg} DMG)${shieldIcon}${valorTag}`;
       if (gearText !== this.lastGearBadgeText) {
         this.lastGearBadgeText = gearText;
         this.combatGearBadgeEl.textContent = gearText;
@@ -4881,9 +5009,14 @@ export class CastleAndQuarryManager {
     unlockedArmory?: string[],
     equippedWeapon?: string,
     equippedShield?: string,
-    trollsSlain?: number
+    trollsSlain?: number,
+    blocksChiseledTotal?: number
   ): void {
     this.clearPlacedInstances();
+    this.blocksChiseledTotal =
+      typeof blocksChiseledTotal === 'number' && blocksChiseledTotal >= 0
+        ? Math.floor(blocksChiseledTotal)
+        : 0;
 
     if (equipment) {
       for (const id of equipment) {
@@ -4945,6 +5078,9 @@ export class CastleAndQuarryManager {
       for (const sc of castles) {
         this.castles.push(this.createCastleInstance(sc));
       }
+    }
+    if (this.blocksChiseledTotal === 0) {
+      this.blocksChiseledTotal = this.getTotalBlocksPlaced();
     }
     this.completedCastlesDirty = true;
 

@@ -1839,3 +1839,300 @@ kbd {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
+/* Royal Decrees, Dwarven Rank & Guild Contracts HUD */
+#decrees-toggle-button {
+  pointer-events: auto;
+  cursor: pointer;
+  margin-left: 4px;
+  background: rgba(255, 183, 3, 0.24);
+  border: 1px solid rgba(255, 209, 102, 0.72);
+  color: #ffe89e;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  transition: all 0.15s ease;
+}
+
+#decrees-toggle-button:hover {
+  background: rgba(255, 183, 3, 0.45);
+  border-color: #ffd166;
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+#assignment-hud {
+  position: absolute;
+  top: 120px;
+  left: 16px;
+  width: min(315px, calc(100vw - 32px));
+  background: linear-gradient(155deg, rgba(26, 20, 14, 0.92), rgba(16, 13, 10, 0.94));
+  border: 1.5px solid rgba(255, 209, 102, 0.58);
+  border-radius: 12px;
+  padding: 9px 11px;
+  color: #fff6e0;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(5px);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  z-index: 18;
+}
+
+.assignment-hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assignment-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.assignment-rank-badge {
+  background: linear-gradient(135deg, #f4a261, #e76f51);
+  color: #1b120c;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+.assignment-rank-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #ffd166;
+  letter-spacing: 0.3px;
+}
+
+#assignment-hud-toggle {
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  color: #ffd166;
+  border-radius: 6px;
+  width: 22px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assignment-renown-track {
+  position: relative;
+  height: 15px;
+  background: rgba(0, 0, 0, 0.52);
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#assignment-renown-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #b5651d, #ffd166);
+  transition: width 0.25s ease;
+}
+
+#assignment-renown-text {
+  position: relative;
+  z-index: 1;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+.assignment-hud-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.assignment-card {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 209, 102, 0.28);
+  border-radius: 9px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.assignment-card.contract-card {
+  border-color: rgba(114, 239, 221, 0.32);
+}
+
+.assignment-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.assignment-card-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffe89e;
+}
+
+.assignment-contract-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#assignment-contract-reroll {
+  cursor: pointer;
+  background: rgba(114, 239, 221, 0.16);
+  border: 1px solid rgba(114, 239, 221, 0.55);
+  color: #90e0ef;
+  border-radius: 5px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+#assignment-contract-reroll:hover {
+  background: rgba(114, 239, 221, 0.35);
+  color: #ffffff;
+}
+
+.assignment-reward-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #95d5b2;
+  white-space: nowrap;
+}
+
+.assignment-card-desc {
+  font-size: 10.5px;
+  color: #f1e6d2;
+  line-height: 1.28;
+}
+
+.assignment-card-hint {
+  font-size: 9.5px;
+  color: #cbd5e1;
+  line-height: 1.22;
+}
+
+.assignment-prog-track {
+  position: relative;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.assignment-prog-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, #38b000, #70e000);
+  transition: width 0.25s ease;
+}
+
+.assignment-prog-fill.contract-fill {
+  background: linear-gradient(90deg, #0096c7, #48cae4);
+}
+
+.assignment-prog-text {
+  position: relative;
+  z-index: 1;
+  display: block;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 10px;
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.assignment-blessings-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assignment-blessings-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: #ffd166;
+}
+
+.assignment-blessings-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.blessing-pill {
+  font-size: 9.5px;
+  font-weight: 700;
+  background: rgba(255, 209, 102, 0.14);
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  color: #ffe89e;
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.blessing-pill.rank-perk-pill {
+  background: rgba(114, 239, 221, 0.16);
+  border-color: rgba(114, 239, 221, 0.5);
+  color: #a8f9ef;
+}
+
+.blessing-empty {
+  font-size: 9.5px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.assignment-warhorn-btn {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 10.5px;
+  font-weight: 800;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  transition: all 0.15s ease;
+}
+
+.assignment-warhorn-btn.is-ready {
+  background: linear-gradient(135deg, rgba(244, 162, 97, 0.35), rgba(231, 111, 81, 0.45));
+  border-color: #ffd166;
+  color: #fff8e7;
+}
+
+.assignment-warhorn-btn.is-ready:hover {
+  background: linear-gradient(135deg, rgba(244, 162, 97, 0.55), rgba(231, 111, 81, 0.65));
+  transform: translateY(-1px);
+}
+
+.assignment-warhorn-btn.is-active {
+  background: linear-gradient(135deg, rgba(56, 176, 0, 0.36), rgba(112, 224, 0, 0.42));
+  border-color: #95d5b2;
+  color: #ffffff;
+}
+
+

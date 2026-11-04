@@ -339,6 +339,16 @@ export class HuntingAndDeerManager {
     this.onEnterHuntingCallback = cb;
   }
 
+  public onTryHitTrollWithArrow?: (arrowPos: THREE.Vector3) => boolean;
+
+  public getDeerHuntedCount(): number {
+    return this.deerHuntedCount;
+  }
+
+  public setDeerHuntedCount(count: number): void {
+    this.deerHuntedCount = Math.max(0, Math.floor(count));
+  }
+
   public setSurfaceHeightSampler(fn: (wx: number, wz: number) => number): void {
     this.getSurfaceHeightFn = fn;
   }
@@ -1068,6 +1078,13 @@ export class HuntingAndDeerManager {
         arrow.pos.y + arrow.vel.y,
         arrow.pos.z + arrow.vel.z
       );
+
+      // Check hit against any active Night Troll first!
+      if (this.onTryHitTrollWithArrow && this.onTryHitTrollWithArrow(arrow.pos)) {
+        arrow.active = false;
+        arrow.mesh.visible = false;
+        continue;
+      }
 
       // Check hit against all active deer
       let hitDeer: DeerInstance | null = null;

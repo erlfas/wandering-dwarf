@@ -48,6 +48,11 @@ export class DwarfCharacter {
   private equippedShieldGroup = new THREE.Group();
   private shieldMeshes: Partial<Record<Exclude<EquippedShieldId, 'none'>, THREE.Group>> = {};
   private stowedShieldGroup = new THREE.Group();
+  private helmetGroup = new THREE.Group();
+  private pauldronsGroup = new THREE.Group();
+  private crownGroup = new THREE.Group();
+  private warhornGroup = new THREE.Group();
+  private warhornWaveRing!: THREE.Mesh;
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
@@ -78,6 +83,10 @@ export class DwarfCharacter {
   private shieldBlocking = false;
   private shieldBlockBlend = 0;
   private shieldImpactTimer = 0;
+  private progressionRank = 1;
+  private hasDurinCrown = false;
+  private warhornAnimTimer = 0;
+  private warhornWaveTimer = 0;
 
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
@@ -754,6 +763,128 @@ export class DwarfCharacter {
     this.stowedShieldGroup.position.set(0, -0.02, -0.14);
     this.stowedShieldGroup.visible = false;
     this.backpackGroup.add(this.stowedShieldGroup);
+
+    // 7. Build Dwarven Progression Armor (Horned Helmet, Mithril Pauldrons, Golden Crown) & Warhorn of Khazad
+    this.buildProgressionArmorAndWarhorn(darkIronMat, brassMat, mithrilMat, runicGoldMat);
+  }
+
+  private buildProgressionArmorAndWarhorn(
+    darkIronMat: THREE.MeshStandardMaterial,
+    goldMat: THREE.MeshStandardMaterial,
+    mithrilMat: THREE.MeshStandardMaterial,
+    runeGlowMat: THREE.MeshStandardMaterial
+  ): void {
+    const hornIvoryMat = new THREE.MeshStandardMaterial({
+      color: 0xf3ead2,
+      roughness: 0.42,
+      metalness: 0.1,
+    });
+    const rubyMat = new THREE.MeshStandardMaterial({
+      color: 0xff2a4b,
+      emissive: 0xcc1122,
+      emissiveIntensity: 0.75,
+      roughness: 0.2,
+      metalness: 0.4,
+    });
+
+    // A. Horned Dwarven Helmet (Rank II+ or Shield Equipped)
+    this.helmetGroup.position.set(0, 1.29, 0.02);
+    const domeGeo = new THREE.SphereGeometry(0.18, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.56);
+    const dome = new THREE.Mesh(domeGeo, darkIronMat);
+    dome.castShadow = true;
+    this.helmetGroup.add(dome);
+
+    const browBand = new THREE.Mesh(new THREE.CylinderGeometry(0.186, 0.186, 0.04, 16), goldMat);
+    browBand.position.y = 0.02;
+    this.helmetGroup.add(browBand);
+
+    const nasalGuard = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.09, 0.03), goldMat);
+    nasalGuard.position.set(0, -0.02, 0.18);
+    this.helmetGroup.add(nasalGuard);
+
+    for (const side of [-1, 1]) {
+      const hornPivot = new THREE.Group();
+      hornPivot.position.set(side * 0.16, 0.05, 0.0);
+      hornPivot.rotation.z = -side * 0.65;
+      hornPivot.rotation.x = 0.25;
+      const hornBase = new THREE.Mesh(new THREE.ConeGeometry(0.042, 0.18, 8), hornIvoryMat);
+      hornBase.position.y = 0.08;
+      hornBase.castShadow = true;
+      const hornRing = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.025, 8), goldMat);
+      hornRing.position.y = 0.01;
+      hornPivot.add(hornBase, hornRing);
+      this.helmetGroup.add(hornPivot);
+    }
+    this.helmetGroup.visible = false;
+    this.modelContainer.add(this.helmetGroup);
+
+    // B. Mithril Winged Pauldrons (Rank III+ or Mithril Aegis)
+    this.pauldronsGroup.position.set(0, 1.0, 0.01);
+    for (const side of [-1, 1]) {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(side * 0.25, 0, 0);
+      shoulder.rotation.z = -side * 0.28;
+      const plateGeo = new THREE.SphereGeometry(0.115, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55);
+      const plate = new THREE.Mesh(plateGeo, mithrilMat);
+      plate.scale.set(1.15, 0.85, 1.05);
+      plate.castShadow = true;
+      const trim = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.016, 6, 12), goldMat);
+      trim.rotation.x = Math.PI / 2;
+      trim.position.y = 0.01;
+      const runeGem = new THREE.Mesh(new THREE.OctahedronGeometry(0.028, 0), runeGlowMat);
+      runeGem.position.set(side * 0.06, 0.06, 0.06);
+      shoulder.add(plate, trim, runeGem);
+      this.pauldronsGroup.add(shoulder);
+    }
+    this.pauldronsGroup.visible = false;
+    this.modelContainer.add(this.pauldronsGroup);
+
+    // C. Golden Crown of Khazad-dûm (Rank V High King or Durin's Crown Artefact)
+    this.crownGroup.position.set(0, 1.33, 0.02);
+    const circlet = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.17, 0.055, 16), goldMat);
+    circlet.castShadow = true;
+    this.crownGroup.add(circlet);
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2;
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.085, 4), goldMat);
+      spike.position.set(Math.sin(angle) * 0.165, 0.06, Math.cos(angle) * 0.165);
+      this.crownGroup.add(spike);
+    }
+    const frontRuby = new THREE.Mesh(new THREE.OctahedronGeometry(0.036, 0), rubyMat);
+    frontRuby.position.set(0, 0.02, 0.178);
+    this.crownGroup.add(frontRuby);
+    this.crownGroup.visible = false;
+    this.modelContainer.add(this.crownGroup);
+
+    // D. Warhorn of Khazad (stowed at right hip or raised to lips when blown)
+    const hornBody = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.28, 10, 1, true), hornIvoryMat);
+    hornBody.rotation.x = Math.PI / 2;
+    hornBody.castShadow = true;
+    const hornMouthRing = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.012, 6, 12), goldMat);
+    hornMouthRing.position.z = 0.14;
+    const hornTip = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.024, 0.08, 8), goldMat);
+    hornTip.rotation.x = Math.PI / 2;
+    hornTip.position.z = -0.14;
+    this.warhornGroup.add(hornBody, hornMouthRing, hornTip);
+    this.warhornGroup.position.set(0.23, 0.58, 0.06);
+    this.warhornGroup.rotation.set(0.4, 0.3, -0.5);
+    this.warhornGroup.visible = false;
+    this.modelContainer.add(this.warhornGroup);
+
+    // E. Expanding Golden Sonic Shockwave Ring when blowing the Warhorn
+    const waveGeo = new THREE.RingGeometry(0.65, 0.92, 32);
+    waveGeo.rotateX(-Math.PI / 2);
+    const waveMat = new THREE.MeshBasicMaterial({
+      color: 0xffd25a,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+    });
+    this.warhornWaveRing = new THREE.Mesh(waveGeo, waveMat);
+    this.warhornWaveRing.position.y = 0.35;
+    this.warhornWaveRing.visible = false;
+    this.root.add(this.warhornWaveRing);
   }
 
   public setNaturalRockAsset(
@@ -799,6 +930,40 @@ export class DwarfCharacter {
     if (this.shieldMeshes.mithril_aegis) {
       this.shieldMeshes.mithril_aegis.visible = shieldId === 'mithril_aegis';
     }
+    this.refreshArmorVisibility();
+  }
+
+  public setProgressionVisuals(rank: number, hasCrownArtefact: boolean): void {
+    this.progressionRank = Math.max(1, Math.floor(rank));
+    this.hasDurinCrown = hasCrownArtefact;
+    this.refreshArmorVisibility();
+  }
+
+  public triggerWarhornAnimation(): void {
+    this.warhornAnimTimer = 1.25;
+    this.warhornWaveTimer = 1.1;
+    this.warhornGroup.visible = true;
+    this.warhornWaveRing.visible = true;
+  }
+
+  private refreshArmorVisibility(): void {
+    const showCrown = this.progressionRank >= 5 || this.hasDurinCrown;
+    const showHelmet =
+      !showCrown && (this.progressionRank >= 2 || this.equippedShieldId !== 'none');
+    const showPauldrons =
+      this.progressionRank >= 3 ||
+      this.equippedShieldId === 'mithril_aegis' ||
+      this.equippedWeaponId === 'runic_greatsword';
+    const showWarhorn =
+      this.progressionRank >= 2 ||
+      this.equippedShieldId !== 'none' ||
+      this.equippedWeaponId !== 'mallet' ||
+      this.warhornAnimTimer > 0;
+
+    this.crownGroup.visible = showCrown;
+    this.helmetGroup.visible = showHelmet;
+    this.pauldronsGroup.visible = showPauldrons;
+    this.warhornGroup.visible = showWarhorn;
   }
 
   public setCombatReady(ready: boolean): void {
@@ -1498,6 +1663,46 @@ export class DwarfCharacter {
         THREE.MathUtils.lerp(0.28, 1.38, this.shieldBlockBlend),
         THREE.MathUtils.lerp(-0.12, 0.08, this.shieldBlockBlend)
       );
+    }
+
+    // 10. Animate Warhorn of Khazad (raised to lips when blown, stowed at hip otherwise) & Golden Sonic Ring
+    if (this.warhornAnimTimer > 0) {
+      this.warhornAnimTimer = Math.max(0, this.warhornAnimTimer - dt);
+      const t = 1.0 - this.warhornAnimTimer / 1.25;
+      const raiseBlend =
+        t < 0.22
+          ? t / 0.22
+          : t < 0.78
+            ? 1.0
+            : Math.max(0, 1.0 - (t - 0.78) / 0.22);
+      this.warhornGroup.position.set(
+        THREE.MathUtils.lerp(0.23, 0.06, raiseBlend),
+        THREE.MathUtils.lerp(0.58, 1.16, raiseBlend),
+        THREE.MathUtils.lerp(0.06, 0.28, raiseBlend)
+      );
+      this.warhornGroup.rotation.set(
+        THREE.MathUtils.lerp(0.4, -0.35, raiseBlend),
+        THREE.MathUtils.lerp(0.3, -0.08, raiseBlend),
+        THREE.MathUtils.lerp(-0.5, 0.0, raiseBlend)
+      );
+      if (this.warhornAnimTimer === 0) {
+        this.refreshArmorVisibility();
+      }
+    } else if (this.warhornGroup.visible) {
+      this.warhornGroup.position.set(0.23, 0.58, 0.06);
+      this.warhornGroup.rotation.set(0.4, 0.3, -0.5);
+    }
+
+    if (this.warhornWaveTimer > 0) {
+      this.warhornWaveTimer = Math.max(0, this.warhornWaveTimer - dt);
+      const p = 1.0 - this.warhornWaveTimer / 1.1;
+      this.warhornWaveRing.visible = true;
+      this.warhornWaveRing.scale.setScalar(1.0 + p * 14.5);
+      (this.warhornWaveRing.material as THREE.MeshBasicMaterial).opacity =
+        Math.sin(p * Math.PI) * 0.78;
+      if (this.warhornWaveTimer === 0) {
+        this.warhornWaveRing.visible = false;
+      }
     }
 
     // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)

@@ -46,6 +46,9 @@
             <button id="castle-place-btn" type="button" title="Start Building a Castle on Level Ground (K)">
               🏰 Castle (K)
             </button>
+            <button id="decrees-toggle-button" type="button" title="Toggle Royal Decrees, Ranks &amp; Contracts (J)">
+              📜 Decrees (J)
+            </button>
             <button id="world-map-toggle" type="button" title="Open Discovered World Map (M)">
               🗺️ Map (M)
             </button>
@@ -141,6 +144,71 @@
           <span class="relic-shop-sub">Keys 1–4</span>
         </div>
         <div id="relic-list"></div>
+      </div>
+
+      <!-- Royal Decrees, Dwarven Rank & Guild Contracts HUD -->
+      <div id="assignment-hud">
+        <div class="assignment-hud-header">
+          <div class="assignment-rank-row">
+            <span id="assignment-rank-badge" class="assignment-rank-badge">⛏️ Rank I</span>
+            <span id="assignment-rank-title" class="assignment-rank-title">Outcast Prospector</span>
+          </div>
+          <button id="assignment-hud-toggle" type="button" title="Collapse / Expand Royal Decrees (J)">▾</button>
+        </div>
+
+        <div class="assignment-renown-track" title="Dwarven Renown XP — Complete Decrees &amp; Guild Contracts to earn promotions &amp; permanent stat buffs!">
+          <div id="assignment-renown-fill" style="width: 0%"></div>
+          <span id="assignment-renown-text">0 / 200 🎖️ → 🪖 Rank II</span>
+        </div>
+
+        <div id="assignment-hud-body" class="assignment-hud-body">
+          <!-- Story Chronicle Assignment -->
+          <div class="assignment-card chronicle-card">
+            <div class="assignment-card-top">
+              <span id="assignment-chronicle-title" class="assignment-card-title">🔥 Ch.1/12: Awakening on the Frontier</span>
+              <span id="assignment-chronicle-reward" class="assignment-reward-tag">+45🪙 +80🎖️</span>
+            </div>
+            <div id="assignment-chronicle-desc" class="assignment-card-desc">
+              Open 2 Treasure Chests OR light 1 Watchtower Beacon to survey the realm.
+            </div>
+            <div id="assignment-chronicle-hint" class="assignment-card-hint">
+              💡 Follow gold beams to Chests or climb a stone Watchtower and press E.
+            </div>
+            <div class="assignment-prog-track">
+              <div id="assignment-chronicle-fill" class="assignment-prog-fill" style="width: 0%"></div>
+              <span id="assignment-chronicle-progress" class="assignment-prog-text">0 / 2</span>
+            </div>
+          </div>
+
+          <!-- Repeatable Royal Guild Contract -->
+          <div class="assignment-card contract-card">
+            <div class="assignment-card-top">
+              <span id="assignment-contract-title" class="assignment-card-title">🪨 Guild Stonemason's Quota</span>
+              <div class="assignment-contract-actions">
+                <span id="assignment-contract-reward" class="assignment-reward-tag">+75🪙 +75🎖️</span>
+                <button id="assignment-contract-reroll" type="button" title="Cycle to a different Royal Guild Contract">↻</button>
+              </div>
+            </div>
+            <div id="assignment-contract-desc" class="assignment-card-desc">
+              Chisel 3 new stone blocks at any Quarry (E).
+            </div>
+            <div class="assignment-prog-track contract-track">
+              <div id="assignment-contract-fill" class="assignment-prog-fill contract-fill" style="width: 0%"></div>
+              <span id="assignment-contract-progress" class="assignment-prog-text">0 / 3</span>
+            </div>
+          </div>
+
+          <!-- Attuned Sacred Artefact Blessings & Rank Strengths -->
+          <div class="assignment-blessings-box">
+            <div class="assignment-blessings-label">✨ ATTUNED STRENGTHS &amp; ARTEFACT BLESSINGS</div>
+            <div id="assignment-blessings-list" class="assignment-blessings-list"></div>
+          </div>
+
+          <!-- Active Ability: Warhorn of Khazad (V) -->
+          <button id="assignment-warhorn-btn" type="button" class="assignment-warhorn-btn" title="Blow the Warhorn of Khazad (V) — Restores +25⚡/+15❤️, grants +25% Speed &amp; Damage for 14s, and stuns nearby Night Trolls!">
+            🔒 Warhorn of Khazad (Rank II / Armory)
+          </button>
+        </div>
       </div>
 
       <!-- Unlocked Watchtower Beacons (Fast-Travel Waypoints) -->
@@ -270,8 +338,10 @@
           <span><kbd>Space</kbd> Jump / Glide</span>
           <span><kbd>C</kbd>/<kbd>Ctrl</kbd> Surf Slope / Dash</span>
           <span><kbd>E</kbd> Lift / Build / Enter Castle &amp; House</span>
-          <span><kbd>J</kbd>/<kbd>Click</kbd> Fight Troll</span>
-          <span><kbd>R-Click</kbd> Shield Block</span>
+          <span><kbd>X</kbd>/<kbd>Click</kbd> Fight Troll</span>
+          <span><kbd>R-Click</kbd> Parry / Block</span>
+          <span><kbd>V</kbd> Warhorn</span>
+          <span><kbd>J</kbd> Decrees</span>
           <span><kbd>Q</kbd> Quarry</span>
           <span><kbd>K</kbd> Castle</span>
           <span><kbd>G</kbd> Eat Food</span>
