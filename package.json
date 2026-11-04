@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "verify:3d": "node .agents/skills/integrate-3d-model/scripts/verify-3d-integrations.mjs",
+    "build": "tsc && node .agents/skills/integrate-3d-model/scripts/verify-3d-integrations.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

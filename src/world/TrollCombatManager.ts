@@ -1044,6 +1044,20 @@ export class TrollCombatManager {
       if (t.roarCooldown > 0) t.roarCooldown = Math.max(0, t.roarCooldown - dt);
       if (t.attackCooldown > 0) t.attackCooldown = Math.max(0, t.attackCooldown - dt);
 
+      if (insideSanctuary) {
+        // While the Dwarf is safely inside a Castle or Hut (and troll group is hidden), skip visual lookAt/material work
+        if (t.hitFlashTimer > 0) t.hitFlashTimer = Math.max(0, t.hitFlashTimer - dt);
+        this.transitionTrollAnim(t, 'walk');
+        t.patrolAngle += dt * 0.55;
+        t.pos.x = t.homePos.x + Math.cos(t.patrolAngle) * 5.5;
+        t.pos.z = t.homePos.z + Math.sin(t.patrolAngle) * 5.5;
+        t.pos.y = this.sampleGroundHeight(t.pos.x, t.pos.z);
+        t.heading = -t.patrolAngle;
+        t.root.position.copy(t.pos);
+        t.root.rotation.set(0, t.heading, 0);
+        continue;
+      }
+
       if (t.hitFlashTimer > 0) {
         t.hitFlashTimer = Math.max(0, t.hitFlashTimer - dt);
         t.hpFillMat.color.setHex(0xffffff);
@@ -1059,19 +1073,6 @@ export class TrollCombatManager {
       // Pulse red danger ring at troll's feet
       const ringPulse = 0.94 + Math.sin(elapsedTime * 5.0) * 0.08;
       t.targetRingMesh.scale.setScalar(ringPulse);
-
-      if (insideSanctuary) {
-        // While the Dwarf is safely inside a Castle or Hut, Trolls patrol outside in the dark
-        this.transitionTrollAnim(t, 'walk');
-        t.patrolAngle += dt * 0.55;
-        t.pos.x = t.homePos.x + Math.cos(t.patrolAngle) * 5.5;
-        t.pos.z = t.homePos.z + Math.sin(t.patrolAngle) * 5.5;
-        t.pos.y = this.sampleGroundHeight(t.pos.x, t.pos.z);
-        t.heading = -t.patrolAngle;
-        t.root.position.copy(t.pos);
-        t.root.rotation.set(0, t.heading, 0);
-        continue;
-      }
 
       // Reposition troll if the player walked > 68m away at night so night danger stays engaging
       if (dist > 68.0) {

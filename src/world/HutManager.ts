@@ -190,10 +190,12 @@ export function loadDwarvenHutInteriorModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -500,7 +502,6 @@ export class HutManager {
   private interiorGroup = new THREE.Group();
   private interiorMesh!: THREE.Mesh;
   private hearthLight!: THREE.PointLight;
-  private candleLight!: THREE.PointLight;
   private hearthFlameMesh!: THREE.Mesh;
   private exitRingMesh!: THREE.Mesh;
   private artefactGroup = new THREE.Group();
@@ -533,6 +534,7 @@ export class HutManager {
 
   private readonly interiorBgColor = new THREE.Color(0x23262e);
   private savedBgColor: THREE.Color | THREE.Texture | null = null;
+  private savedFogColor = new THREE.Color(0xdbeafe);
   private savedFogDensity = 0.0025;
 
   constructor(
@@ -712,7 +714,7 @@ export class HutManager {
       useHighPoly ? sharedHutInteriorGeo! : assets.fallbackInteriorGeo,
       useHighPoly ? sharedHutInteriorMat! : assets.fallbackInteriorMat
     );
-    this.interiorMesh.castShadow = true;
+    this.interiorMesh.castShadow = false;
     this.interiorMesh.receiveShadow = true;
     this.interiorMesh.matrixAutoUpdate = false;
     activeInteriorMeshes.add(this.interiorMesh);
@@ -723,9 +725,9 @@ export class HutManager {
     plinthMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(plinthMesh);
 
-    // Warm flickering Hearth Light & Flame inside the stone fireplace (-1.55, 0.55, +0.85)
-    this.hearthLight = new THREE.PointLight(0xff8c2b, 3.8, 12.0, 1.5);
-    this.hearthLight.position.set(-1.35, 0.95, 0.85);
+    // Single warm flickering Hearth Light inside the stone fireplace so NUM_POINT_LIGHTS stays 1
+    this.hearthLight = new THREE.PointLight(0xffa445, 4.4, 15.0, 1.35);
+    this.hearthLight.position.set(-0.35, 1.25, 0.8);
     this.hearthLight.updateMatrix();
     this.hearthLight.matrixAutoUpdate = false;
     this.interiorGroup.add(this.hearthLight);
@@ -735,13 +737,6 @@ export class HutManager {
     this.hearthFlameMesh.updateMatrix();
     this.hearthFlameMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(this.hearthFlameMesh);
-
-    // Soft Table Candle Light (+1.55, 1.25, +0.75)
-    this.candleLight = new THREE.PointLight(0xffd166, 1.6, 8.5, 1.6);
-    this.candleLight.position.set(1.45, 1.35, 0.75);
-    this.candleLight.updateMatrix();
-    this.candleLight.matrixAutoUpdate = false;
-    this.interiorGroup.add(this.candleLight);
 
     // Front Wooden Doorstep Exit Ring (-0.35, 0.04, +2.42)
     this.exitRingMesh = new THREE.Mesh(assets.exitRingGeo, assets.exitRingMat);
@@ -862,8 +857,10 @@ export class HutManager {
     }
 
     this.savedBgColor = this.scene.background;
+    this.savedFogColor.copy(this.fog.color);
     this.savedFogDensity = this.fog.density;
     this.scene.background = this.interiorBgColor;
+    this.fog.color.copy(this.interiorBgColor);
     this.fog.density = 0.0004;
 
     // Place the dwarf just inside the front doorway looking into the cozy room, with isometric cutaway camera
@@ -876,6 +873,13 @@ export class HutManager {
       `🏠 Entered Dwarven Hut! Collect the ${this.currentArtefactDef.icon} ${this.currentArtefactDef.name}!`,
       false
     );
+  }
+
+  public syncOutdoorAtmosphereAfterRest(outdoorSkyColor: THREE.Color): void {
+    if (!this.activeHut) return;
+    this.savedFogColor.copy(outdoorSkyColor);
+    this.scene.background = this.interiorBgColor;
+    this.fog.color.copy(this.interiorBgColor);
   }
 
   public exitCurrentHut(silent = false): void {
@@ -894,6 +898,7 @@ export class HutManager {
     if (this.savedBgColor !== null) {
       this.scene.background = this.savedBgColor;
     }
+    this.fog.color.copy(this.savedFogColor);
     this.fog.density = this.savedFogDensity;
 
     if (!silent) {
@@ -1086,6 +1091,7 @@ export class HutManager {
           marker.root.matrixWorld,
           marker.ringMesh.matrix
         );
+        marker.ringMesh.matrixWorldNeedsUpdate = false;
 
         marker.beaconMesh.rotation.y = elapsedTime * 2.2 + h.worldZ;
         marker.beaconMesh.position.y = 1.25 + Math.sin(elapsedTime * 3.2 + h.worldX) * 0.12;
@@ -1094,6 +1100,7 @@ export class HutManager {
           marker.root.matrixWorld,
           marker.beaconMesh.matrix
         );
+        marker.beaconMesh.matrixWorldNeedsUpdate = false;
       }
     }
 
@@ -1135,7 +1142,7 @@ export class HutManager {
 
     // 1. Animate warm fireplace flicker & hearth flame
     const flicker = 1.0 + Math.sin(elapsedTime * 9.5) * 0.14 + Math.cos(elapsedTime * 15.0) * 0.08;
-    this.hearthLight.intensity = 3.6 * flicker;
+    this.hearthLight.intensity = 4.4 * flicker;
     this.hearthFlameMesh.scale.set(1.0, flicker, 1.0);
     this.hearthFlameMesh.rotation.y = elapsedTime * 2.4;
     this.hearthFlameMesh.updateMatrix();
@@ -1143,6 +1150,7 @@ export class HutManager {
       this.interiorGroup.matrixWorld,
       this.hearthFlameMesh.matrix
     );
+    this.hearthFlameMesh.matrixWorldNeedsUpdate = false;
 
     // 2. Pulse exit doorstep ring
     const exitPulse = 1.0 + Math.sin(elapsedTime * 4.2) * 0.09;
@@ -1152,6 +1160,7 @@ export class HutManager {
       this.interiorGroup.matrixWorld,
       this.exitRingMesh.matrix
     );
+    this.exitRingMesh.matrixWorldNeedsUpdate = false;
 
     // 3. Animate floating 3D Dwarven Artefact if not yet collected in this visit
     const lx = playerPos.x - hut.worldX;
@@ -1170,6 +1179,7 @@ export class HutManager {
         this.artefactGroup.matrixWorld,
         this.artefactRingMesh.matrix
       );
+      this.artefactRingMesh.matrixWorldNeedsUpdate = false;
 
       // Check proximity to pedestal at local (+0.95, -0.85)
       const adx = lx - 0.95;

@@ -96,6 +96,7 @@ const TIER_INTERIOR_SPECS: Record<
       -0.45, -2.05, 0.55,
       // Runic Anvil & Royal Tribute Vault station
       -0.95, -0.65, 0.38,
+      -1.38, -0.18, 0.36,
       // Spiral Stone Staircase in back-right corner
       1.85, -1.85, 0.88,
       2.15, -0.95, 0.68,
@@ -131,6 +132,7 @@ const TIER_INTERIOR_SPECS: Record<
       -2.25, -0.55, 0.65,
       // Runic Anvil & Royal Tribute Vault station
       -2.05, 0.95, 0.4,
+      -2.43, 1.51, 0.36,
       // Left Banquet Table & Benches
       -0.85, 0.45, 0.68,
       -0.25, -0.15, 0.68,
@@ -164,6 +166,7 @@ const TIER_INTERIOR_SPECS: Record<
       -2.35, -0.55, 0.68,
       // Runic Anvil & Royal Tribute Vault station
       -2.15, 1.0, 0.42,
+      -2.53, 1.56, 0.38,
       // Left Royal Banquet Table
       -0.9, 0.45, 0.68,
       -0.3, -0.15, 0.68,
@@ -240,10 +243,12 @@ export function ensureCastleInteriorModelLoaded(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -337,10 +342,12 @@ export function ensureCastleInteriorPropModelsLoaded(onLoaded?: () => void): voi
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -402,10 +409,12 @@ export function ensureCastleInteriorPropModelsLoaded(onLoaded?: () => void): voi
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -609,8 +618,6 @@ export class CastleInteriorManager {
   private interiorGroup = new THREE.Group();
   private interiorMesh!: THREE.Mesh;
   private hearthLight!: THREE.PointLight;
-  private chandelierLight!: THREE.PointLight;
-  private daisLight!: THREE.PointLight;
   private hearthFlameMesh!: THREE.Mesh;
   private exitRingMesh!: THREE.Mesh;
   private daisRingMesh!: THREE.Mesh;
@@ -621,6 +628,7 @@ export class CastleInteriorManager {
 
   private readonly interiorBgColor = new THREE.Color(0x1b1e26);
   private savedBgColor: THREE.Color | THREE.Texture | null = null;
+  private savedFogColor = new THREE.Color(0xdbeafe);
   private savedFogDensity = 0.0025;
 
   private onEnterCallback?: (visit: ActiveCastleVisit) => void;
@@ -751,7 +759,7 @@ export class CastleInteriorManager {
     this.interiorGroup.matrixAutoUpdate = false;
 
     this.interiorMesh = new THREE.Mesh(assets.fallbackGeo, assets.fallbackMat);
-    this.interiorMesh.castShadow = true;
+    this.interiorMesh.castShadow = false;
     this.interiorMesh.receiveShadow = true;
     this.interiorMesh.updateMatrix();
     this.interiorMesh.matrixAutoUpdate = false;
@@ -763,17 +771,10 @@ export class CastleInteriorManager {
     plinthMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(plinthMesh);
 
-    this.hearthLight = new THREE.PointLight(0xff8c2b, 4.4, 15.0, 1.4);
+    // Single warm interior PointLight so NUM_POINT_LIGHTS stays 1 (zero WebGL shader recompilations on entry/exit)
+    this.hearthLight = new THREE.PointLight(0xffb454, 5.4, 22.0, 1.25);
     this.hearthLight.matrixAutoUpdate = false;
     this.interiorGroup.add(this.hearthLight);
-
-    this.chandelierLight = new THREE.PointLight(0xffd166, 2.8, 16.0, 1.4);
-    this.chandelierLight.matrixAutoUpdate = false;
-    this.interiorGroup.add(this.chandelierLight);
-
-    this.daisLight = new THREE.PointLight(0xffe6a3, 2.2, 12.0, 1.5);
-    this.daisLight.matrixAutoUpdate = false;
-    this.interiorGroup.add(this.daisLight);
 
     this.hearthFlameMesh = new THREE.Mesh(assets.hearthFlameGeo, assets.hearthFlameMat);
     this.hearthFlameMesh.matrixAutoUpdate = false;
@@ -792,13 +793,13 @@ export class CastleInteriorManager {
     this.interiorGroup.add(this.anvilRingMesh);
 
     this.anvilPropMesh = new THREE.Mesh(assets.anvilPropGeo, assets.anvilPropMat);
-    this.anvilPropMesh.castShadow = true;
+    this.anvilPropMesh.castShadow = false;
     this.anvilPropMesh.receiveShadow = false;
     this.anvilPropMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(this.anvilPropMesh);
 
     this.vaultChestPropMesh = new THREE.Mesh(assets.vaultChestPropGeo, assets.vaultChestPropMat);
-    this.vaultChestPropMesh.castShadow = true;
+    this.vaultChestPropMesh.castShadow = false;
     this.vaultChestPropMesh.receiveShadow = false;
     this.vaultChestPropMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(this.vaultChestPropMesh);
@@ -864,27 +865,13 @@ export class CastleInteriorManager {
     const spec = TIER_INTERIOR_SPECS[visit.tier];
     this.syncTierMesh(visit.tier);
 
-    // Pre-warm next tier interior if below Tier III
-    if (visit.tier < 3) {
-      ensureCastleInteriorModelLoaded((visit.tier + 1) as CastleInteriorTier);
-    }
-
-    this.hearthLight.position.set(spec.hearthLocal.x, spec.hearthLocal.y, spec.hearthLocal.z);
+    // Position the single warm central PointLight between the hearth and chandelier to light the hall evenly
+    this.hearthLight.position.set(
+      (spec.hearthLocal.x + spec.chandelierLocal.x) * 0.5,
+      spec.chandelierLocal.y * 0.72,
+      (spec.hearthLocal.z + spec.chandelierLocal.z) * 0.5
+    );
     this.hearthLight.updateMatrix();
-
-    this.chandelierLight.position.set(
-      spec.chandelierLocal.x,
-      spec.chandelierLocal.y,
-      spec.chandelierLocal.z
-    );
-    this.chandelierLight.updateMatrix();
-
-    this.daisLight.position.set(
-      spec.daisLightLocal.x,
-      spec.daisLightLocal.y,
-      spec.daisLightLocal.z
-    );
-    this.daisLight.updateMatrix();
 
     this.hearthFlameMesh.position.set(spec.hearthLocal.x, 0.18, spec.hearthLocal.z);
     this.hearthFlameMesh.updateMatrix();
@@ -921,8 +908,10 @@ export class CastleInteriorManager {
     }
 
     this.savedBgColor = this.scene.background;
+    this.savedFogColor.copy(this.fog.color);
     this.savedFogDensity = this.fog.density;
     this.scene.background = this.interiorBgColor;
+    this.fog.color.copy(this.interiorBgColor);
     this.fog.density = 0.00035;
 
     // Position the dwarf inside the threshold looking toward the armory/banquet hall
@@ -933,6 +922,13 @@ export class CastleInteriorManager {
     this.dwarf.spawnBurst(entryX, this.interiorFloorY, entryZ, 14);
     this.playGateDoorSound(true);
     this.onEnterCallback?.(visit);
+  }
+
+  public syncOutdoorAtmosphereAfterRest(outdoorSkyColor: THREE.Color): void {
+    if (!this.activeVisit) return;
+    this.savedFogColor.copy(outdoorSkyColor);
+    this.scene.background = this.interiorBgColor;
+    this.fog.color.copy(this.interiorBgColor);
   }
 
   public exitCurrentCastle(silent = false): void {
@@ -948,6 +944,7 @@ export class CastleInteriorManager {
     if (this.savedBgColor !== null) {
       this.scene.background = this.savedBgColor;
     }
+    this.fog.color.copy(this.savedFogColor);
     this.fog.density = this.savedFogDensity;
 
     if (!silent) {
@@ -1040,7 +1037,7 @@ export class CastleInteriorManager {
 
     // Animate warm flickering Hearth Flame & PointLight
     const flicker = 1.0 + Math.sin(elapsedTime * 10.5) * 0.14 + Math.cos(elapsedTime * 17.0) * 0.08;
-    this.hearthLight.intensity = 4.4 * flicker;
+    this.hearthLight.intensity = 5.4 * flicker;
     this.hearthFlameMesh.scale.set(
       0.92 + Math.sin(elapsedTime * 13.0) * 0.1,
       0.88 + Math.cos(elapsedTime * 15.0) * 0.16,
@@ -1051,6 +1048,7 @@ export class CastleInteriorManager {
       this.interiorGroup.matrixWorld,
       this.hearthFlameMesh.matrix
     );
+    this.hearthFlameMesh.matrixWorldNeedsUpdate = false;
 
     const ringPulse = 0.94 + Math.sin(elapsedTime * 4.2) * 0.08;
     this.exitRingMesh.scale.setScalar(ringPulse);
@@ -1059,6 +1057,7 @@ export class CastleInteriorManager {
       this.interiorGroup.matrixWorld,
       this.exitRingMesh.matrix
     );
+    this.exitRingMesh.matrixWorldNeedsUpdate = false;
 
     this.daisRingMesh.scale.setScalar(ringPulse);
     this.daisRingMesh.updateMatrix();
@@ -1066,6 +1065,7 @@ export class CastleInteriorManager {
       this.interiorGroup.matrixWorld,
       this.daisRingMesh.matrix
     );
+    this.daisRingMesh.matrixWorldNeedsUpdate = false;
 
     const anvilPulse = 0.94 + Math.cos(elapsedTime * 4.8) * 0.08;
     this.anvilRingMesh.scale.setScalar(anvilPulse);
@@ -1074,6 +1074,7 @@ export class CastleInteriorManager {
       this.interiorGroup.matrixWorld,
       this.anvilRingMesh.matrix
     );
+    this.anvilRingMesh.matrixWorldNeedsUpdate = false;
 
     // Walk-out detection at the glowing cyan exit ring
     const exitWorldX = visit.worldX + spec.exitLocal.x;

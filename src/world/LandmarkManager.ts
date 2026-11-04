@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import stoneCircleModelUrl from '../../3dmodels/ancient stone circle asset.glb?url';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
+import { createOptimizedGlbLoader } from './ForestField';
 import { SavedBeaconWaypoint } from './ProgressStorage';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
@@ -88,27 +88,7 @@ export function loadStoneCircleModel(): void {
   if (stoneCircleLoadStarted) return;
   stoneCircleLoadStarted = true;
 
-  const loader = new GLTFLoader();
-  loader.register((parser) => ({
-    name: 'stripUnusedStoneCircleTextures',
-    beforeRoot: async () => {
-      const mats = parser.json.materials;
-      if (Array.isArray(mats)) {
-        for (const m of mats) {
-          if (m.pbrMetallicRoughness) {
-            delete m.pbrMetallicRoughness.metallicRoughnessTexture;
-            m.pbrMetallicRoughness.metallicFactor = 0.05;
-            m.pbrMetallicRoughness.roughnessFactor = 0.88;
-          }
-          delete m.normalTexture;
-          delete m.occlusionTexture;
-          if (m.extensions) {
-            delete m.extensions.KHR_materials_specular;
-          }
-        }
-      }
-    },
-  }));
+  const loader = createOptimizedGlbLoader();
   loader.load(
     stoneCircleModelUrl,
     (gltf) => {
@@ -151,10 +131,12 @@ export function loadStoneCircleModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();

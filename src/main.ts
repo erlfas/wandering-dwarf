@@ -366,8 +366,10 @@ explorer.setHutManager(hutManager);
 hutManager.setOnEnterHutCallback(() => {
   fishingManager.exitFishingMode();
   huntingManager.exitHuntingMode();
+  livingWorldManager.setInsideInterior(true);
 });
 hutManager.setOnExitHutCallback(() => {
+  livingWorldManager.setInsideInterior(castleInteriorManager.isInsideCastle());
   syncBeaconFog();
 });
 hutManager.setIsChallengeActiveFn(() => challengeManager.isChallengeActive());
@@ -396,6 +398,7 @@ castleInteriorManager.setCallbacks(
   (visit) => {
     fishingManager.exitFishingMode();
     huntingManager.exitHuntingMode();
+    livingWorldManager.setInsideInterior(true);
     castleAndQuarryManager.claimKingdomTribute(true);
     castleAndQuarryManager.renderCastleArmoryShop();
     treasureManager.grantBonusGold(
@@ -405,6 +408,7 @@ castleInteriorManager.setCallbacks(
     persistCurrentProgress(true);
   },
   () => {
+    livingWorldManager.setInsideInterior(hutManager.isInsideHut());
     syncBeaconFog();
     castleAndQuarryManager.renderCastleArmoryShop();
     persistCurrentProgress(true);
@@ -412,6 +416,7 @@ castleInteriorManager.setCallbacks(
   (visit) => {
     config.timeOfDay = 6.5;
     livingWorldManager.updateAtmosphereAndLantern(clock.elapsedTime, explorer.playerPos, sunOffset);
+    castleInteriorManager.syncOutdoorAtmosphereAfterRest(livingWorldManager.getSkyHorizonColor());
     castleAndQuarryManager.healAndRestoreFull();
     castleAndQuarryManager.grantKingsValorBlessing(90.0);
     landmarkManager.campfireBuffTimer = Math.max(landmarkManager.campfireBuffTimer, 60.0);
@@ -480,7 +485,11 @@ waterReflection.excludeFromReflection.push(
   dwarf.trailPoints,
   treasureManager.group,
   challengeManager.group,
-  fishingManager.group
+  fishingManager.group,
+  huntingManager.group,
+  trollCombatManager.group,
+  hutManager.group,
+  castleInteriorManager.group
 );
 
 treasureManager.setSurfaceHeightSampler(sampleSurfaceHeight);
@@ -1216,6 +1225,7 @@ let lastQPz = NaN;
 let lastQTimeMins = -1;
 let lastActiveChunks = -1;
 let lastMoveStatusText = '';
+let wasInsideInterior = false;
 
 function animate(): void {
   requestAnimationFrame(animate);
@@ -1237,13 +1247,6 @@ function animate(): void {
   // Update player movement, dwarf animation, and camera orbit
   explorer.update(dt);
 
-  // Stream endless terrain & grass chunks around player and animate wind shader
-  const px = explorer.playerPos.x;
-  const py = explorer.playerPos.y;
-  const pz = explorer.playerPos.z;
-  const hasLodestone = relicStore.has('lodestone_amulet');
-  const insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
-
   hutManager.update(dt, elapsedTime, explorer.playerPos);
   castleInteriorManager.update(dt, elapsedTime, explorer.playerPos);
   castleAndQuarryManager.update(
@@ -1252,6 +1255,20 @@ function animate(): void {
     explorer.playerPos,
     explorer.isSprintingNow()
   );
+
+  // Read player coordinates & interior state after interior enter/exit updates
+  const px = explorer.playerPos.x;
+  const py = explorer.playerPos.y;
+  const pz = explorer.playerPos.z;
+  const hasLodestone = relicStore.has('lodestone_amulet');
+  const insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
+  if (insideInterior !== wasInsideInterior) {
+    wasInsideInterior = insideInterior;
+    livingWorldManager.setInsideInterior(insideInterior);
+    // Force immediate shadow map refresh so hidden exterior castles/turrets never project ghost shadows indoors
+    lastShadowX = Number.NaN;
+  }
+
   trollCombatManager.update(dt, elapsedTime, explorer.playerPos, camera.position);
   bgm.setNightDangerMode(
     !insideInterior && (trollCombatManager.isNightNow() || trollCombatManager.hasActiveTrolls()),
@@ -1286,7 +1303,6 @@ function animate(): void {
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps
   if (
-    !insideInterior &&
     dirLight.castShadow &&
     (config as { enableShadows?: boolean }).enableShadows !== false
   ) {

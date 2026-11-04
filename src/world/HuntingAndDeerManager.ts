@@ -1,10 +1,10 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import deerModelUrl from '../../3dmodels/deer 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
+import { createOptimizedGlbLoader } from './ForestField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
 interface DeerSpecies {
@@ -80,25 +80,7 @@ export function loadDeerModel(): void {
   if (deerLoadStarted) return;
   deerLoadStarted = true;
 
-  const loader = new GLTFLoader();
-  loader.register((parser) => ({
-    name: 'strip-unused-deer-pbr-maps',
-    beforeRoot: async () => {
-      const json = parser.json;
-      if (Array.isArray(json.materials)) {
-        for (const matDef of json.materials) {
-          if (matDef.extensions) {
-            delete matDef.extensions.KHR_materials_specular;
-          }
-          if (matDef.pbrMetallicRoughness) {
-            delete matDef.pbrMetallicRoughness.metallicRoughnessTexture;
-          }
-          delete matDef.normalTexture;
-          delete matDef.occlusionTexture;
-        }
-      }
-    },
-  }));
+  const loader = createOptimizedGlbLoader();
 
   loader.load(
     deerModelUrl,
@@ -139,10 +121,12 @@ export function loadDeerModel(): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();

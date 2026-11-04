@@ -583,6 +583,18 @@ export function createOptimizedGlbLoader(): GLTFLoader {
   loader.register((parser) => ({
     name: 'strip_unused_pbr_maps',
     beforeRoot: async () => {
+      // Cap decoded GLB baseColor ImageBitmaps to 1024x1024 instead of 4096x4096 (saves ~146 MB RAM/VRAM per model!)
+      const texLoader = parser.textureLoader as THREE.ImageBitmapLoader | undefined;
+      if (texLoader && typeof texLoader.setOptions === 'function') {
+        texLoader.setOptions({
+          imageOrientation: 'none',
+          premultiplyAlpha: 'none',
+          colorSpaceConversion: 'none',
+          resizeWidth: 1024,
+          resizeHeight: 1024,
+          resizeQuality: 'medium',
+        });
+      }
       const materials = parser.json?.materials;
       if (!Array.isArray(materials)) return;
       for (const matDef of materials) {

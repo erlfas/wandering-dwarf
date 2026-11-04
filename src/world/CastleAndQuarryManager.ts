@@ -13,7 +13,12 @@ import {
   EquippedWeaponId,
 } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
-import { ActiveCastleVisit, CastleInteriorTier } from './CastleInteriorManager';
+import {
+  ActiveCastleVisit,
+  CastleInteriorTier,
+  ensureCastleInteriorModelLoaded,
+  ensureCastleInteriorPropModelsLoaded,
+} from './CastleInteriorManager';
 import { ChunkManager } from './ChunkManager';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
@@ -344,8 +349,8 @@ interface CastleInstance {
   isNearBallistaLOD: boolean;
   root: THREE.Group;
   completedGlbMesh: THREE.Mesh;
+  slotsGroup: THREE.Group;
   slotMeshes: THREE.Mesh[];
-  slotMaterials: Array<THREE.Material | THREE.Material[]>;
   ghostMesh: THREE.Mesh;
   beaconArrowGroup: THREE.Group;
   groundTargetRing: THREE.Mesh;
@@ -450,10 +455,12 @@ export function loadNaturalRockModel(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -581,10 +588,12 @@ export function ensureCastleTierModelLoaded(
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -674,10 +683,12 @@ export function ensureHeavyBallistaModelLoaded(onLoaded?: () => void): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -782,10 +793,12 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -846,10 +859,12 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!geo.attributes.normal) {
         geo.computeVertexNormals();
       }
-      const welded = mergeVertices(geo, 1e-4);
-      if (welded !== geo) {
-        geo.dispose();
-        geo = welded;
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
       }
       geo.computeBoundingBox();
       geo.computeBoundingSphere();
@@ -2824,7 +2839,19 @@ export class CastleAndQuarryManager {
       } else if (e.code === 'KeyG') {
         this.eatFood(false);
       } else if (e.code === 'KeyB') {
-        this.tryTriggerCastleSiege();
+        if (this.isInsideCastleFn()) {
+          e.stopImmediatePropagation();
+          this.tryTriggerCastleSiege();
+        } else {
+          const nearCastle = this.getNearestEnterableCastle(
+            this.dwarf.root.position.x,
+            this.dwarf.root.position.z
+          );
+          if (nearCastle && nearCastle.doorDist <= 18.0) {
+            e.stopImmediatePropagation();
+            this.tryTriggerCastleSiege();
+          }
+        }
       } else if (e.code === 'KeyT' && this.isInsideCastleFn()) {
         this.tryTemperEquippedWeapon();
       } else if (e.code === 'Enter' && !this.isInsideCastleFn() && !this.isInsideHutFn()) {
@@ -3607,8 +3634,11 @@ export class CastleAndQuarryManager {
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
+    const slotsGroup = new THREE.Group();
+    slotsGroup.matrixAutoUpdate = false;
+    root.add(slotsGroup);
+
     const slotMeshes: THREE.Mesh[] = [];
-    const slotMaterials: Array<THREE.Material | THREE.Material[]> = [];
     for (let i = 0; i < assets.castleSlots.length; i++) {
       const slot = assets.castleSlots[i];
       const geo = assets.castleSlotGeos[slot.geoIndex];
@@ -3622,8 +3652,7 @@ export class CastleAndQuarryManager {
       m.updateMatrix();
       m.matrixAutoUpdate = false;
       slotMeshes.push(m);
-      slotMaterials.push(mat);
-      root.add(m);
+      slotsGroup.add(m);
     }
 
     // Complete sculpted `.glb` castle mesh for completed Milestone Tiers (Tier I, II, III)
@@ -3747,8 +3776,8 @@ export class CastleAndQuarryManager {
       isNearBallistaLOD: true,
       root,
       completedGlbMesh,
+      slotsGroup,
       slotMeshes,
-      slotMaterials,
       ghostMesh,
       beaconArrowGroup,
       groundTargetRing,
@@ -3781,24 +3810,30 @@ export class CastleAndQuarryManager {
       if (useBallistaGlb) {
         turret.turretMesh.geometry = sharedHeavyBallistaGeo!;
         turret.turretMesh.material = sharedHeavyBallistaMat!;
-        turret.turretMesh.castShadow = true;
+        // Disable shadow map casting on 19,970-tri roof ballista GLBs (saves ~80,000 shadow tris per Tier III castle)
+        turret.turretMesh.castShadow = false;
         turret.turretMesh.receiveShadow = false;
         turret.baseMesh.visible = false;
         turret.ironMesh.visible = false;
       } else {
         turret.turretMesh.geometry = assets.ballistaHeadWoodGeo;
         turret.turretMesh.material = assets.castleWoodMat;
-        turret.turretMesh.castShadow = castle.isNearBallistaLOD;
+        turret.turretMesh.castShadow = false;
         turret.turretMesh.receiveShadow = true;
         turret.baseMesh.visible = true;
         turret.ironMesh.visible = true;
       }
     }
 
-    if (completedTier >= 1 && (!sharedHeavyBallistaGeo || !sharedHeavyBallistaMat)) {
-      ensureHeavyBallistaModelLoaded(() => {
-        this.syncCastleSlotHintVisuals(castle);
-      });
+    if (completedTier !== 0 && castle.isNearBallistaLOD) {
+      if (!sharedHeavyBallistaGeo || !sharedHeavyBallistaMat) {
+        ensureHeavyBallistaModelLoaded(() => {
+          this.syncCastleSlotHintVisuals(castle);
+        });
+      }
+      // Preload active Castle Interior & Armory station models when near a completed castle outside
+      ensureCastleInteriorModelLoaded(completedTier);
+      ensureCastleInteriorPropModelsLoaded();
     }
 
     // Pre-warm current and next Castle Tier `.glb` models asynchronously (only attach callback if not yet loaded!)
@@ -3834,6 +3869,15 @@ export class CastleAndQuarryManager {
     // 2. Remaining unplaced blocks of `slot.tier === activeTier` (`i > castle.blocksPlaced`) render as a
     //    translucent Golden Architectural Blueprint (`blueprintSlotMat`) so the player always sees the full
     //    remaining silhouette of the castle tier they are currently building!
+    if (castle.blocksPlaced >= totalSlots) {
+      castle.slotsGroup.visible = false;
+      castle.ghostMesh.visible = false;
+      castle.beaconArrowGroup.visible = false;
+      castle.groundTargetRing.visible = false;
+      return;
+    }
+
+    castle.slotsGroup.visible = true;
     for (let i = 0; i < totalSlots; i++) {
       const slot = assets.castleSlots[i];
       const isPlaced = i < castle.blocksPlaced;
@@ -3841,7 +3885,7 @@ export class CastleAndQuarryManager {
         if (slot.tier <= completedTier) {
           castle.slotMeshes[i].visible = false;
         } else {
-          castle.slotMeshes[i].material = castle.slotMaterials[i];
+          castle.slotMeshes[i].material = assets.castleVertexColorMat;
           castle.slotMeshes[i].visible = true;
           castle.slotMeshes[i].castShadow = castle.isNearGlbLOD;
           castle.slotMeshes[i].receiveShadow = true;
@@ -3854,13 +3898,6 @@ export class CastleAndQuarryManager {
       } else {
         castle.slotMeshes[i].visible = false;
       }
-    }
-
-    if (castle.blocksPlaced >= totalSlots) {
-      castle.ghostMesh.visible = false;
-      castle.beaconArrowGroup.visible = false;
-      castle.groundTargetRing.visible = false;
-      return;
     }
 
     const nextSlot = assets.castleSlots[castle.blocksPlaced];
@@ -4267,6 +4304,9 @@ export class CastleAndQuarryManager {
     this.syncHouseShopVisibility(insideHut);
     this.syncCastleShopVisibility(insideCastle);
 
+    // Always finish in-flight ballista bolts even if the player steps inside a Castle or Hut
+    this.updateBallistaBolts(dt);
+
     if (insideHut) {
       this.footCompassMesh.visible = false;
       this.setBanner(false, '');
@@ -4283,6 +4323,10 @@ export class CastleAndQuarryManager {
         this.health = Math.min(maxH, this.health + 4.0 * dt);
         this.syncEnergyAndFoodHUD();
       }
+
+      this.guidanceUpdateAccum += dt;
+      if (this.guidanceUpdateAccum < 0.1) return;
+      this.guidanceUpdateAccum = 0;
 
       const ring = this.getInteriorRingProximityFn(playerPos);
       if (ring === 'anvil') {
@@ -4612,13 +4656,7 @@ export class CastleAndQuarryManager {
     }
   }
 
-  private updateCastles(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
-    const assets = getSharedMasonryAssets();
-    const totalSlots = assets.castleSlots.length;
-    const nearGlbDistSq = Math.pow(this.config.chunkSize * 2.2, 2);
-    const nearBallistaDistSq = Math.pow(this.config.chunkSize * 1.5, 2);
-
-    // 1. Update in-flight pooled 3D Runic Siege Bolts
+  private updateBallistaBolts(dt: number): void {
     for (const bolt of this.pooledBallistaBolts) {
       if (!bolt.active) continue;
       bolt.age += dt;
@@ -4638,13 +4676,20 @@ export class CastleAndQuarryManager {
         bolt.mesh.visible = false;
       }
     }
+  }
+
+  private updateCastles(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
+    const assets = getSharedMasonryAssets();
+    const totalSlots = assets.castleSlots.length;
+    const nearGlbDistSq = Math.pow(this.config.chunkSize * 2.2, 2);
+    const nearBallistaDistSq = Math.pow(this.config.chunkSize * 0.9, 2);
 
     for (const c of this.castles) {
       const dx = playerPos.x - c.x;
       const dz = playerPos.z - c.z;
       const dSq = dx * dx + dz * dz;
 
-      // Close-range GLB LOD toggle (`dist <= 2.2` chunks for castle .glb, `dist <= 1.5` chunks for 19,970-tri ballista .glb)
+      // Close-range GLB LOD toggle (`dist <= 2.2` chunks for castle .glb, `dist <= 0.9` chunks / ~43m for 19,970-tri ballista .glb)
       const wantNearGlb = dSq <= nearGlbDistSq;
       const wantNearBallista = dSq <= nearBallistaDistSq;
       if (wantNearGlb !== c.isNearGlbLOD || wantNearBallista !== c.isNearBallistaLOD) {
@@ -4697,8 +4742,8 @@ export class CastleAndQuarryManager {
                 targetTroll.z
               );
             }
-          } else {
-            // Subtle idle sentinel sweep when no Trolls are nearby
+          } else if (wantNearBallista) {
+            // Subtle idle sentinel sweep only when within close visual range (~43m)
             turret.headGroup.rotation.y = Math.sin(elapsedTime * 0.65 + turret.localX) * 0.45;
             turret.headGroup.updateMatrix();
           }
@@ -5362,37 +5407,73 @@ export class CastleAndQuarryManager {
   // ============================================================================
   // CASTLE ARMORY & TAVERN PROVISION SHOP (Inside Tier I / II / III Castles)
   // ============================================================================
+  private temperDomRef: {
+    btn: HTMLButtonElement;
+    labelNode: Text;
+    costEl: HTMLSpanElement;
+  } | null = null;
+  private tributeDomRef: {
+    btn: HTMLButtonElement;
+    nameEl: HTMLSpanElement;
+    costEl: HTMLSpanElement;
+  } | null = null;
+  private armoryItemDomRefs: Array<{
+    def: CastleArmoryItemDef;
+    btn: HTMLButtonElement;
+    costSpan: HTMLSpanElement;
+  }> = [];
+  private armoryLockedHintEl: HTMLDivElement | null = null;
+
   private buildCastleArmoryShopDOM(): void {
     if (!this.castleShopListEl) return;
     this.castleShopListEl.innerHTML = '';
+    this.armoryItemDomRefs = [];
 
     // 1. Runic Anvil Weapon Tempering Button (`T` inside Castle)
     const temperBtn = document.createElement('button');
     temperBtn.type = 'button';
     temperBtn.className = 'relic-card affordable';
     temperBtn.dataset.castleAction = 'temper';
-    temperBtn.innerHTML =
-      `<span class="relic-icon">⚒️</span>` +
-      `<span class="relic-name"><kbd class="relic-key">T</kbd> Runic Anvil Temper (+1)</span>` +
-      `<span class="relic-cost">200g</span>`;
+    const temperIcon = document.createElement('span');
+    temperIcon.className = 'relic-icon';
+    temperIcon.textContent = '⚒️';
+    const temperName = document.createElement('span');
+    temperName.className = 'relic-name';
+    const temperKbd = document.createElement('kbd');
+    temperKbd.className = 'relic-key';
+    temperKbd.textContent = 'T';
+    const temperLabelNode = document.createTextNode(' Runic Anvil Temper (+1)');
+    temperName.append(temperKbd, temperLabelNode);
+    const temperCost = document.createElement('span');
+    temperCost.className = 'relic-cost';
+    temperCost.textContent = '200g';
+    temperBtn.append(temperIcon, temperName, temperCost);
     temperBtn.addEventListener('click', () => {
       this.tryTemperEquippedWeapon();
     });
     this.castleShopListEl.appendChild(temperBtn);
+    this.temperDomRef = { btn: temperBtn, labelNode: temperLabelNode, costEl: temperCost };
 
     // 2. Royal Tribute Vault Button (Passive Kingdom Gold)
     const tributeBtn = document.createElement('button');
     tributeBtn.type = 'button';
     tributeBtn.className = 'relic-card locked';
     tributeBtn.dataset.castleAction = 'tribute';
-    tributeBtn.innerHTML =
-      `<span class="relic-icon">👑</span>` +
-      `<span class="relic-name">Royal Tribute Vault</span>` +
-      `<span class="relic-cost">0g</span>`;
+    const tributeIcon = document.createElement('span');
+    tributeIcon.className = 'relic-icon';
+    tributeIcon.textContent = '👑';
+    const tributeName = document.createElement('span');
+    tributeName.className = 'relic-name';
+    tributeName.textContent = 'Royal Tribute Vault';
+    const tributeCost = document.createElement('span');
+    tributeCost.className = 'relic-cost';
+    tributeCost.textContent = '0g';
+    tributeBtn.append(tributeIcon, tributeName, tributeCost);
     tributeBtn.addEventListener('click', () => {
       this.claimKingdomTribute(false);
     });
     this.castleShopListEl.appendChild(tributeBtn);
+    this.tributeDomRef = { btn: tributeBtn, nameEl: tributeName, costEl: tributeCost };
 
     // 3. Blood-Moon Castle Siege Defense Button (`B` key)
     const siegeBtn = document.createElement('button');
@@ -5438,10 +5519,12 @@ export class CastleAndQuarryManager {
       });
 
       this.castleShopListEl.appendChild(btn);
+      this.armoryItemDomRefs.push({ def, btn, costSpan });
     }
     const lockedHint = document.createElement('div');
     lockedHint.className = 'armory-locked-hint hidden';
     this.castleShopListEl.appendChild(lockedHint);
+    this.armoryLockedHintEl = lockedHint;
     this.renderCastleArmoryShop();
   }
 
@@ -5472,23 +5555,15 @@ export class CastleAndQuarryManager {
       this.castleShopTitleEl.textContent = tierTitle;
     }
 
-    // Update Runic Anvil Tempering row
-    const temperBtn = this.castleShopListEl.querySelector<HTMLButtonElement>(
-      'button[data-castle-action="temper"]'
-    );
-    if (temperBtn) {
+    // 1. Update Runic Anvil Tempering row in O(1) without innerHTML re-parsing
+    if (this.temperDomRef) {
+      const { btn: temperBtn, labelNode, costEl } = this.temperDomRef;
       const wSpec = WEAPON_COMBAT_SPECS[this.equippedWeaponId] ?? WEAPON_COMBAT_SPECS.mallet;
-      const nameEl = temperBtn.querySelector('.relic-name');
-      const costEl = temperBtn.querySelector('.relic-cost');
       if (this.weaponTemperLevel >= 3) {
         temperBtn.className = 'relic-card owned';
-        if (nameEl) {
-          nameEl.innerHTML = `<kbd class="relic-key">T</kbd> ${wSpec.name} +3 (Runefire +75%)`;
-        }
-        if (costEl) {
-          costEl.className = 'relic-cost owned-badge';
-          costEl.textContent = 'MAX +3';
-        }
+        labelNode.nodeValue = ` ${wSpec.name} +3 (Runefire +75%)`;
+        costEl.className = 'relic-cost owned-badge';
+        costEl.textContent = 'MAX +3';
       } else {
         const nextLvl = (this.weaponTemperLevel + 1) as 1 | 2 | 3;
         const cost = nextLvl === 1 ? 200 : nextLvl === 2 ? 350 : 550;
@@ -5496,45 +5571,28 @@ export class CastleAndQuarryManager {
         const tierLocked = currentTier < nextLvl;
         const canAfford = !tierLocked && gold >= cost;
         temperBtn.className = `relic-card ${canAfford ? 'affordable' : 'locked'}`;
-        if (nameEl) {
-          nameEl.innerHTML = `<kbd class="relic-key">T</kbd> Temper ${wSpec.name} → +${nextLvl} (${pct})`;
-        }
-        if (costEl) {
-          costEl.className = 'relic-cost';
-          costEl.textContent = tierLocked ? `🔒 T${nextLvl}` : `${cost}g`;
-        }
+        labelNode.nodeValue = ` Temper ${wSpec.name} → +${nextLvl} (${pct})`;
+        costEl.className = 'relic-cost';
+        costEl.textContent = tierLocked ? `🔒 T${nextLvl}` : `${cost}g`;
       }
     }
 
-    // Update Royal Tribute Vault row
-    const tributeBtn = this.castleShopListEl.querySelector<HTMLButtonElement>(
-      'button[data-castle-action="tribute"]'
-    );
-    if (tributeBtn) {
+    // 2. Update Royal Tribute Vault row in O(1)
+    if (this.tributeDomRef) {
+      const { btn: tributeBtn, nameEl, costEl } = this.tributeDomRef;
       const claimable = Math.floor(this.unclaimedTributeGold);
       const rate = this.getPassiveTributeRatePerMinute();
-      const nameEl = tributeBtn.querySelector('.relic-name');
-      const costEl = tributeBtn.querySelector('.relic-cost');
       tributeBtn.className = `relic-card ${claimable >= 1 ? 'affordable' : 'locked'}`;
-      if (nameEl) {
-        nameEl.textContent = `Royal Tribute Vault (+${rate}g/m)`;
-      }
-      if (costEl) {
-        costEl.textContent = claimable >= 1 ? `Claim +${claimable}g` : `${claimable}g`;
-      }
+      nameEl.textContent = `Royal Tribute Vault (+${rate}g/m)`;
+      costEl.textContent = claimable >= 1 ? `Claim +${claimable}g` : `${claimable}g`;
     }
 
+    // 3. Update Armory item cards in O(1) per card using cached refs
     let hiddenHigherTierCount = 0;
-    const buttons = this.castleShopListEl.querySelectorAll<HTMLButtonElement>(
-      'button[data-armory-id]'
-    );
-    buttons.forEach((btn) => {
-      const id = btn.dataset.armoryId as CastleArmoryItemId;
-      const def = CASTLE_ARMORY_CATALOG.find((d) => d.id === id);
-      if (!def) return;
-
+    for (let i = 0; i < this.armoryItemDomRefs.length; i++) {
+      const { def, btn, costSpan } = this.armoryItemDomRefs[i];
       const isProvision = def.category === 'provision';
-      const owned = !isProvision && this.unlockedArmory.has(id);
+      const owned = !isProvision && this.unlockedArmory.has(def.id);
       const isEquipped =
         (def.weaponId && this.equippedWeaponId === def.weaponId) ||
         (def.shieldId && this.equippedShieldId === def.shieldId);
@@ -5545,7 +5603,7 @@ export class CastleAndQuarryManager {
       if (tierLocked && !owned) {
         btn.style.display = 'none';
         hiddenHigherTierCount++;
-        return;
+        continue;
       }
       btn.style.display = 'flex';
 
@@ -5558,29 +5616,25 @@ export class CastleAndQuarryManager {
             : 'locked';
       btn.className = `relic-card ${state}`;
 
-      const costSpan = btn.querySelector('.relic-cost');
-      if (costSpan) {
-        if (owned) {
-          costSpan.className = 'relic-cost owned-badge';
-          costSpan.textContent = isEquipped ? 'EQUIPPED' : 'EQUIP';
-        } else if (tierLocked) {
-          costSpan.className = 'relic-cost';
-          costSpan.textContent = `🔒 T${def.minTier}`;
-        } else {
-          costSpan.className = 'relic-cost';
-          costSpan.textContent = `${def.cost}g`;
-        }
+      if (owned) {
+        costSpan.className = 'relic-cost owned-badge';
+        costSpan.textContent = isEquipped ? 'EQUIPPED' : 'EQUIP';
+      } else if (tierLocked) {
+        costSpan.className = 'relic-cost';
+        costSpan.textContent = `🔒 T${def.minTier}`;
+      } else {
+        costSpan.className = 'relic-cost';
+        costSpan.textContent = `${def.cost}g`;
       }
-    });
+    }
 
-    const lockedHintEl = this.castleShopListEl.querySelector<HTMLElement>('.armory-locked-hint');
-    if (lockedHintEl) {
+    if (this.armoryLockedHintEl) {
       if (hiddenHigherTierCount > 0) {
         const nextTier = currentTier === 1 ? 'Tier II (18 Blocks)' : 'Tier III (30 Blocks)';
-        lockedHintEl.textContent = `🔒 +${hiddenHigherTierCount} stronger items unlock at ${nextTier}`;
-        lockedHintEl.classList.remove('hidden');
+        this.armoryLockedHintEl.textContent = `🔒 +${hiddenHigherTierCount} stronger items unlock at ${nextTier}`;
+        this.armoryLockedHintEl.classList.remove('hidden');
       } else {
-        lockedHintEl.classList.add('hidden');
+        this.armoryLockedHintEl.classList.add('hidden');
       }
     }
   }

@@ -297,9 +297,10 @@ export class LivingWorldManager {
   }
 
   private attachDwarfLantern(): void {
+    // Keep dwarfLanternLight visible outdoors (intensity = 0 by day) so NUM_POINT_LIGHTS stays 1 everywhere
     this.dwarfLanternLight = new THREE.PointLight(0xffaa33, 0, 26, 1.4);
     this.dwarfLanternLight.position.set(0.42, 1.15, 0.35);
-    this.dwarfLanternLight.visible = false;
+    this.dwarfLanternLight.visible = true;
     this.dwarf.root.add(this.dwarfLanternLight);
 
     const lanternGeo = new THREE.CylinderGeometry(0.09, 0.11, 0.24, 6);
@@ -310,6 +311,22 @@ export class LivingWorldManager {
     this.dwarfLanternMesh.position.set(0.38, 0.82, 0.25);
     this.dwarfLanternMesh.visible = false;
     this.dwarf.root.add(this.dwarfLanternMesh);
+  }
+
+  private insideInterior = false;
+
+  public setInsideInterior(inside: boolean): void {
+    if (this.insideInterior === inside) return;
+    this.insideInterior = inside;
+    this.dwarfLanternLight.visible = !inside;
+    if (inside) {
+      this.dwarfLanternMesh.visible = false;
+      this.starDome.visible = false;
+    }
+  }
+
+  public getSkyHorizonColor(): THREE.Color {
+    return this.skyHorizonColor;
   }
 
   public update(
@@ -571,7 +588,9 @@ export class LivingWorldManager {
     if (twilightFactor > 0.01) {
       skyCol.lerp(isDawn ? SKY_DAWN : SKY_SUNSET, twilightFactor * 0.78);
     }
-    this.fog.color.copy(skyCol);
+    if (!this.insideInterior) {
+      this.fog.color.copy(skyCol);
+    }
 
     // 2. Directional Sun / Moon Light
     const lightRadius = 125;
@@ -592,7 +611,7 @@ export class LivingWorldManager {
     this.hemiLight.intensity = THREE.MathUtils.lerp(0.82, 0.34, nightFactor);
 
     // 4. Twinkling Starfield Dome at Twilight / Night
-    this.starDome.visible = nightFactor > 0.15;
+    this.starDome.visible = !this.insideInterior && nightFactor > 0.15;
     if (this.starDome.visible) {
       this.starDome.position.set(playerPos.x, 0, playerPos.z);
       this.starDome.rotation.y = elapsedTime * 0.008;
@@ -600,9 +619,10 @@ export class LivingWorldManager {
     }
 
     // 5. Automatic Dwarven Belt Lantern at Dusk / Night
-    const showLantern = nightFactor > 0.25;
+    // Keep dwarfLanternLight.visible = !insideInterior (intensity = 0 by day) so NUM_POINT_LIGHTS stays 1
+    const showLantern = !this.insideInterior && nightFactor > 0.25;
     this.dwarfLanternMesh.visible = showLantern;
-    this.dwarfLanternLight.visible = showLantern;
+    this.dwarfLanternLight.visible = !this.insideInterior;
     if (showLantern) {
       const flicker = 1.0 + Math.sin(elapsedTime * 11.0) * 0.08;
       this.dwarfLanternLight.intensity = ((nightFactor - 0.25) / 0.75) * 3.6 * flicker;
