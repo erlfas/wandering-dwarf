@@ -119,6 +119,17 @@ export const DWARVEN_RANKS: DwarvenRankDef[] = [
     carrySpeedBonus: 0.3,
     perkSummary: '+80❤️/+65⚡ Max, +60% Damage, Golden Crown & Royal Regen',
   },
+  {
+    rank: 6,
+    title: 'Lord of the Iron Citadel',
+    badge: '🏰 Rank VI',
+    minRenown: 2200,
+    maxHpBonus: 115,
+    maxEnergyBonus: 90,
+    damageMult: 1.85,
+    carrySpeedBonus: 0.38,
+    perkSummary: '+115❤️/+90⚡ Max, +85% Damage, +38% Haul Speed & Citadel Mastery',
+  },
 ]
 
 export interface AssignmentSnapshot {
@@ -139,6 +150,8 @@ export interface AssignmentSnapshot {
   challengesCompleted: number
   fishCaughtTotal: number
   deerHuntedTotal: number
+  weaponTemperLevel: number
+  castleSiegesWon: number
 }
 
 export interface ChronicleAssignmentDef {
@@ -328,6 +341,36 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     getProgress: (s) => ({
       current: Math.min(5, s.artefactsCollected) + Math.min(3, s.trollsSlain),
       target: 8,
+    }),
+  },
+  {
+    id: 'tempered_in_runefire',
+    chapter: 13,
+    title: 'Tempered in Runefire',
+    icon: '⚒️',
+    description: 'Enter a completed Castle (E) and temper your weapon to +1 at the Dwarven Runic Anvil (T).',
+    hint: 'Step into the glowing violet Runic Anvil circle inside your Keep and press E or T (200g).',
+    rewardGold: 260,
+    rewardRenown: 260,
+    rewardFood: 4,
+    getProgress: (s) => ({
+      current: Math.min(1, s.weaponTemperLevel),
+      target: 1,
+    }),
+  },
+  {
+    id: 'siege_of_the_iron_citadel',
+    chapter: 14,
+    title: 'Siege of the Iron Citadel',
+    icon: '📯',
+    description: 'Repel a Blood-Moon Castle Siege (Press B at your Castle) with your Roof Ballista Turrets!',
+    hint: 'Press B outside your completed Castle drawbridge to summon a 3-Troll Siege Wave and defend the gate!',
+    rewardGold: 500,
+    rewardRenown: 450,
+    rewardFood: 6,
+    getProgress: (s) => ({
+      current: Math.min(1, s.castleSiegesWon),
+      target: 1,
     }),
   },
 ]

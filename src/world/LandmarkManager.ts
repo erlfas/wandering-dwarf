@@ -445,6 +445,8 @@ export class LandmarkManager {
   public readonly group = new THREE.Group();
   public campfireBuffTimer = 0;
   public onBeaconLit?: (waypoint: SavedBeaconWaypoint) => void;
+  public getCompletedCastleWaypointsFn: () => SavedBeaconWaypoint[] = () => [];
+  public isInsideCastleFn: () => boolean = () => false;
 
   private activeLandmarks = new Map<number, ChunkLandmarks>();
   private desiredKeys = new Set<number>();
@@ -474,7 +476,7 @@ export class LandmarkManager {
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
-      if (e.code === 'KeyT') {
+      if (e.code === 'KeyT' && !this.isInsideCastleFn()) {
         this.cycleFastTravel();
       }
     });
@@ -544,10 +546,14 @@ export class LandmarkManager {
   public cycleFastTravel(): void {
     const waypoints: SavedBeaconWaypoint[] = [
       { id: 'spawn', name: '🏕️ Spawn Valley', x: 0, y: 0, z: 0 },
+      ...this.getCompletedCastleWaypointsFn(),
       ...this.getLitBeacons(),
     ];
     if (waypoints.length <= 1) {
-      this.showToast('🔥 Light a Hilltop Watchtower Beacon to unlock Fast-Travel!', false);
+      this.showToast(
+        '🔥 Light a Watchtower Beacon or complete a Castle (8 Blocks) to unlock Fast-Travel!',
+        false
+      );
       return;
     }
     this.nextWaypointIndex = (this.nextWaypointIndex + 1) % waypoints.length;
@@ -556,10 +562,15 @@ export class LandmarkManager {
     this.onTeleportTo(target.x, target.z, target.name);
   }
 
+  public refreshWaypointBar(): void {
+    this.renderWaypointBar();
+  }
+
   private renderWaypointBar(): void {
     if (!this.waypointBarEl || !this.waypointListEl) return;
     const beacons = this.getLitBeacons();
-    if (beacons.length === 0) {
+    const castles = this.getCompletedCastleWaypointsFn();
+    if (beacons.length === 0 && castles.length === 0) {
       this.waypointBarEl.classList.add('hidden');
       return;
     }
@@ -568,6 +579,7 @@ export class LandmarkManager {
 
     const allPoints: SavedBeaconWaypoint[] = [
       { id: 'spawn', name: '🏕️ Spawn (0,0)', x: 0, y: 0, z: 0 },
+      ...castles,
       ...beacons,
     ];
 

@@ -272,6 +272,14 @@ export class TrollCombatManager {
 
   private trollGlbLoadStarted = false;
   private bannerUpdateAccum = 999;
+  private activeSiegeCastleName = '';
+  private activeSiegeRemaining = 0;
+  private readonly nearestPosResult = { x: 0, y: 0, z: 0 };
+  public onSiegeVictoryReward?: (
+    castleName: string,
+    goldReward: number,
+    foodReward: number
+  ) => void;
 
   private initTrollPool(): void {
     const assets = getSharedTrollFallbackAssets();
@@ -585,6 +593,93 @@ export class TrollCombatManager {
     return this.nearestTrollResult;
   }
 
+  public findNearestActiveTrollPosition(
+    wx: number,
+    wz: number,
+    maxRange: number
+  ): { x: number; y: number; z: number } | null {
+    let best: TrollInstance | null = null;
+    let bestDistSq = maxRange * maxRange;
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = t.pos.x - wx;
+      const dz = t.pos.z - wz;
+      const dSq = dx * dx + dz * dz;
+      if (dSq <= bestDistSq) {
+        bestDistSq = dSq;
+        best = t;
+      }
+    }
+    if (!best) return null;
+    this.nearestPosResult.x = best.pos.x;
+    this.nearestPosResult.y = best.pos.y;
+    this.nearestPosResult.z = best.pos.z;
+    return this.nearestPosResult;
+  }
+
+  public isCastleSiegeActive(): boolean {
+    return this.activeSiegeRemaining > 0;
+  }
+
+  public startCastleSiegeWave(castleX: number, castleZ: number, castleName: string): boolean {
+    if (this.activeSiegeRemaining > 0) return false;
+    this.loadTrollGlbModel();
+
+    // Ensure Nightfall if summoned during daytime so the Trolls don't petrify in the sun
+    const hour = ((this.config.timeOfDay % 24) + 24) % 24;
+    if (hour >= 5.5 && hour < 19.5) {
+      this.config.timeOfDay = 21.2;
+      this.isNightActive = true;
+    }
+
+    const minLandY = this.config.enableWater ? this.config.waterLevel + 0.45 : -999;
+    const angles = [-0.52, 0.0, 0.52];
+    const dists = [22.0, 24.5, 22.0];
+    let spawned = 0;
+
+    for (let i = 0; i < this.trollPool.length; i++) {
+      const t = this.trollPool[i];
+      const ang = angles[i % angles.length];
+      const dist = dists[i % dists.length];
+      const sx = castleX + Math.sin(ang) * dist;
+      const sz = castleZ + 6.5 + Math.cos(ang) * dist;
+      const sy = Math.max(minLandY, this.sampleGroundHeight(sx, sz));
+
+      t.active = true;
+      t.hp = TROLL_MAX_HP;
+      t.maxHp = TROLL_MAX_HP;
+      t.pos.set(sx, sy, sz);
+      t.homePos.set(castleX, sy, castleZ + 7.5);
+      t.heading = Math.atan2(castleX - sx, castleZ + 6.5 - sz);
+      t.state = 'chase';
+      t.attackTimer = 0;
+      t.attackCooldown = 0;
+      t.staggerTimer = 0;
+      t.hitFlashTimer = 0;
+      t.dyingTimer = 0;
+      t.roarCooldown = 1.2;
+      t.root.position.copy(t.pos);
+      t.root.rotation.set(0, t.heading, 0);
+      t.root.scale.setScalar(1.0);
+      t.root.visible = true;
+      t.hpBarGroup.visible = true;
+      t.hpFillMesh.scale.x = 1.0;
+      t.hpFillMat.color.setHex(0xef233c);
+      this.transitionTrollAnim(t, 'walk');
+      spawned++;
+    }
+
+    this.activeSiegeCastleName = castleName;
+    this.activeSiegeRemaining = spawned;
+    this.bannerUpdateAccum = 999;
+    this.playOneShotPool(this.roarAudioPool, 0.85, () => this.playFallbackRoarSynth());
+    this.showToast(
+      `📯 BLOOD-MOON CASTLE SIEGE! 3 Troll-Beasts march on ${castleName}! Roof Ballistae are firing — slay the wave for +450g, +5 🍖 & +250 Renown!`,
+      true
+    );
+    return true;
+  }
+
   public isNightNow(): boolean {
     const hour = ((this.config.timeOfDay % 24) + 24) % 24;
     return hour >= 19.5 || hour < 5.5;
@@ -675,6 +770,7 @@ export class TrollCombatManager {
       }
     }
     this.stopOminousProximityAudio();
+    this.activeSiegeRemaining = 0;
     if (hadActive && petrifyToast) {
       this.showToast('☀️ Dawn breaks! The Night Trolls retreat from the morning sun!', false);
     }
@@ -777,6 +873,18 @@ export class TrollCombatManager {
       const bountyGold = 300;
       const droppedRations = 3;
       this.onTrollDefeatedReward(bountyGold, droppedRations, this.trollsSlain, troll.title);
+
+      if (this.activeSiegeRemaining > 0) {
+        this.activeSiegeRemaining = Math.max(0, this.activeSiegeRemaining - 1);
+        if (this.activeSiegeRemaining === 0) {
+          this.onSiegeVictoryReward?.(this.activeSiegeCastleName, 450, 5);
+        } else {
+          this.showToast(
+            `🛡️ Castle Siege Progress: ${3 - this.activeSiegeRemaining}/3 Siege Trolls Slain! (${this.activeSiegeRemaining} remaining)`,
+            true
+          );
+        }
+      }
     }
   }
 

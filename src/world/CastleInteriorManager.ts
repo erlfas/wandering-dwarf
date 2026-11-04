@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import borderKeepInteriorUrl from '../../3dmodels/border keep interior.glb?url';
 import grandCitadelInteriorUrl from '../../3dmodels/grand citadel interior 3d model.glb?url';
+import runicAnvilModelUrl from '../../3dmodels/runic anvil 3d model.glb?url';
 import strongholdInteriorUrl from '../../3dmodels/stonewall_stronghold_interior.glb?url';
+import royalVaultChestModelUrl from '../../3dmodels/treasure chest 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
@@ -34,6 +36,14 @@ interface SharedCastleInteriorAssets {
   exitRingMat: THREE.MeshBasicMaterial;
   throneRingGeo: THREE.BufferGeometry;
   throneRingMat: THREE.MeshBasicMaterial;
+  anvilRingGeo: THREE.BufferGeometry;
+  anvilRingMat: THREE.MeshBasicMaterial;
+  anvilPropGeo: THREE.BufferGeometry;
+  anvilPropMat: THREE.MeshStandardMaterial;
+  vaultChestPropGeo: THREE.BufferGeometry;
+  vaultChestPropMat: THREE.MeshStandardMaterial;
+  anvilRuneGlowGeo: THREE.BufferGeometry;
+  anvilRuneGlowMat: THREE.MeshBasicMaterial;
   hearthFlameGeo: THREE.BufferGeometry;
   hearthFlameMat: THREE.MeshBasicMaterial;
 }
@@ -47,6 +57,11 @@ const tierLoadCallbacks: Record<CastleInteriorTier, Array<() => void>> = {
   3: [],
 };
 
+let sharedRunicAnvilAsset: TierInteriorAsset | null = null;
+let sharedVaultChestAsset: TierInteriorAsset | null = null;
+let interiorPropsLoadStarted = false;
+const interiorPropsLoadCallbacks: Array<() => void> = [];
+
 const TIER_INTERIOR_SPECS: Record<
   CastleInteriorTier,
   {
@@ -58,6 +73,7 @@ const TIER_INTERIOR_SPECS: Record<
     hearthLocal: { x: number; y: number; z: number };
     chandelierLocal: { x: number; y: number; z: number };
     daisLightLocal: { x: number; y: number; z: number };
+    anvilLocal: { x: number; z: number; rotY: number };
     colliders: Float32Array;
   }
 > = {
@@ -73,10 +89,13 @@ const TIER_INTERIOR_SPECS: Record<
     hearthLocal: { x: 0.35, y: 0.85, z: -1.75 },
     chandelierLocal: { x: -0.4, y: 2.8, z: 0.2 },
     daisLightLocal: { x: 1.4, y: 2.2, z: -1.1 },
+    anvilLocal: { x: -0.95, z: -0.65, rotY: 0.45 },
     colliders: new Float32Array([
       // Stone Hearth & Cauldron in back-center/right
       0.35, -1.95, 0.78,
       -0.45, -2.05, 0.55,
+      // Runic Anvil & Royal Tribute Vault station
+      -0.95, -0.65, 0.38,
       // Spiral Stone Staircase in back-right corner
       1.85, -1.85, 0.88,
       2.15, -0.95, 0.68,
@@ -105,10 +124,13 @@ const TIER_INTERIOR_SPECS: Record<
     hearthLocal: { x: -1.25, y: 0.95, z: -0.85 },
     chandelierLocal: { x: 0.0, y: 3.8, z: 0.0 },
     daisLightLocal: { x: 1.75, y: 2.6, z: -1.45 },
+    anvilLocal: { x: -2.05, z: 0.95, rotY: 0.55 },
     colliders: new Float32Array([
       // Grand Stone Hearth & Cauldron along left-back wall
       -1.35, -1.25, 0.85,
       -2.25, -0.55, 0.65,
+      // Runic Anvil & Royal Tribute Vault station
+      -2.05, 0.95, 0.4,
       // Left Banquet Table & Benches
       -0.85, 0.45, 0.68,
       -0.25, -0.15, 0.68,
@@ -135,10 +157,13 @@ const TIER_INTERIOR_SPECS: Record<
     hearthLocal: { x: -1.3, y: 1.0, z: -0.9 },
     chandelierLocal: { x: 0.0, y: 4.1, z: 0.0 },
     daisLightLocal: { x: 1.85, y: 2.8, z: -1.55 },
+    anvilLocal: { x: -2.15, z: 1.0, rotY: 0.55 },
     colliders: new Float32Array([
       // Grand Citadel Hearth
       -1.35, -1.25, 0.88,
       -2.35, -0.55, 0.68,
+      // Runic Anvil & Royal Tribute Vault station
+      -2.15, 1.0, 0.42,
       // Left Royal Banquet Table
       -0.9, 0.45, 0.68,
       -0.3, -0.15, 0.68,
@@ -251,6 +276,165 @@ export function ensureCastleInteriorModelLoaded(
   );
 }
 
+/**
+ * Asynchronously loads and optimizes the two Castle Interior station `.glb` models:
+ * 1. `3dmodels/runic anvil 3d model.glb` (`18,510` tris, `10.3 MB` textures)
+ *    normalized to `1.02m` width (`~0.56m` height) with base at `Y = 0`.
+ * 2. `3dmodels/treasure chest 3d model.glb` (`18,763` tris, `10.55 MB` textures)
+ *    normalized to `0.68m` width (`~0.62m` height with open lid) positioned beside the anvil.
+ * Strips `KHR_materials_specular` and the 7.12–7.48 MB PNG secondary PBR textures in `beforeRoot`
+ * before `ImageBitmap` decoding, guards `computeVertexNormals()`, and welds vertices.
+ */
+export function ensureCastleInteriorPropModelsLoaded(onLoaded?: () => void): void {
+  if (sharedRunicAnvilAsset && sharedVaultChestAsset) {
+    onLoaded?.();
+    return;
+  }
+  if (onLoaded) {
+    interiorPropsLoadCallbacks.push(onLoaded);
+  }
+  if (interiorPropsLoadStarted) return;
+  interiorPropsLoadStarted = true;
+
+  const loader = createOptimizedGlbLoader();
+  const notifyListeners = () => {
+    for (const cb of interiorPropsLoadCallbacks) {
+      cb();
+    }
+    if (sharedRunicAnvilAsset && sharedVaultChestAsset) {
+      interiorPropsLoadCallbacks.length = 0;
+    }
+  };
+
+  loader.load(
+    runicAnvilModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry;
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanX = Math.max(0.01, box.max.x - box.min.x);
+      const scaleFactor = 1.02 / spanX;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.56,
+        metalness: 0.42,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedRunicAnvilAsset = { geo, mat };
+      notifyListeners();
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load runic anvil 3D model:', err);
+    }
+  );
+
+  loader.load(
+    royalVaultChestModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry;
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanX = Math.max(0.01, box.max.x - box.min.x);
+      const scaleFactor = 0.68 / spanX;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+      geo.rotateY(0.32);
+      geo.translate(-0.62, 0, 0.28);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      const welded = mergeVertices(geo, 1e-4);
+      if (welded !== geo) {
+        geo.dispose();
+        geo = welded;
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.52,
+        metalness: 0.36,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedVaultChestAsset = { geo, mat };
+      notifyListeners();
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load royal vault treasure chest 3D model:', err);
+    }
+  );
+}
+
 function getSharedCastleInteriorAssets(): SharedCastleInteriorAssets {
   if (sharedInteriorAssets) return sharedInteriorAssets;
 
@@ -309,6 +493,73 @@ function getSharedCastleInteriorAssets(): SharedCastleInteriorAssets {
     opacity: 0.78,
   });
 
+  const anvilRingGeo = new THREE.RingGeometry(0.62, 0.9, 24);
+  anvilRingGeo.rotateX(-Math.PI / 2);
+  const anvilRingMat = new THREE.MeshBasicMaterial({
+    color: 0xa78bfa,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.78,
+  });
+
+  // Low-poly procedural fallbacks (< 80 tris) while `runic anvil 3d model.glb` and `treasure chest 3d model.glb` stream in
+  const anvilPedestal = new THREE.CylinderGeometry(0.36, 0.44, 0.34, 8);
+  anvilPedestal.translate(0, 0.17, 0);
+  const anvilWaist = new THREE.BoxGeometry(0.32, 0.28, 0.24);
+  anvilWaist.translate(0, 0.48, 0);
+  const anvilTop = new THREE.BoxGeometry(0.58, 0.18, 0.28);
+  anvilTop.translate(0, 0.69, 0);
+  const anvilHorn = new THREE.ConeGeometry(0.11, 0.28, 6);
+  anvilHorn.rotateZ(-Math.PI / 2);
+  anvilHorn.translate(0.41, 0.69, 0);
+
+  const anvilPropGeo = mergeGeometries([anvilPedestal, anvilWaist, anvilTop, anvilHorn], false);
+  anvilPedestal.dispose();
+  anvilWaist.dispose();
+  anvilTop.dispose();
+  anvilHorn.dispose();
+  anvilPropGeo.computeBoundingBox();
+  anvilPropGeo.computeBoundingSphere();
+
+  const anvilPropMat = new THREE.MeshStandardMaterial({
+    color: 0x434956,
+    roughness: 0.46,
+    metalness: 0.72,
+  });
+
+  const vaultChestBody = new THREE.BoxGeometry(0.44, 0.28, 0.32);
+  vaultChestBody.translate(-0.62, 0.14, 0.28);
+  const vaultChestLid = new THREE.BoxGeometry(0.46, 0.08, 0.34);
+  vaultChestLid.rotateX(-0.42);
+  vaultChestLid.translate(-0.62, 0.31, 0.18);
+  const vaultChestPropGeo = mergeGeometries([vaultChestBody, vaultChestLid], false);
+  vaultChestBody.dispose();
+  vaultChestLid.dispose();
+  vaultChestPropGeo.computeBoundingBox();
+  vaultChestPropGeo.computeBoundingSphere();
+
+  const vaultChestPropMat = new THREE.MeshStandardMaterial({
+    color: 0x8a6228,
+    roughness: 0.52,
+    metalness: 0.55,
+  });
+
+  const runeStrip = new THREE.BoxGeometry(0.44, 0.04, 0.12);
+  runeStrip.translate(0, 0.58, 0);
+  const tributeGoldMound = new THREE.CylinderGeometry(0.14, 0.18, 0.09, 8);
+  tributeGoldMound.translate(-0.62, 0.28, 0.28);
+  const anvilRuneGlowGeo = mergeGeometries([runeStrip, tributeGoldMound], false);
+  runeStrip.dispose();
+  tributeGoldMound.dispose();
+  anvilRuneGlowGeo.computeBoundingBox();
+  anvilRuneGlowGeo.computeBoundingSphere();
+
+  const anvilRuneGlowMat = new THREE.MeshBasicMaterial({
+    color: 0x7dd3fc,
+    transparent: true,
+    opacity: 0.92,
+  });
+
   const hearthFlameGeo = new THREE.ConeGeometry(0.36, 0.74, 7);
   hearthFlameGeo.translate(0, 0.37, 0);
   const hearthFlameMat = new THREE.MeshBasicMaterial({
@@ -326,6 +577,14 @@ function getSharedCastleInteriorAssets(): SharedCastleInteriorAssets {
     exitRingMat,
     throneRingGeo,
     throneRingMat,
+    anvilRingGeo,
+    anvilRingMat,
+    anvilPropGeo,
+    anvilPropMat,
+    vaultChestPropGeo,
+    vaultChestPropMat,
+    anvilRuneGlowGeo,
+    anvilRuneGlowMat,
     hearthFlameGeo,
     hearthFlameMat,
   };
@@ -355,6 +614,10 @@ export class CastleInteriorManager {
   private hearthFlameMesh!: THREE.Mesh;
   private exitRingMesh!: THREE.Mesh;
   private daisRingMesh!: THREE.Mesh;
+  private anvilRingMesh!: THREE.Mesh;
+  private anvilPropMesh!: THREE.Mesh;
+  private vaultChestPropMesh!: THREE.Mesh;
+  private anvilRuneGlowMesh!: THREE.Mesh;
 
   private readonly interiorBgColor = new THREE.Color(0x1b1e26);
   private savedBgColor: THREE.Color | THREE.Texture | null = null;
@@ -408,10 +671,16 @@ export class CastleInteriorManager {
     }
   }
 
-  public getInteriorRingProximity(playerPos: THREE.Vector3): 'dais' | 'exit' | 'none' {
+  public getInteriorRingProximity(playerPos: THREE.Vector3): 'anvil' | 'dais' | 'exit' | 'none' {
     const visit = this.activeVisit;
     if (!visit) return 'none';
     const spec = TIER_INTERIOR_SPECS[visit.tier];
+
+    const anvilWorldX = visit.worldX + spec.anvilLocal.x;
+    const anvilWorldZ = visit.worldZ + spec.anvilLocal.z;
+    const distToAnvil = Math.hypot(playerPos.x - anvilWorldX, playerPos.z - anvilWorldZ);
+    if (distToAnvil <= 1.38) return 'anvil';
+
     const daisWorldX = visit.worldX + spec.daisLightLocal.x - 0.55;
     const daisWorldZ = visit.worldZ + spec.daisLightLocal.z + 0.55;
     const distToDais = Math.hypot(playerPos.x - daisWorldX, playerPos.z - daisWorldZ);
@@ -423,6 +692,18 @@ export class CastleInteriorManager {
     if (distToExit <= 1.35) return 'exit';
 
     return 'none';
+  }
+
+  public triggerAnvilBurst(): void {
+    const visit = this.activeVisit;
+    if (!visit) return;
+    const spec = TIER_INTERIOR_SPECS[visit.tier];
+    this.dwarf.spawnBurst(
+      visit.worldX + spec.anvilLocal.x,
+      this.interiorFloorY + 0.72,
+      visit.worldZ + spec.anvilLocal.z,
+      24
+    );
   }
 
   public isInsideCastle(): boolean {
@@ -506,6 +787,26 @@ export class CastleInteriorManager {
     this.daisRingMesh.matrixAutoUpdate = false;
     this.interiorGroup.add(this.daisRingMesh);
 
+    this.anvilRingMesh = new THREE.Mesh(assets.anvilRingGeo, assets.anvilRingMat);
+    this.anvilRingMesh.matrixAutoUpdate = false;
+    this.interiorGroup.add(this.anvilRingMesh);
+
+    this.anvilPropMesh = new THREE.Mesh(assets.anvilPropGeo, assets.anvilPropMat);
+    this.anvilPropMesh.castShadow = true;
+    this.anvilPropMesh.receiveShadow = false;
+    this.anvilPropMesh.matrixAutoUpdate = false;
+    this.interiorGroup.add(this.anvilPropMesh);
+
+    this.vaultChestPropMesh = new THREE.Mesh(assets.vaultChestPropGeo, assets.vaultChestPropMat);
+    this.vaultChestPropMesh.castShadow = true;
+    this.vaultChestPropMesh.receiveShadow = false;
+    this.vaultChestPropMesh.matrixAutoUpdate = false;
+    this.interiorGroup.add(this.vaultChestPropMesh);
+
+    this.anvilRuneGlowMesh = new THREE.Mesh(assets.anvilRuneGlowGeo, assets.anvilRuneGlowMat);
+    this.anvilRuneGlowMesh.matrixAutoUpdate = false;
+    this.interiorGroup.add(this.anvilRuneGlowMesh);
+
     this.group.add(this.interiorGroup);
   }
 
@@ -521,6 +822,34 @@ export class CastleInteriorManager {
       ensureCastleInteriorModelLoaded(tier, () => {
         if (this.activeVisit && this.activeVisit.tier === tier) {
           this.syncTierMesh(tier);
+        }
+      });
+    }
+    this.syncInteriorPropMeshes();
+  }
+
+  private syncInteriorPropMeshes(): void {
+    const assets = getSharedCastleInteriorAssets();
+    if (sharedRunicAnvilAsset) {
+      this.anvilPropMesh.geometry = sharedRunicAnvilAsset.geo;
+      this.anvilPropMesh.material = sharedRunicAnvilAsset.mat;
+    } else {
+      this.anvilPropMesh.geometry = assets.anvilPropGeo;
+      this.anvilPropMesh.material = assets.anvilPropMat;
+    }
+
+    if (sharedVaultChestAsset) {
+      this.vaultChestPropMesh.geometry = sharedVaultChestAsset.geo;
+      this.vaultChestPropMesh.material = sharedVaultChestAsset.mat;
+    } else {
+      this.vaultChestPropMesh.geometry = assets.vaultChestPropGeo;
+      this.vaultChestPropMesh.material = assets.vaultChestPropMat;
+    }
+
+    if (!sharedRunicAnvilAsset || !sharedVaultChestAsset) {
+      ensureCastleInteriorPropModelsLoaded(() => {
+        if (this.activeVisit) {
+          this.syncInteriorPropMeshes();
         }
       });
     }
@@ -565,6 +894,21 @@ export class CastleInteriorManager {
 
     this.daisRingMesh.position.set(spec.daisLightLocal.x - 0.55, 0.06, spec.daisLightLocal.z + 0.55);
     this.daisRingMesh.updateMatrix();
+
+    this.anvilRingMesh.position.set(spec.anvilLocal.x, 0.055, spec.anvilLocal.z);
+    this.anvilRingMesh.updateMatrix();
+
+    this.anvilPropMesh.position.set(spec.anvilLocal.x, 0, spec.anvilLocal.z);
+    this.anvilPropMesh.rotation.set(0, spec.anvilLocal.rotY, 0);
+    this.anvilPropMesh.updateMatrix();
+
+    this.vaultChestPropMesh.position.set(spec.anvilLocal.x, 0, spec.anvilLocal.z);
+    this.vaultChestPropMesh.rotation.set(0, spec.anvilLocal.rotY, 0);
+    this.vaultChestPropMesh.updateMatrix();
+
+    this.anvilRuneGlowMesh.position.set(spec.anvilLocal.x, 0, spec.anvilLocal.z);
+    this.anvilRuneGlowMesh.rotation.set(0, spec.anvilLocal.rotY, 0);
+    this.anvilRuneGlowMesh.updateMatrix();
 
     this.interiorGroup.position.set(visit.worldX, this.interiorFloorY, visit.worldZ);
     this.interiorGroup.rotation.set(0, 0, 0);
@@ -721,6 +1065,14 @@ export class CastleInteriorManager {
     this.daisRingMesh.matrixWorld.multiplyMatrices(
       this.interiorGroup.matrixWorld,
       this.daisRingMesh.matrix
+    );
+
+    const anvilPulse = 0.94 + Math.cos(elapsedTime * 4.8) * 0.08;
+    this.anvilRingMesh.scale.setScalar(anvilPulse);
+    this.anvilRingMesh.updateMatrix();
+    this.anvilRingMesh.matrixWorld.multiplyMatrices(
+      this.interiorGroup.matrixWorld,
+      this.anvilRingMesh.matrix
     );
 
     // Walk-out detection at the glowing cyan exit ring

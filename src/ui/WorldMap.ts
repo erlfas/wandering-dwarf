@@ -1574,19 +1574,31 @@ export class WorldMap {
       for (const c of this.castleManager.getSerializedCastles()) {
         const sx = worldToScreenX(c.x);
         const sy = worldToScreenY(c.z);
-        this.drawPin(ctx, sx, sy, 11.0, '#1d3557', '#48cae4', '🏰', true);
+        const isCompletedKeep = c.blocksPlaced >= 8;
+        this.drawPin(
+          ctx,
+          sx,
+          sy,
+          11.0,
+          '#1d3557',
+          isCompletedKeep ? '#ffd166' : '#48cae4',
+          '🏰',
+          true
+        );
         this.interactiveMarkers.push({
           id: c.id,
           kind: 'castle',
           title: `🏰 ${c.name}`,
-          subtitle: `Castle Construction: ${c.blocksPlaced}/30 Blocks Placed`,
-          worldX: c.x,
+          subtitle: isCompletedKeep
+            ? `⚡ Click to Fast-Travel to Gate! (${c.blocksPlaced}/30 Blocks)`
+            : `Castle Construction: ${c.blocksPlaced}/30 Blocks Placed`,
+          worldX: c.x + Math.sin(c.rotationY) * 6.6,
           worldY: c.y,
-          worldZ: c.z,
+          worldZ: c.z + Math.cos(c.rotationY) * 6.6,
           screenX: sx,
           screenY: sy,
           radiusPx: 14,
-          canTeleport: false,
+          canTeleport: isCompletedKeep,
         });
       }
     }

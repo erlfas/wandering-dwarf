@@ -56,6 +56,9 @@ export interface SavedProgress {
   blocksChiseledTotal?: number;
   fishCaughtTotal?: number;
   deerHuntedTotal?: number;
+  weaponTemperLevel?: number;
+  castleSiegesWon?: number;
+  unclaimedTributeGold?: number;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {
@@ -151,6 +154,18 @@ function parseSavedProgress(raw: string | null): SavedProgress | null {
         typeof data.blocksChiseledTotal === 'number' ? data.blocksChiseledTotal : 0,
       fishCaughtTotal: typeof data.fishCaughtTotal === 'number' ? data.fishCaughtTotal : 0,
       deerHuntedTotal: typeof data.deerHuntedTotal === 'number' ? data.deerHuntedTotal : 0,
+      weaponTemperLevel:
+        typeof data.weaponTemperLevel === 'number'
+          ? Math.max(0, Math.min(3, Math.floor(data.weaponTemperLevel)))
+          : 0,
+      castleSiegesWon:
+        typeof data.castleSiegesWon === 'number'
+          ? Math.max(0, Math.floor(data.castleSiegesWon))
+          : 0,
+      unclaimedTributeGold:
+        typeof data.unclaimedTributeGold === 'number'
+          ? Math.max(0, data.unclaimedTributeGold)
+          : 0,
     };
   } catch {
     return null;
