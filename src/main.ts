@@ -37,6 +37,7 @@ const appContainer = document.getElementById('app')!;
 const coordsReadout = document.getElementById('coords-readout')!;
 const timeReadout = document.getElementById('time-readout');
 const controlsHelpToggleBtn = document.getElementById('controls-help-toggle');
+const topHotkeysToggleBtn = document.getElementById('top-hotkeys-toggle');
 const controlsHelpPopoverEl = document.getElementById('controls-help-popover');
 const controlsPopoverCloseBtn = document.getElementById('controls-popover-close');
 const compassNeedle = document.getElementById('compass-needle')!;
@@ -50,8 +51,12 @@ function toggleControlsHelpPopover(forceState?: boolean): void {
   const nextOpen = forceState !== undefined ? forceState : isHidden;
   controlsHelpPopoverEl.classList.toggle('hidden', !nextOpen);
   controlsHelpToggleBtn?.classList.toggle('active', nextOpen);
+  topHotkeysToggleBtn?.classList.toggle('active', nextOpen);
 }
 controlsHelpToggleBtn?.addEventListener('click', () => {
+  toggleControlsHelpPopover();
+});
+topHotkeysToggleBtn?.addEventListener('click', () => {
   toggleControlsHelpPopover();
 });
 controlsPopoverCloseBtn?.addEventListener('click', () => {
@@ -406,17 +411,34 @@ castleInteriorManager.setCallbacks(
     config.timeOfDay = 6.5;
     livingWorldManager.updateAtmosphereAndLantern(clock.elapsedTime, explorer.playerPos, sunOffset);
     castleAndQuarryManager.healAndRestoreFull();
+    castleAndQuarryManager.grantKingsValorBlessing(90.0);
+    landmarkManager.campfireBuffTimer = Math.max(landmarkManager.campfireBuffTimer, 60.0);
     trollCombatManager.despawnAllTrolls(false);
     debugOverlay?.syncDisplay();
     treasureManager.grantBonusGold(
       0,
-      `☀️ Rested Until Dawn inside ${visit.name}! Full Health & Strength restored, and Night Trolls have fled!`
+      `☀️ Rested Until Dawn inside ${visit.name}! Full Health & Strength restored, +25% Valor & +20% Speed, and Night Trolls have fled!`
     );
     persistCurrentProgress(true);
+  },
+  (visit) => {
+    castleAndQuarryManager.healAndRestoreFull();
+    castleAndQuarryManager.grantKingsValorBlessing(90.0);
+    landmarkManager.campfireBuffTimer = 60.0;
+    const bonusGold = visit.tier === 3 ? 100 : visit.tier === 2 ? 60 : 35;
+    treasureManager.grantBonusGold(
+      bonusGold,
+      `🔥 ${visit.name} Hearth Blessing! Full HP/⚡ + 20% Speed (60s) + 25% Valor DMG (90s) +${bonusGold}g!`
+    );
+    relicStore.renderShop();
+    castleAndQuarryManager.renderCastleArmoryShop();
+    persistCurrentProgress(false);
   }
 );
 
 castleAndQuarryManager.isInsideCastleFn = () => castleInteriorManager.isInsideCastle();
+castleAndQuarryManager.getInteriorRingProximityFn = (pos) =>
+  castleInteriorManager.getInteriorRingProximity(pos);
 castleAndQuarryManager.isActionBlockedFn = () =>
   isGameMenuOpen() ||
   (worldMap?.isMapOpen() ?? false) ||
@@ -1096,7 +1118,7 @@ window.addEventListener('keydown', (e) => {
     setGameMenuOpen(!isGameMenuOpen());
   } else if (e.code === 'KeyJ') {
     assignmentManager.togglePanelExpanded();
-  } else if (e.code === 'Slash' || e.code === 'F1') {
+  } else if (e.key === '?' || e.code === 'Slash' || e.code === 'F1') {
     if (e.code === 'F1') e.preventDefault();
     toggleControlsHelpPopover();
   } else if (e.code === 'KeyV' && !e.shiftKey) {

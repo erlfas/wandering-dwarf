@@ -2349,6 +2349,8 @@ export class CastleAndQuarryManager {
   public isInsideCastleFn: () => boolean = () => false;
   public isActionBlockedFn: () => boolean = () => false;
   public getActiveCastleVisitFn: () => ActiveCastleVisit | null = () => null;
+  public getInteriorRingProximityFn: (pos: THREE.Vector3) => 'dais' | 'exit' | 'none' = () =>
+    'none';
   public onRequestEnterCastle?: (visit: ActiveCastleVisit) => void;
   public onRequestExitCastle?: () => void;
   public onRequestRestUntilDawn?: () => void;
@@ -2760,6 +2762,11 @@ export class CastleAndQuarryManager {
   public healAndRestoreFull(): void {
     this.health = this.getMaxHealth();
     this.energy = this.getMaxEnergy();
+    this.syncEnergyAndFoodHUD();
+  }
+
+  public grantKingsValorBlessing(durationSec = 90.0): void {
+    this.kingsValorTimer = Math.max(this.kingsValorTimer, durationSec);
     this.syncEnergyAndFoodHUD();
   }
 
@@ -3435,7 +3442,12 @@ export class CastleAndQuarryManager {
    */
   public tryInteractAtPlayerPos(): boolean {
     if (this.isInsideCastleFn()) {
-      this.onRequestExitCastle?.();
+      const ring = this.getInteriorRingProximityFn(this.dwarf.root.position);
+      if (ring === 'dais') {
+        this.onRequestRestUntilDawn?.();
+      } else {
+        this.onRequestExitCastle?.();
+      }
       return true;
     }
 
@@ -3723,7 +3735,26 @@ export class CastleAndQuarryManager {
         this.health = Math.min(maxH, this.health + 4.0 * dt);
         this.syncEnergyAndFoodHUD();
       }
-      this.setBanner(false, '');
+
+      const ring = this.getInteriorRingProximityFn(playerPos);
+      if (ring === 'dais') {
+        this.setBanner(
+          true,
+          `<div class="masonry-main-row"><span>🔥 <strong>Golden Hearth Circle:</strong> Full HP/⚡ + Valor &amp; Speed Buff!</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-rest-dawn">☀️ Rest Dawn (E / R)</button></div>`
+        );
+      } else if (ring === 'exit') {
+        this.setBanner(
+          true,
+          `<div class="masonry-main-row"><span>🚪 <strong>Cyan Door Circle:</strong> Step in or press <kbd>E</kbd> to exit outside</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-exit-castle">🚪 Exit (E)</button></div>`
+        );
+      } else {
+        this.setBanner(
+          true,
+          `<div class="masonry-main-row"><span>🟡 <strong>Gold Circle:</strong> Hearth Blessing &amp; Rest (<kbd>E</kbd>/<kbd>R</kbd>) • 🔵 <strong>Cyan Circle:</strong> Exit Outside</span></div>`
+        );
+      }
       return;
     }
 

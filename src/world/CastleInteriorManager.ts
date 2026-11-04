@@ -363,6 +363,8 @@ export class CastleInteriorManager {
   private onEnterCallback?: (visit: ActiveCastleVisit) => void;
   private onExitCallback?: () => void;
   private onRestUntilDawnCallback?: (visit: ActiveCastleVisit) => void;
+  private onHearthBlessingCallback?: (visit: ActiveCastleVisit) => void;
+  private lastHearthBlessingTime = -999;
 
   constructor(
     _config: WorldConfig,
@@ -395,11 +397,32 @@ export class CastleInteriorManager {
   public setCallbacks(
     onEnter: (visit: ActiveCastleVisit) => void,
     onExit: () => void,
-    onRestUntilDawn: (visit: ActiveCastleVisit) => void
+    onRestUntilDawn: (visit: ActiveCastleVisit) => void,
+    onHearthBlessing?: (visit: ActiveCastleVisit) => void
   ): void {
     this.onEnterCallback = onEnter;
     this.onExitCallback = onExit;
     this.onRestUntilDawnCallback = onRestUntilDawn;
+    if (onHearthBlessing) {
+      this.onHearthBlessingCallback = onHearthBlessing;
+    }
+  }
+
+  public getInteriorRingProximity(playerPos: THREE.Vector3): 'dais' | 'exit' | 'none' {
+    const visit = this.activeVisit;
+    if (!visit) return 'none';
+    const spec = TIER_INTERIOR_SPECS[visit.tier];
+    const daisWorldX = visit.worldX + spec.daisLightLocal.x - 0.55;
+    const daisWorldZ = visit.worldZ + spec.daisLightLocal.z + 0.55;
+    const distToDais = Math.hypot(playerPos.x - daisWorldX, playerPos.z - daisWorldZ);
+    if (distToDais <= 1.35) return 'dais';
+
+    const exitWorldX = visit.worldX + spec.exitLocal.x;
+    const exitWorldZ = visit.worldZ + spec.exitLocal.z;
+    const distToExit = Math.hypot(playerPos.x - exitWorldX, playerPos.z - exitWorldZ);
+    if (distToExit <= 1.35) return 'exit';
+
+    return 'none';
   }
 
   public isInsideCastle(): boolean {
@@ -598,6 +621,13 @@ export class CastleInteriorManager {
 
   public tryRestUntilDawn(): boolean {
     if (!this.activeVisit) return false;
+    this.dwarf.spawnBurst(
+      this.dwarf.root.position.x,
+      this.interiorFloorY + 0.55,
+      this.dwarf.root.position.z,
+      20
+    );
+    this.playHearthBlessingSound();
     this.onRestUntilDawnCallback?.(this.activeVisit);
     return true;
   }
@@ -693,7 +723,7 @@ export class CastleInteriorManager {
       this.daisRingMesh.matrix
     );
 
-    // Walk-out detection at the glowing exit ring
+    // Walk-out detection at the glowing cyan exit ring
     const exitWorldX = visit.worldX + spec.exitLocal.x;
     const exitWorldZ = visit.worldZ + spec.exitLocal.z;
     const distToExit = Math.hypot(playerPos.x - exitWorldX, playerPos.z - exitWorldZ);
@@ -701,7 +731,44 @@ export class CastleInteriorManager {
       this.steppedInside = true;
     } else if (this.steppedInside && distToExit <= 0.72) {
       this.exitCurrentCastle();
+      return;
     }
+
+    // Golden Hearth & Sanctuary Circle (`daisRingMesh`) step-in blessing!
+    const daisWorldX = visit.worldX + spec.daisLightLocal.x - 0.55;
+    const daisWorldZ = visit.worldZ + spec.daisLightLocal.z + 0.55;
+    const distToDais = Math.hypot(playerPos.x - daisWorldX, playerPos.z - daisWorldZ);
+    if (distToDais <= 1.05 && elapsedTime - this.lastHearthBlessingTime > 45.0) {
+      this.lastHearthBlessingTime = elapsedTime;
+      this.dwarf.spawnBurst(playerPos.x, this.interiorFloorY + 0.55, playerPos.z, 18);
+      this.playHearthBlessingSound();
+      this.onHearthBlessingCallback?.(visit);
+    }
+  }
+
+  private playHearthBlessingSound(): void {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [329.63, 440, 554.37, 659.25];
+    notes.forEach((freq, idx) => {
+      const t = now + idx * 0.065;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.exponentialRampToValueAtTime(0.14, t + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
+      osc.start(t);
+      osc.stop(t + 0.34);
+    });
   }
 
   private playGateDoorSound(entering: boolean): void {
