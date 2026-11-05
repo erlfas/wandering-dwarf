@@ -312,16 +312,239 @@ export class TerrainNoise {
   }
 
   /**
-   * Computes the unit 2D tangent direction (tx, tz) along the primary track at (x, z).
+   * Computes the unit 2D tangent direction (tx, tz) along the active track (Track A or Track B) at (x, z).
    */
   public getTrackHeading(x: number, z: number): number {
     const eps = 1.0;
-    const gx = this.evalTrackPhaseA(x + eps, z) - this.evalTrackPhaseA(x - eps, z);
-    const gz = this.evalTrackPhaseA(x, z + eps) - this.evalTrackPhaseA(x, z - eps);
+    const cfg = this.config;
+    let useTrackB = false;
+
+    if ((x !== 0 || z !== 0) && cfg.trackDensity > 0.05) {
+      const periodA = 210.0;
+      const phaseA = this.evalTrackPhaseA(x, z);
+      const dA = Math.abs(phaseA - Math.round(phaseA / periodA) * periodA);
+
+      const periodB = 300.0 - cfg.trackDensity * 105.0;
+      const phaseB = this.evalTrackPhaseB(x, z);
+      const dB = Math.abs(phaseB - Math.round(phaseB / periodB) * periodB);
+      if (dB < dA) {
+        useTrackB = true;
+      }
+    }
+
+    const gx = useTrackB
+      ? this.evalTrackPhaseB(x + eps, z) - this.evalTrackPhaseB(x - eps, z)
+      : this.evalTrackPhaseA(x + eps, z) - this.evalTrackPhaseA(x - eps, z);
+    const gz = useTrackB
+      ? this.evalTrackPhaseB(x, z + eps) - this.evalTrackPhaseB(x, z - eps)
+      : this.evalTrackPhaseA(x, z + eps) - this.evalTrackPhaseA(x, z - eps);
     // Tangent is perpendicular to phase gradient (gx, gz)
     const tx = -gz;
     const tz = gx;
     return Math.atan2(tx, tz);
+  }
+
+  /**
+   * Validates and computes a bank-to-bank Wooden River Bridge placement near (sampleX, sampleZ).
+   * Ensures:
+   * 1. Starts on a submerged footpath segment (never far from a trail).
+   * 2. Searches candidate angles within +-55 deg of the footpath heading to find the shortest
+   *    shore-to-shore crossing line where BOTH ends reach solid dry riverbanks (5m .. 34m span).
+   * 3. Verifies that both shores remain on dry land 3.0m and 5.5m inland (and at +-1.85m lateral corners),
+   *    rejecting all beaches, sandbars, and wide lakes/bays.
+   * 4. Centers the bridge at the exact midpoint between the two shorelines and scales its length
+   *    (+5.6m total overlap) so both sloped approach ramps embed firmly into dry ground.
+   */
+  public findValidatedBridgePlacement(
+    sampleX: number,
+    sampleZ: number,
+    chunkCenterX: number,
+    chunkCenterZ: number,
+    chunkSize: number
+  ): { x: number; y: number; z: number; heading: number; length: number } | null {
+    const cfg = this.config;
+    if (!cfg.enableTracks || !cfg.enableWater) return null;
+
+    const dist0 = this.getTrackDistance(sampleX, sampleZ);
+    if (dist0 > 5.0) return null;
+
+    const waterY = cfg.waterLevel;
+    const wy0 = this.getHeight(sampleX, sampleZ, true);
+    if (wy0 >= waterY - 0.2 || wy0 <= waterY - 3.2) return null;
+
+    const baseHeading = this.getTrackHeading(sampleX, sampleZ);
+    const baseDirX = Math.sin(baseHeading);
+    const baseDirZ = Math.cos(baseHeading);
+    const basePerpX = baseDirZ;
+    const basePerpZ = -baseDirX;
+
+    // 1. Snap laterally onto the footpath centerline
+    let startX = sampleX;
+    let startZ = sampleZ;
+    let bestTrackDist = dist0;
+    for (let offset = -4.0; offset <= 4.0; offset += 1.0) {
+      if (offset === 0) continue;
+      const tx = sampleX + basePerpX * offset;
+      const tz = sampleZ + basePerpZ * offset;
+      const td = this.getTrackDistance(tx, tz);
+      if (td < bestTrackDist) {
+        bestTrackDist = td;
+        startX = tx;
+        startZ = tz;
+      }
+    }
+    if (bestTrackDist > 3.0) return null;
+    if (this.getHeight(startX, startZ, true) >= waterY - 0.2) return null;
+
+    const trackHeading = this.getTrackHeading(startX, startZ);
+
+    // 2. Search angles within +-55 deg of the footpath heading to find the shortest bank-to-bank crossing
+    let bestSpan = 999.0;
+    let bestHeading = trackHeading;
+    let bestMidX = startX;
+    let bestMidZ = startZ;
+
+    for (let deg = -55; deg <= 55; deg += 11) {
+      const candHeading = trackHeading + (deg * Math.PI) / 180.0;
+      const dx = Math.sin(candHeading);
+      const dz = Math.cos(candHeading);
+
+      let dPos = -1;
+      for (let d = 1.0; d <= 21.0; d += 1.0) {
+        if (this.getHeight(startX + dx * d, startZ + dz * d, true) >= waterY + 0.2) {
+          dPos = d;
+          break;
+        }
+      }
+      if (dPos < 0) continue;
+
+      let dNeg = -1;
+      for (let d = 1.0; d <= 21.0; d += 1.0) {
+        if (this.getHeight(startX - dx * d, startZ - dz * d, true) >= waterY + 0.2) {
+          dNeg = d;
+          break;
+        }
+      }
+      if (dNeg < 0) continue;
+
+      const span = dPos + dNeg;
+      if (span < 5.0 || span > 34.0 || span >= bestSpan) continue;
+
+      const midOffset = 0.5 * (dPos - dNeg);
+      const midX = startX + dx * midOffset;
+      const midZ = startZ + dz * midOffset;
+
+      // Channel midpoint must be genuinely underwater (not an island) and still near the footpath
+      const midBedY = this.getHeight(midX, midZ, true);
+      if (midBedY > waterY - 0.35 || midBedY < waterY - 3.5) continue;
+      if (this.getTrackDistance(midX, midZ) > 5.5) continue;
+
+      const halfWater = span * 0.5;
+      const perpX = dz;
+      const perpZ = -dx;
+      let banksValid = true;
+
+      for (const sign of [-1, 1] as const) {
+        const bankDist = halfWater + 2.6;
+        const inlandDist = halfWater + 5.2;
+        const bx = midX + dx * sign * bankDist;
+        const bz = midZ + dz * sign * bankDist;
+        const ix = midX + dx * sign * inlandDist;
+        const iz = midZ + dz * sign * inlandDist;
+
+        const bankY = this.getHeight(bx, bz, true);
+        const inlandY = this.getHeight(ix, iz, true);
+        if (bankY < waterY + 0.25 || inlandY < waterY + 0.35) {
+          banksValid = false;
+          break;
+        }
+
+        // Both left and right corners of each abutment must rest on dry land (rejects oblique beaches)
+        const leftCornerY = this.getHeight(bx - perpX * 1.85, bz - perpZ * 1.85, true);
+        const rightCornerY = this.getHeight(bx + perpX * 1.85, bz + perpZ * 1.85, true);
+        if (leftCornerY < waterY + 0.12 || rightCornerY < waterY + 0.12) {
+          banksValid = false;
+          break;
+        }
+      }
+
+      if (!banksValid) continue;
+
+      bestSpan = span;
+      bestHeading = candHeading;
+      bestMidX = midX;
+      bestMidZ = midZ;
+    }
+
+    if (bestSpan > 34.0) return null;
+
+    // Strictly assign the bridge to the chunk that contains (bestMidX, bestMidZ) so adjacent chunks never duplicate it
+    const halfChunk = chunkSize * 0.5;
+    if (
+      bestMidX < chunkCenterX - halfChunk ||
+      bestMidX >= chunkCenterX + halfChunk ||
+      bestMidZ < chunkCenterZ - halfChunk ||
+      bestMidZ >= chunkCenterZ + halfChunk
+    ) {
+      return null;
+    }
+
+    if (this.isInsideVolcanoBarrenZone(bestMidX, bestMidZ)) return null;
+
+    // Add 2.8m of dry-bank overlap on each shore (+5.6m total) so both approach ramps embed firmly into dry ground
+    const totalLength = THREE.MathUtils.clamp(bestSpan + 5.6, 11.0, 39.6);
+
+    return {
+      x: bestMidX,
+      y: waterY + 0.55,
+      z: bestMidZ,
+      heading: bestHeading,
+      length: totalLength,
+    };
+  }
+
+  /**
+   * Deterministic chunk-level bridge finder shared by LandmarkManager and WorldMap.
+   * Uses the Lipschitz coarse track bound to skip off-track chunks in O(1), then tests
+   * the two seeded candidate points followed by a 5x5 chunk grid so genuine river crossings
+   * along footpaths reliably receive a bank-to-bank bridge.
+   */
+  public findChunkBridgePlacement(
+    cx: number,
+    cz: number,
+    zRand0: number,
+    zRand1: number
+  ): { x: number; y: number; z: number; heading: number; length: number } | null {
+    const cfg = this.config;
+    if (!cfg.enableTracks || !cfg.enableWater) return null;
+
+    const size = cfg.chunkSize;
+    const chunkWx = cx * size;
+    const chunkWz = cz * size;
+    if (!this.isChunkNearTrack(chunkWx, chunkWz, size * 0.71)) {
+      return null;
+    }
+
+    const s0x = chunkWx - size * 0.24;
+    const s0z = chunkWz + (zRand0 - 0.5) * (size * 0.45);
+    const hit0 = this.findValidatedBridgePlacement(s0x, s0z, chunkWx, chunkWz, size);
+    if (hit0) return hit0;
+
+    const s1x = chunkWx + size * 0.24;
+    const s1z = chunkWz + (zRand1 - 0.5) * (size * 0.45);
+    const hit1 = this.findValidatedBridgePlacement(s1x, s1z, chunkWx, chunkWz, size);
+    if (hit1) return hit1;
+
+    for (let gz = -2; gz <= 2; gz++) {
+      for (let gx = -2; gx <= 2; gx++) {
+        const px = chunkWx + gx * (size * 0.2);
+        const pz = chunkWz + gz * (size * 0.2);
+        const hit = this.findValidatedBridgePlacement(px, pz, chunkWx, chunkWz, size);
+        if (hit) return hit;
+      }
+    }
+
+    return null;
   }
 
   /**

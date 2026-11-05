@@ -1087,23 +1087,16 @@ export class WorldMap {
 
     if (!inVolcanoBarren) {
       if (this.config.enableTracks && this.config.enableWater) {
-        for (let s = -1; s <= 1; s += 2) {
-          const sampleX = cx * size + s * (size * 0.24);
-          const sampleZ = cz * size + (lmRng() - 0.5) * (size * 0.45);
-          const distToTrack = this.noise.getTrackDistance(sampleX, sampleZ);
-          if (distToTrack < 4.5) {
-            const wy = this.noise.getHeight(sampleX, sampleZ);
-            if (wy < this.config.waterLevel - 0.15 && wy > this.config.waterLevel - 2.6) {
-              const heading = this.noise.getTrackHeading(sampleX, sampleZ);
-              bridge = {
-                x: sampleX,
-                y: this.config.waterLevel + 0.55,
-                z: sampleZ,
-                heading,
-              };
-              break;
-            }
-          }
+        const zRand0 = lmRng();
+        const zRand1 = lmRng();
+        const validated = this.noise.findChunkBridgePlacement(cx, cz, zRand0, zRand1);
+        if (validated) {
+          bridge = {
+            x: validated.x,
+            y: validated.y,
+            z: validated.z,
+            heading: validated.heading,
+          };
         }
       }
 

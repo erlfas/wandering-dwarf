@@ -389,15 +389,72 @@ function getSharedLandmarkAssets(): SharedLandmarkAssets {
   logBenchesGeo.computeBoundingBox();
   logBenchesGeo.computeBoundingSphere();
 
-  const bridgeDeckGeo = new THREE.BoxGeometry(3.6, 0.28, 14.0);
-  const bridgeRailLGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
-  bridgeRailLGeo.translate(-1.68, 0.42, 0);
-  const bridgeRailRGeo = new THREE.BoxGeometry(0.16, 0.85, 14.0);
-  bridgeRailRGeo.translate(1.68, 0.42, 0);
-  const bridgeMergedGeo = mergeGeometries([bridgeDeckGeo, bridgeRailLGeo, bridgeRailRGeo], false);
-  bridgeDeckGeo.dispose();
-  bridgeRailLGeo.dispose();
-  bridgeRailRGeo.dispose();
+  // Build a grounded Dwarven Timber River Bridge (canonical 14.0m span along Z, scaled per river width):
+  // - Main horizontal deck (-5.2m .. +5.2m)
+  // - Sloped bank approach ramps at both ends (-7.0m .. -5.2m and +5.2m .. +7.0m) embedding into the shore
+  // - Side timber guardrails, newel posts, transverse under-beams, and riverbed support pilings
+  const bridgeParts: THREE.BufferGeometry[] = [];
+
+  const bridgeDeckGeo = new THREE.BoxGeometry(3.6, 0.26, 10.4);
+  bridgeParts.push(bridgeDeckGeo);
+
+  for (const endSign of [-1, 1] as const) {
+    const rampGeo = new THREE.BoxGeometry(3.6, 0.24, 1.95);
+    dummy.position.set(0, -0.22, endSign * 6.08);
+    dummy.rotation.set(endSign * 0.24, 0, 0);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    rampGeo.applyMatrix4(dummy.matrix);
+    bridgeParts.push(rampGeo);
+  }
+
+  for (const sideSign of [-1, 1] as const) {
+    const rx = sideSign * 1.68;
+    const topRailGeo = new THREE.BoxGeometry(0.16, 0.16, 10.6);
+    topRailGeo.translate(rx, 0.76, 0);
+    bridgeParts.push(topRailGeo);
+
+    const midRailGeo = new THREE.BoxGeometry(0.12, 0.12, 10.4);
+    midRailGeo.translate(rx, 0.44, 0);
+    bridgeParts.push(midRailGeo);
+
+    // Sloped handrail extensions along both approach ramps
+    for (const endSign of [-1, 1] as const) {
+      const rampRailGeo = new THREE.BoxGeometry(0.14, 0.14, 1.95);
+      dummy.position.set(rx, 0.52, endSign * 6.08);
+      dummy.rotation.set(endSign * 0.24, 0, 0);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      rampRailGeo.applyMatrix4(dummy.matrix);
+      bridgeParts.push(rampRailGeo);
+    }
+
+    // Vertical railing posts along the span & ramp ends
+    for (const pz of [-6.85, -5.2, -2.6, 0.0, 2.6, 5.2, 6.85]) {
+      const isRampEnd = Math.abs(pz) > 6.0;
+      const postH = isRampEnd ? 0.85 : 0.96;
+      const postY = isRampEnd ? -0.02 : 0.38;
+      const postGeo = new THREE.BoxGeometry(0.22, postH, 0.22);
+      postGeo.translate(rx, postY, pz);
+      bridgeParts.push(postGeo);
+    }
+  }
+
+  // Submerged riverbed support pilings & transverse trestle cross-beams beneath the deck
+  for (const tz of [-4.2, -1.4, 1.4, 4.2]) {
+    const crossBeamGeo = new THREE.BoxGeometry(3.5, 0.24, 0.28);
+    crossBeamGeo.translate(0, -0.22, tz);
+    bridgeParts.push(crossBeamGeo);
+
+    for (const sideSign of [-1, 1] as const) {
+      const pilingGeo = new THREE.CylinderGeometry(0.18, 0.21, 2.6, 6);
+      pilingGeo.translate(sideSign * 1.46, -1.35, tz);
+      bridgeParts.push(pilingGeo);
+    }
+  }
+
+  const bridgeMergedGeo = mergeGeometries(bridgeParts, false);
+  for (const part of bridgeParts) part.dispose();
   bridgeMergedGeo.computeBoundingBox();
   bridgeMergedGeo.computeBoundingSphere();
 
@@ -609,10 +666,16 @@ export class LandmarkManager {
             Math.abs(localAcross) <= b.halfWidth &&
             Math.abs(localAlong) <= b.halfLen
           ) {
-            // Gentle arch profile along the bridge span
-            const normAlong = localAlong / b.halfLen;
-            const archOffset = (1.0 - normAlong * normAlong) * 0.45;
-            return Math.max(groundY, b.deckY + archOffset);
+            const absNorm = Math.abs(localAlong) / b.halfLen;
+            // Smooth sloped approach ramps at both ends (0.74 .. 1.0) and gentle arch on center span
+            if (absNorm <= 0.74) {
+              const spanNorm = absNorm / 0.74;
+              const archOffset = (1.0 - spanNorm * spanNorm) * 0.22;
+              return Math.max(groundY, b.deckY + archOffset);
+            } else {
+              const rampT = (absNorm - 0.74) / 0.26;
+              return Math.max(groundY, b.deckY - rampT * 0.44);
+            }
           }
         }
       }
@@ -962,21 +1025,21 @@ export class LandmarkManager {
 
     const landmarks: ChunkLandmarks = { bridges: [] };
 
-    // 1. Check for Wooden River Bridges where footpaths cross water
+    // 1. Check for bank-to-bank Wooden River Bridges where footpaths cross rivers
     if (this.config.enableTracks && this.config.enableWater) {
-      for (let s = -1; s <= 1; s += 2) {
-        const sampleX = cx * size + s * (size * 0.24);
-        const sampleZ = cz * size + (rng() - 0.5) * (size * 0.45);
-        const distToTrack = this.noise.getTrackDistance(sampleX, sampleZ);
-        if (distToTrack < 4.5) {
-          const wy = this.sampleGroundHeight(sampleX, sampleZ);
-          if (wy < this.config.waterLevel - 0.15 && wy > this.config.waterLevel - 2.6) {
-            const heading = this.noise.getTrackHeading(sampleX, sampleZ);
-            const deckY = this.config.waterLevel + 0.55;
-            landmarks.bridges.push(this.buildBridge(sampleX, deckY, sampleZ, heading));
-            break;
-          }
-        }
+      const zRand0 = rng();
+      const zRand1 = rng();
+      const validated = this.noise.findChunkBridgePlacement(cx, cz, zRand0, zRand1);
+      if (validated) {
+        landmarks.bridges.push(
+          this.buildBridge(
+            validated.x,
+            validated.y,
+            validated.z,
+            validated.heading,
+            validated.length
+          )
+        );
       }
     }
 
@@ -1146,11 +1209,18 @@ export class LandmarkManager {
     };
   }
 
-  private buildBridge(wx: number, deckY: number, wz: number, heading: number): BridgeInstance {
+  private buildBridge(
+    wx: number,
+    deckY: number,
+    wz: number,
+    heading: number,
+    length = 14.0
+  ): BridgeInstance {
     const assets = getSharedLandmarkAssets();
     const root = new THREE.Group();
     root.position.set(wx, deckY, wz);
     root.rotation.y = heading;
+    root.scale.set(1, 1, length / 14.0);
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
@@ -1169,7 +1239,7 @@ export class LandmarkManager {
       deckY,
       cosH: Math.cos(heading),
       sinH: Math.sin(heading),
-      halfLen: 7.2,
+      halfLen: length * 0.5,
       halfWidth: 1.95,
       root,
       mesh,
