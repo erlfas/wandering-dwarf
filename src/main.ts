@@ -503,6 +503,12 @@ huntingManager.setSurfaceHeightSampler(sampleSurfaceHeight);
 treasureManager.hasDurinCrownFn = () => hutManager?.hasArtefact('durin_crown') ?? false;
 castleAndQuarryManager.hasArtefactFn = (id) => hutManager?.hasArtefact(id) ?? false;
 trollCombatManager.hasIronAegisFn = () => hutManager?.hasArtefact('iron_aegis') ?? false;
+trollCombatManager.isFishingOrHuntingActiveFn = () =>
+  fishingManager.isFishingActive() || huntingManager.isHuntingActive();
+trollCombatManager.onBeforeMeleeSwing = () => {
+  fishingManager.exitFishingMode();
+  huntingManager.exitHuntingMode();
+};
 trollCombatManager.onPerfectParryReward = () => {
   castleAndQuarryManager.restoreEnergyAndHealth(15, 5);
 };

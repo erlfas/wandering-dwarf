@@ -184,7 +184,13 @@ export class TrollCombatManager {
   private isBlockingInput = false;
   private lastBlockRaiseTime = -999;
   private lastElapsedTime = 0;
+  private leftClickDownX = 0;
+  private leftClickDownY = 0;
+  private leftClickDownTime = 0;
+  private leftClickAttackedOnDown = false;
   public hasIronAegisFn: () => boolean = () => false;
+  public isFishingOrHuntingActiveFn: () => boolean = () => false;
+  public onBeforeMeleeSwing?: () => void;
   public onPerfectParryReward?: () => void;
 
   // ElevenLabs Audio Elements
@@ -516,22 +522,43 @@ export class TrollCombatManager {
     });
 
     this.domElement.addEventListener('mousedown', (e) => {
-      if (this.isPlayerInsideSanctuary()) return;
       if (e.button === 0) {
-        // Left-click attacks when a Troll is within 6.5m
-        const nearest = this.getNearestActiveTroll(this.dwarf.root.position);
-        if (nearest && nearest.dist <= 6.5) {
-          this.tryPlayerMeleeAttack();
+        this.leftClickDownX = e.clientX;
+        this.leftClickDownY = e.clientY;
+        this.leftClickDownTime = performance.now();
+        this.leftClickAttackedOnDown = false;
+        // Immediate zero-latency strike on mousedown when a Troll is within 6.5m
+        if (!this.isPlayerInsideSanctuary() && !this.isFishingOrHuntingActiveFn()) {
+          const nearest = this.getNearestActiveTroll(this.dwarf.root.position);
+          if (nearest && nearest.dist <= 6.5) {
+            this.leftClickAttackedOnDown = true;
+            this.tryPlayerMeleeAttack();
+          }
         }
       } else if (e.button === 2) {
-        // Holding Right-Click also raises the Dwarf's Shield when a Troll is nearby!
-        const nearest = this.getNearestActiveTroll(this.dwarf.root.position);
-        if (nearest && nearest.dist <= 9.0) {
-          if (!this.isBlockingInput) {
-            this.lastBlockRaiseTime = this.lastElapsedTime;
-          }
-          this.isBlockingInput = true;
-          this.dwarf.setShieldBlocking(true);
+        // Holding Right-Click raises the Dwarf's Shield anytime
+        if (!this.isBlockingInput) {
+          this.lastBlockRaiseTime = this.lastElapsedTime;
+        }
+        this.isBlockingInput = true;
+        this.dwarf.setShieldBlocking(true);
+      }
+    });
+
+    this.domElement.addEventListener('mouseup', (e) => {
+      if (
+        e.button === 0 &&
+        !this.leftClickAttackedOnDown &&
+        !this.isFishingOrHuntingActiveFn()
+      ) {
+        const moveDist = Math.hypot(
+          e.clientX - this.leftClickDownX,
+          e.clientY - this.leftClickDownY
+        );
+        const heldMs = performance.now() - this.leftClickDownTime;
+        // Left-clicking (without dragging to orbit the camera) swings the weapon anytime, even when standing still with no trolls nearby
+        if (moveDist <= 7 && heldMs <= 550) {
+          this.tryPlayerMeleeAttack();
         }
       }
     });
@@ -541,6 +568,10 @@ export class TrollCombatManager {
         this.isBlockingInput = false;
         this.dwarf.setShieldBlocking(false);
       }
+    });
+
+    document.getElementById('combat-gear-badge')?.addEventListener('click', () => {
+      this.tryPlayerMeleeAttack();
     });
 
     this.trackerBannerEl?.addEventListener('click', (e) => {
@@ -778,21 +809,33 @@ export class TrollCombatManager {
 
   /**
    * Player Melee Strike (`Left-Click` or `X` key):
-   * - Requires Strength (`⚡`) from eating food to deal full weapon damage.
+   * - Can be swung anytime (standing still, moving, indoors or outdoors, with or without Trolls nearby).
+   * - Requires Strength (`⚡`) from eating food to deal full weapon damage when striking a Troll.
    * - Without enough Strength (`< 15⚡`), deals only 20% glancing damage!
    */
   public tryPlayerMeleeAttack(): boolean {
-    if (this.isPlayerInsideSanctuary() || this.defeatRestorePending) return false;
-    if (this.playerAttackCooldown > 0) return false;
+    if (this.defeatRestorePending || this.playerAttackCooldown > 0) return false;
 
+    this.onBeforeMeleeSwing?.();
     const stats = this.getCombatStats();
     this.playerAttackCooldown = stats.weaponCooldown;
     this.dwarf.triggerMeleeSwing();
 
     const playerPos = this.dwarf.root.position;
+    if (this.isPlayerInsideSanctuary()) {
+      const fwdX = Math.sin(this.dwarf.heading) * 0.95;
+      const fwdZ = Math.cos(this.dwarf.heading) * 0.95;
+      this.dwarf.spawnBurst(playerPos.x + fwdX, playerPos.y + 0.88, playerPos.z + fwdZ, 6);
+      this.playFallbackSwingWhoosh();
+      return false;
+    }
+
     const nearest = this.getNearestActiveTroll(playerPos);
 
     if (!nearest || nearest.dist > 3.85) {
+      const fwdX = Math.sin(this.dwarf.heading) * 0.95;
+      const fwdZ = Math.cos(this.dwarf.heading) * 0.95;
+      this.dwarf.spawnBurst(playerPos.x + fwdX, playerPos.y + 0.88, playerPos.z + fwdZ, 6);
       this.playFallbackSwingWhoosh();
       return false;
     }

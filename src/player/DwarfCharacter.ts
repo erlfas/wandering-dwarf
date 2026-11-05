@@ -45,6 +45,8 @@ export class DwarfCharacter {
   private chiselPivot = new THREE.Group();
   private equippedWeaponGroup = new THREE.Group();
   private weaponMeshes: Partial<Record<EquippedWeaponId, THREE.Group>> = {};
+  private meleeSlashArcMesh!: THREE.Mesh;
+  private meleeSlashArcMat!: THREE.MeshBasicMaterial;
   private equippedShieldGroup = new THREE.Group();
   private shieldMeshes: Partial<Record<Exclude<EquippedShieldId, 'none'>, THREE.Group>> = {};
   private stowedShieldGroup = new THREE.Group();
@@ -80,6 +82,7 @@ export class DwarfCharacter {
   private combatReady = false;
   private meleeSwingTimer = 0;
   private readonly meleeSwingDuration = 0.38;
+  private wasSwingingWeapon = false;
   private shieldBlocking = false;
   private shieldBlockBlend = 0;
   private shieldImpactTimer = 0;
@@ -91,6 +94,11 @@ export class DwarfCharacter {
   private mixer: THREE.AnimationMixer | null = null;
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
   private currentState: AnimState = 'idle';
+  private spine1Bone: THREE.Object3D | null = null;
+  private rightArmBone: THREE.Object3D | null = null;
+  private rightForeArmBone: THREE.Object3D | null = null;
+  private readonly tempSwingEuler = new THREE.Euler();
+  private readonly tempSwingQuat = new THREE.Quaternion();
 
   private swimTime = 0;
   private swimBlend = 0; // Smooth 0..1 transition between land stance and swimming posture
@@ -713,6 +721,22 @@ export class DwarfCharacter {
       this.equippedWeaponGroup.add(g);
     }
 
+    // Glowing 3D Sword Slash Arc Trail that sweeps in front of the Dwarf during a melee swing
+    const slashArcGeo = new THREE.RingGeometry(0.46, 0.96, 18, 1, -Math.PI * 0.42, Math.PI * 0.84);
+    slashArcGeo.rotateX(-Math.PI * 0.38);
+    slashArcGeo.rotateZ(-0.22);
+    this.meleeSlashArcMat = new THREE.MeshBasicMaterial({
+      color: 0xe2f1ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+    });
+    this.meleeSlashArcMesh = new THREE.Mesh(slashArcGeo, this.meleeSlashArcMat);
+    this.meleeSlashArcMesh.position.set(0.08, 0.88, 0.42);
+    this.meleeSlashArcMesh.visible = false;
+    this.modelContainer.add(this.meleeSlashArcMesh);
+
     this.modelContainer.add(this.equippedWeaponGroup);
 
     // F) Left-Arm Equipped Round Shield & Mithril Aegis (matching art/gameplay_protect_against_enemy.jpg)
@@ -989,6 +1013,10 @@ export class DwarfCharacter {
 
   public triggerMeleeSwing(): void {
     this.meleeSwingTimer = this.meleeSwingDuration;
+    this.isFishingMode = false;
+    this.fishingEquipBlend = 0;
+    this.isHuntingMode = false;
+    this.huntingEquipBlend = 0;
   }
 
   public isSwingingWeapon(): boolean {
@@ -1196,6 +1224,17 @@ export class DwarfCharacter {
 
   private setupAnimations(model: THREE.Object3D, clips: THREE.AnimationClip[]): void {
     this.mixer = new THREE.AnimationMixer(model);
+
+    model.traverse((obj) => {
+      if (!obj.name) return;
+      if (obj.name.endsWith('Spine1')) {
+        this.spine1Bone = obj;
+      } else if (obj.name.endsWith('RightArm') && !obj.name.includes('ForeArm')) {
+        this.rightArmBone = obj;
+      } else if (obj.name.endsWith('RightForeArm')) {
+        this.rightForeArmBone = obj;
+      }
+    });
 
     // Prune redundant scale, non-root position, and individual finger phalange tracks
     const FINGER_RE = /(Index|Middle|Ring|Pinky|Thumb)[1-4]/i;
@@ -1586,8 +1625,17 @@ export class DwarfCharacter {
       this.chiselPivot.position.z = 0.14 + (1.0 - strike) * 0.04;
     }
 
-    // Show carried Natural Stones or Chiseled Castle Blocks when not fishing/hunting/swimming/chiseling
-    const canShowCarry = !isSwimming && !rodOut && !bowOut && !isChiselingNow;
+    // 9. Animate Equipped Melee Weapon (Right Hand) & Shield (Left Arm)
+    if (this.meleeSwingTimer > 0) {
+      this.meleeSwingTimer = Math.max(0, this.meleeSwingTimer - dt);
+    }
+    if (this.shieldImpactTimer > 0) {
+      this.shieldImpactTimer = Math.max(0, this.shieldImpactTimer - dt);
+    }
+    const isSwingingNow = this.meleeSwingTimer > 0;
+
+    // Show carried Natural Stones or Chiseled Castle Blocks when not fishing/hunting/swimming/chiseling/swinging
+    const canShowCarry = !isSwimming && !rodOut && !bowOut && !isChiselingNow && !isSwingingNow;
     const showRawStones = canShowCarry && this.carriedRawStones > 0 && this.carriedChiseledBlocks === 0;
     const showBlocks = canShowCarry && this.carriedChiseledBlocks > 0;
     this.carriedStoneGroup.visible = showRawStones;
@@ -1603,19 +1651,9 @@ export class DwarfCharacter {
       }
     }
 
-    // 9. Animate Equipped Melee Weapon (Right Hand) & Shield (Left Arm) when not carrying/fishing/hunting
-    if (this.meleeSwingTimer > 0) {
-      this.meleeSwingTimer = Math.max(0, this.meleeSwingTimer - dt);
-    }
-    if (this.shieldImpactTimer > 0) {
-      this.shieldImpactTimer = Math.max(0, this.shieldImpactTimer - dt);
-    }
-
     const busyWithHands =
       isSwimming || isGliding || rodOut || bowOut || isChiselingNow || showRawStones || showBlocks;
-    const showWeaponInHand =
-      !busyWithHands &&
-      (this.equippedWeaponId !== 'mallet' || this.combatReady || this.meleeSwingTimer > 0);
+    const showWeaponInHand = !busyWithHands;
     const hasShield = this.equippedShieldId !== 'none';
     const showShieldOnArm = !busyWithHands && hasShield;
 
@@ -1623,36 +1661,56 @@ export class DwarfCharacter {
     this.equippedShieldGroup.visible = showShieldOnArm;
     this.stowedShieldGroup.visible = busyWithHands && hasShield;
 
+    let swingProgress = -1;
     if (showWeaponInHand) {
       const walkSwing = moveSpeed > 0.2 ? Math.sin(this.carryBobTime) * 0.12 : 0;
-      if (this.meleeSwingTimer > 0) {
+      if (isSwingingNow) {
         const p = 1.0 - this.meleeSwingTimer / this.meleeSwingDuration;
+        swingProgress = p;
         // Wind up (0..0.28), fast cleave forward/down (0.28..0.72), recover (0.72..1.0)
         let pitch = 0.35;
         let yaw = 0;
         let roll = -0.15;
         if (p < 0.28) {
           const w = p / 0.28;
-          pitch = THREE.MathUtils.lerp(0.35, -0.85, w);
-          yaw = THREE.MathUtils.lerp(0, -0.45, w);
-          roll = THREE.MathUtils.lerp(-0.15, -0.55, w);
+          pitch = THREE.MathUtils.lerp(0.35, -0.88, w);
+          yaw = THREE.MathUtils.lerp(0, -0.48, w);
+          roll = THREE.MathUtils.lerp(-0.15, -0.58, w);
         } else if (p < 0.72) {
           const s = (p - 0.28) / 0.44;
-          pitch = THREE.MathUtils.lerp(-0.85, 1.48, s);
-          yaw = THREE.MathUtils.lerp(-0.45, 0.52, s);
-          roll = THREE.MathUtils.lerp(-0.55, 0.38, s);
+          pitch = THREE.MathUtils.lerp(-0.88, 1.54, s);
+          yaw = THREE.MathUtils.lerp(-0.48, 0.58, s);
+          roll = THREE.MathUtils.lerp(-0.58, 0.42, s);
         } else {
           const r = (p - 0.72) / 0.28;
-          pitch = THREE.MathUtils.lerp(1.48, 0.35, r);
-          yaw = THREE.MathUtils.lerp(0.52, 0, r);
-          roll = THREE.MathUtils.lerp(0.38, -0.15, r);
+          pitch = THREE.MathUtils.lerp(1.54, 0.35, r);
+          yaw = THREE.MathUtils.lerp(0.58, 0, r);
+          roll = THREE.MathUtils.lerp(0.42, -0.15, r);
         }
-        this.equippedWeaponGroup.position.set(0.32, 0.86, 0.34);
+        this.equippedWeaponGroup.position.set(0.32, 0.88, 0.36);
         this.equippedWeaponGroup.rotation.set(pitch, yaw, roll);
       } else {
+        const readyPitch = this.combatReady ? 0.26 : 0.42;
         this.equippedWeaponGroup.position.set(0.33, 0.78, 0.26);
-        this.equippedWeaponGroup.rotation.set(0.42 + walkSwing, -0.08, -0.12);
+        this.equippedWeaponGroup.rotation.set(readyPitch + walkSwing, -0.08, -0.12);
       }
+    }
+
+    if (swingProgress >= 0.22 && swingProgress <= 0.78) {
+      const cleaveT = (swingProgress - 0.22) / 0.56;
+      this.meleeSlashArcMesh.visible = true;
+      this.meleeSlashArcMat.color.setHex(
+        this.equippedWeaponId === 'runic_greatsword'
+          ? 0xffd166
+          : this.equippedWeaponId === 'broadsword' || this.equippedWeaponId === 'battle_axe'
+            ? 0xe2f1ff
+            : 0xf4dcb5
+      );
+      this.meleeSlashArcMat.opacity = Math.sin(cleaveT * Math.PI) * 0.76;
+      this.meleeSlashArcMesh.rotation.y = THREE.MathUtils.lerp(-0.55, 0.65, cleaveT);
+      this.meleeSlashArcMesh.scale.setScalar(0.88 + cleaveT * 0.28);
+    } else if (this.meleeSlashArcMesh.visible) {
+      this.meleeSlashArcMesh.visible = false;
     }
 
     if (showShieldOnArm) {
@@ -1805,7 +1863,7 @@ export class DwarfCharacter {
         }
       }
 
-      if (this.currentState === 'idle') {
+      if (this.currentState === 'idle' && !isSwingingNow && !this.wasSwingingWeapon) {
         this.idleStateTime += dt;
         // Once the 0.25s crossfade into idle completes, throttle breathing mixer updates to ~30 Hz
         if (this.idleStateTime > 0.28) {
@@ -1818,8 +1876,53 @@ export class DwarfCharacter {
           this.mixer.update(dt);
         }
       } else {
-        this.mixer.update(dt);
+        this.mixer.update(dt + this.idleMixerAccum);
+        this.idleMixerAccum = 0;
       }
+
+      // Layer procedural right-arm & upper-torso sword swing onto the skeletal bones
+      if (swingProgress >= 0) {
+        let armPitch = 0;
+        let armYaw = 0;
+        let foreArmPitch = 0;
+        let spineYaw = 0;
+        if (swingProgress < 0.28) {
+          const w = swingProgress / 0.28;
+          armPitch = THREE.MathUtils.lerp(0, -0.75, w);
+          armYaw = THREE.MathUtils.lerp(0, -0.35, w);
+          foreArmPitch = THREE.MathUtils.lerp(0, -0.55, w);
+          spineYaw = THREE.MathUtils.lerp(0, -0.22, w);
+        } else if (swingProgress < 0.72) {
+          const s = (swingProgress - 0.28) / 0.44;
+          armPitch = THREE.MathUtils.lerp(-0.75, 0.85, s);
+          armYaw = THREE.MathUtils.lerp(-0.35, 0.48, s);
+          foreArmPitch = THREE.MathUtils.lerp(-0.55, 0.35, s);
+          spineYaw = THREE.MathUtils.lerp(-0.22, 0.28, s);
+        } else {
+          const r = (swingProgress - 0.72) / 0.28;
+          armPitch = THREE.MathUtils.lerp(0.85, 0, r);
+          armYaw = THREE.MathUtils.lerp(0.48, 0, r);
+          foreArmPitch = THREE.MathUtils.lerp(0.35, 0, r);
+          spineYaw = THREE.MathUtils.lerp(0.28, 0, r);
+        }
+
+        if (this.spine1Bone) {
+          this.tempSwingEuler.set(Math.abs(spineYaw) * 0.35, spineYaw, 0);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.spine1Bone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.rightArmBone) {
+          this.tempSwingEuler.set(armPitch, armYaw, 0);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.rightArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.rightForeArmBone) {
+          this.tempSwingEuler.set(foreArmPitch, 0, 0);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.rightForeArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+      }
+      this.wasSwingingWeapon = isSwingingNow;
     }
 
     if (isSwimming) {
