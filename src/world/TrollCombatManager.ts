@@ -12,6 +12,13 @@ import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
+import {
+  TerrainNoise,
+  VOLCANO_BARREN_RADIUS,
+  VOLCANO_BARREN_RADIUS_SQ,
+  VOLCANO_X,
+  VOLCANO_Z,
+} from './TerrainNoise';
 
 export const TROLL_MAX_HP = 320;
 export const TROLL_WALK_SPEED = 2.6; // Slower than Dwarf walk (6.0 m/s)
@@ -237,7 +244,8 @@ export class TrollCombatManager {
     private onEatFoodRequest: () => void,
     private onTrollDefeatedReward: (gold: number, rations: number, trophiesTotal: number, title: string) => void,
     private onRestoreLastSavedLocation: () => void,
-    private onInterruptFishingNight?: () => void
+    private onInterruptFishingNight?: () => void,
+    private noise?: TerrainNoise
   ) {
     this.group.matrixAutoUpdate = false;
     this.trackerBannerEl = document.getElementById('troll-combat-banner');
@@ -752,9 +760,16 @@ export class TrollCombatManager {
       let sz = playerPos.z + Math.sin(angle) * dist;
       let sy = this.sampleGroundHeight(sx, sz);
 
-      if (sy <= minLandY) {
+      if (sy <= minLandY || this.noise?.isInsideVolcanoBarrenZone(sx, sz)) {
         sx = playerPos.x - Math.cos(angle) * dist;
         sz = playerPos.z - Math.sin(angle) * dist;
+        if (this.noise?.isInsideVolcanoBarrenZone(sx, sz)) {
+          const vdx = sx - VOLCANO_X;
+          const vdz = sz - VOLCANO_Z;
+          const vLen = Math.hypot(vdx, vdz) || 1;
+          sx = VOLCANO_X + (vdx / vLen) * (VOLCANO_BARREN_RADIUS + 8.0);
+          sz = VOLCANO_Z + (vdz / vLen) * (VOLCANO_BARREN_RADIUS + 8.0);
+        }
         sy = this.sampleGroundHeight(sx, sz);
       }
 
@@ -1186,6 +1201,18 @@ export class TrollCombatManager {
           t.pos.x += (pdx / pLen) * TROLL_WALK_SPEED * dt;
           t.pos.z += (pdz / pLen) * TROLL_WALK_SPEED * dt;
         }
+      }
+
+      // Keep Trolls outside Mount Doomforge's barren volcanic heat zone
+      const tvdx = t.pos.x - VOLCANO_X;
+      const tvdz = t.pos.z - VOLCANO_Z;
+      const tvDistSq = tvdx * tvdx + tvdz * tvdz;
+      if (tvDistSq < VOLCANO_BARREN_RADIUS_SQ) {
+        const tvDist = Math.sqrt(tvDistSq) || 0.01;
+        t.pos.x = VOLCANO_X + (tvdx / tvDist) * VOLCANO_BARREN_RADIUS;
+        t.pos.z = VOLCANO_Z + (tvdz / tvDist) * VOLCANO_BARREN_RADIUS;
+        t.homePos.copy(t.pos);
+        t.heading = Math.atan2(tvdx, tvdz);
       }
 
       // Keep Trolls outside Completed Castle Sanctuary Perimeters (`radius 9.5m`)

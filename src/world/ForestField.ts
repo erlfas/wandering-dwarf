@@ -1151,6 +1151,7 @@ export class ChunkForest {
           const distAboveWater = wy - config.waterLevel;
           if (
             config.enableWater &&
+            !noise.isInsideVolcanoBarrenZone(wx, wz) &&
             distAboveWater > -0.25 &&
             distAboveWater < 0.75 &&
             rng() < 0.28
@@ -1497,6 +1498,7 @@ export class ChunkForest {
       const lz = (rng() - 0.5) * size;
       const wx = worldOffsetX + lx;
       const wz = worldOffsetZ + lz;
+      if (noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
 
       // Check track weight BEFORE computing surface normal & quaternion (~86% reject rate)
       const trackW = sampler?.sampleTrackWeight

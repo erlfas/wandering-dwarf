@@ -711,9 +711,10 @@ export class ChunkGrass {
         noise.getNormal(wx, wz, sharedNormal);
       }
 
-      // Skip very steep rocky slopes or underwater/shoreline before evaluating biome or colors
+      // Skip very steep rocky slopes, underwater/shoreline, or barren volcano basalt before evaluating biome or colors
       if (sharedNormal.y < 0.72) continue;
       if (config.enableWater && wy < config.waterLevel + 0.52) continue;
+      if (noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
 
       // Evaluate forest track weight: keep the worn dirt footpath clear while framing its verges
       const trackW = chunkNearTrack

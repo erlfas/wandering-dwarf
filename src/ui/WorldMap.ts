@@ -5,7 +5,18 @@ import { WorldConfig } from '../world/Config';
 import { LandmarkManager } from '../world/LandmarkManager';
 import { CastleAndQuarryManager } from '../world/CastleAndQuarryManager';
 import { SavedDiscoveredHut } from '../world/ProgressStorage';
-import { createSeededRandom, TerrainNoise } from '../world/TerrainNoise';
+import {
+  createSeededRandom,
+  TerrainNoise,
+  VOLCANO_BARREN_RADIUS_SQ,
+  VOLCANO_CRATER_RADIUS,
+  VOLCANO_OUTER_RADIUS,
+  VOLCANO_OUTER_RADIUS_SQ,
+  VOLCANO_PEAK_HEIGHT,
+  VOLCANO_RIM_RADIUS,
+  VOLCANO_X,
+  VOLCANO_Z,
+} from '../world/TerrainNoise';
 import { TreasureManager } from '../world/TreasureManager';
 
 const CELL_SIZE = 16; // 16m x 16m discovery cell (3x3 cells per 48m chunk)
@@ -96,6 +107,8 @@ interface InteractiveMapMarker {
   worldX: number;
   worldY: number;
   worldZ: number;
+  teleportX?: number;
+  teleportZ?: number;
   screenX: number;
   screenY: number;
   radiusPx: number;
@@ -455,10 +468,9 @@ export class WorldMap {
    * fits inside the map viewport with comfortable cartographic padding.
    */
   public fitToDiscoveredArea(): void {
-    this.resizeCanvasToContainer();
-    const rect = this.canvas.getBoundingClientRect();
-    const w = Math.max(320, rect.width);
-    const h = Math.max(240, rect.height);
+    const { width: wRaw, height: hRaw } = this.resizeCanvasToContainer();
+    const w = Math.max(320, wRaw);
+    const h = Math.max(240, hRaw);
 
     const pos = this.getPlayerPos();
     let minX = Math.min(this.minDiscoveredX, pos.x - 36);
@@ -471,6 +483,11 @@ export class WorldMap {
       maxX = Math.max(maxX, b.x + 48);
       minZ = Math.min(minZ, b.z - 48);
       maxZ = Math.max(maxZ, b.z + 48);
+    }
+
+    if (this.landmarkManager.isBeaconLit('wt_volcano_rim')) {
+      maxX = Math.max(maxX, VOLCANO_X + 48);
+      maxZ = Math.max(maxZ, VOLCANO_Z + 48);
     }
 
     const digPos = this.treasureManager.getActiveDigSitePos();
@@ -504,15 +521,18 @@ export class WorldMap {
     this.zoom = THREE.MathUtils.clamp(this.zoom * factor, 0.04, 4.8);
   }
 
-  private resizeCanvasToContainer(): void {
+  private resizeCanvasToContainer(): { width: number; height: number } {
     const rect = this.canvas.getBoundingClientRect();
+    const width = Math.max(1, rect.width);
+    const height = Math.max(1, rect.height);
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const targetW = Math.max(1, Math.round(rect.width * dpr));
-    const targetH = Math.max(1, Math.round(rect.height * dpr));
+    const targetW = Math.max(1, Math.round(width * dpr));
+    const targetH = Math.max(1, Math.round(height * dpr));
     if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
       this.canvas.width = targetW;
       this.canvas.height = targetH;
     }
+    return { width, height };
   }
 
   /**
@@ -925,6 +945,31 @@ export class WorldMap {
           }
         }
 
+        // Colossal Active Volcano (Mount Doomforge) cartographic basalt & glowing magma crater
+        const vdx = wx - VOLCANO_X;
+        const vdz = wz - VOLCANO_Z;
+        const vDistSq = vdx * vdx + vdz * vdz;
+        if (vDistSq < VOLCANO_OUTER_RADIUS_SQ) {
+          const vDist = Math.sqrt(vDistSq);
+          const vBlend = 1.0 - THREE.MathUtils.smoothstep(vDist, 140.0, VOLCANO_OUTER_RADIUS - 4.0);
+          r = THREE.MathUtils.lerp(r, 42, vBlend);
+          g = THREE.MathUtils.lerp(g, 36, vBlend);
+          b = THREE.MathUtils.lerp(b, 40, vBlend);
+
+          const lavaCh = this.noise.getVolcanoLavaChannelWeight(vdx, vdz, vDist);
+          if (lavaCh > 0.05) {
+            r = THREE.MathUtils.lerp(r, 255, lavaCh);
+            g = THREE.MathUtils.lerp(g, 108, lavaCh);
+            b = THREE.MathUtils.lerp(b, 18, lavaCh);
+          }
+          if (vDist < VOLCANO_RIM_RADIUS) {
+            const craterT = 1.0 - THREE.MathUtils.smoothstep(vDist, VOLCANO_CRATER_RADIUS * 0.6, VOLCANO_RIM_RADIUS);
+            r = THREE.MathUtils.lerp(r, 255, craterT);
+            g = THREE.MathUtils.lerp(g, 135, craterT);
+            b = THREE.MathUtils.lerp(b, 25, craterT);
+          }
+        }
+
         // Apply directional sun hillshading
         r *= shade;
         g *= shade;
@@ -1031,69 +1076,79 @@ export class WorldMap {
     let campfire: { id: string; x: number; y: number; z: number } | undefined;
     let watchtower: { id: string; name: string; x: number; y: number; z: number } | undefined;
 
-    if (this.config.enableTracks && this.config.enableWater) {
-      for (let s = -1; s <= 1; s += 2) {
-        const sampleX = cx * size + s * (size * 0.24);
-        const sampleZ = cz * size + (lmRng() - 0.5) * (size * 0.45);
-        const distToTrack = this.noise.getTrackDistance(sampleX, sampleZ);
-        if (distToTrack < 4.5) {
-          const wy = this.noise.getHeight(sampleX, sampleZ);
-          if (wy < this.config.waterLevel - 0.15 && wy > this.config.waterLevel - 2.6) {
-            const heading = this.noise.getTrackHeading(sampleX, sampleZ);
-            bridge = {
-              x: sampleX,
-              y: this.config.waterLevel + 0.55,
-              z: sampleZ,
-              heading,
-            };
-            break;
+    const isStarterCampChunk = cx === 0 && cz === 0;
+    const isStarterTowerChunk = cx === 1 && cz === -1;
+    const chunkWx = cx * size;
+    const chunkWz = cz * size;
+    const inVolcanoBarren =
+      (chunkWx - VOLCANO_X) * (chunkWx - VOLCANO_X) +
+        (chunkWz - VOLCANO_Z) * (chunkWz - VOLCANO_Z) <
+      VOLCANO_BARREN_RADIUS_SQ;
+
+    if (!inVolcanoBarren) {
+      if (this.config.enableTracks && this.config.enableWater) {
+        for (let s = -1; s <= 1; s += 2) {
+          const sampleX = cx * size + s * (size * 0.24);
+          const sampleZ = cz * size + (lmRng() - 0.5) * (size * 0.45);
+          const distToTrack = this.noise.getTrackDistance(sampleX, sampleZ);
+          if (distToTrack < 4.5) {
+            const wy = this.noise.getHeight(sampleX, sampleZ);
+            if (wy < this.config.waterLevel - 0.15 && wy > this.config.waterLevel - 2.6) {
+              const heading = this.noise.getTrackHeading(sampleX, sampleZ);
+              bridge = {
+                x: sampleX,
+                y: this.config.waterLevel + 0.55,
+                z: sampleZ,
+                heading,
+              };
+              break;
+            }
           }
         }
       }
-    }
 
-    const isStarterCampChunk = cx === 0 && cz === 0;
-    const isStarterTowerChunk = cx === 1 && cz === -1;
-
-    if (isStarterCampChunk || (!isStarterTowerChunk && lmRng() < 0.16)) {
-      const lx = isStarterCampChunk ? -11.5 : (lmRng() - 0.5) * (size * 0.65);
-      const lz = isStarterCampChunk ? -14.0 : (lmRng() - 0.5) * (size * 0.65);
-      const wx = cx * size + lx;
-      const wz = cz * size + lz;
-      const wy = this.noise.getHeight(wx, wz);
-
-      if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
-        campfire = { id: `${cx},${cz}`, x: wx, y: wy, z: wz };
-      }
-    }
-
-    if (isStarterTowerChunk || (Math.abs(cx) + Math.abs(cz) >= 2 && lmRng() < 0.22)) {
-      let bestX = cx * size;
-      let bestZ = cz * size;
-      let bestY = -Infinity;
-
-      for (let i = 0; i < 6; i++) {
-        const tx = cx * size + (lmRng() - 0.5) * (size * 0.72);
-        const tz = cz * size + (lmRng() - 0.5) * (size * 0.72);
-        const ty = this.noise.getHeight(tx, tz);
-        if (ty > bestY) {
-          bestY = ty;
-          bestX = tx;
-          bestZ = tz;
+      if (isStarterCampChunk || (!isStarterTowerChunk && lmRng() < 0.16)) {
+        const lx = isStarterCampChunk ? -11.5 : (lmRng() - 0.5) * (size * 0.65);
+        const lz = isStarterCampChunk ? -14.0 : (lmRng() - 0.5) * (size * 0.65);
+        const wx = cx * size + lx;
+        const wz = cz * size + lz;
+        if (!this.noise.isInsideVolcanoBarrenZone(wx, wz)) {
+          const wy = this.noise.getHeight(wx, wz);
+          if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
+            campfire = { id: `${cx},${cz}`, x: wx, y: wy, z: wz };
+          }
         }
       }
 
-      const minElev = isStarterTowerChunk ? this.config.waterLevel + 2.5 : 8.5;
-      if (bestY >= minElev) {
-        const id = `wt_${cx}_${cz}`;
-        const nameIdx = Math.abs(cx * 7 + cz * 13) % WATCHTOWER_NAMES.length;
-        watchtower = {
-          id,
-          name: WATCHTOWER_NAMES[nameIdx],
-          x: bestX,
-          y: bestY,
-          z: bestZ,
-        };
+      if (isStarterTowerChunk || (Math.abs(cx) + Math.abs(cz) >= 2 && lmRng() < 0.22)) {
+        let bestX = cx * size;
+        let bestZ = cz * size;
+        let bestY = -Infinity;
+
+        for (let i = 0; i < 6; i++) {
+          const tx = cx * size + (lmRng() - 0.5) * (size * 0.72);
+          const tz = cz * size + (lmRng() - 0.5) * (size * 0.72);
+          if (this.noise.isInsideVolcanoBarrenZone(tx, tz)) continue;
+          const ty = this.noise.getHeight(tx, tz);
+          if (ty > bestY) {
+            bestY = ty;
+            bestX = tx;
+            bestZ = tz;
+          }
+        }
+
+        const minElev = isStarterTowerChunk ? this.config.waterLevel + 2.5 : 8.5;
+        if (bestY >= minElev) {
+          const id = `wt_${cx}_${cz}`;
+          const nameIdx = Math.abs(cx * 7 + cz * 13) % WATCHTOWER_NAMES.length;
+          watchtower = {
+            id,
+            name: WATCHTOWER_NAMES[nameIdx],
+            x: bestX,
+            y: bestY,
+            z: bestZ,
+          };
+        }
       }
     }
 
@@ -1116,6 +1171,9 @@ export class WorldMap {
           const wy = this.noise.getHeight(wx, wz);
 
           if (this.config.enableWater && wy < this.config.waterLevel + 0.9) continue;
+          if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) {
+            continue;
+          }
           if (
             !isStartChunk &&
             this.config.enableTracks &&
@@ -1154,11 +1212,7 @@ export class WorldMap {
    */
   public render(): void {
     if (!this.isOpen) return;
-    this.resizeCanvasToContainer();
-
-    const rect = this.canvas.getBoundingClientRect();
-    const width = Math.max(1, rect.width);
-    const height = Math.max(1, rect.height);
+    const { width, height } = this.resizeCanvasToContainer();
     const scaleX = this.canvas.width / width;
     const scaleY = this.canvas.height / height;
     const ctx = this.ctx;
@@ -1382,7 +1436,7 @@ export class WorldMap {
     worldToScreenX: (wx: number) => number,
     worldToScreenY: (wz: number) => number
   ): void {
-    const seenWatchtowers = new Set<string>();
+    const seenWatchtowers = new Set<string>(['wt_volcano_rim']);
 
     // 1. Bridges, Stone Circles, Chests, and Watchtowers inside visible discovered chunks
     for (const cache of visibleCaches) {
@@ -1624,7 +1678,34 @@ export class WorldMap {
       });
     }
 
-    // 4. Spawn Valley Origin (0, 0) — Fast-Travel Waypoint
+    // 4. Mount Doomforge (The Single Colossal Active Volcano — always visible on horizon & map)
+    {
+      const sx = worldToScreenX(VOLCANO_X);
+      const sy = worldToScreenY(VOLCANO_Z);
+      const isRimUnlocked = this.landmarkManager.isBeaconLit('wt_volcano_rim');
+      const overlookTargetX = Math.round(VOLCANO_X - 91.0);
+      const overlookTargetZ = Math.round(VOLCANO_Z - 122.0);
+      this.drawPin(ctx, sx, sy, 12.5, '#590d08', '#ff6d00', '🌋', true);
+      this.interactiveMarkers.push({
+        id: 'mount_doomforge_volcano',
+        kind: isRimUnlocked ? 'beacon_lit' : 'beacon_unlit',
+        title: '🌋 Mount Doomforge (Colossal Active Volcano)',
+        subtitle: isRimUnlocked
+          ? '⚡ Click to Fast-Travel to Safe Overlook!'
+          : 'Glowing flames & ominous smoke plume — Approach the foothills to unlock Fast-Travel!',
+        worldX: VOLCANO_X,
+        worldY: VOLCANO_PEAK_HEIGHT,
+        worldZ: VOLCANO_Z,
+        teleportX: overlookTargetX,
+        teleportZ: overlookTargetZ,
+        screenX: sx,
+        screenY: sy,
+        radiusPx: 15,
+        canTeleport: isRimUnlocked,
+      });
+    }
+
+    // 5. Spawn Valley Origin (0, 0) — Fast-Travel Waypoint
     {
       const sx = worldToScreenX(0);
       const sy = worldToScreenY(0);
@@ -1899,9 +1980,18 @@ export class WorldMap {
     this.handleCanvasHover(e);
     const hit = this.hoveredMarker;
     if (hit && hit.canTeleport) {
-      const label = hit.kind === 'spawn' ? '🏕️ Spawn Valley' : hit.title.replace(' (Lit Beacon)', '');
+      const label =
+        hit.kind === 'spawn'
+          ? '🏕️ Spawn Valley'
+          : hit.id === 'mount_doomforge_volcano'
+            ? '🌋 Mount Doomforge Overlook'
+            : hit.title.replace(' (Lit Beacon)', '');
       this.close();
-      this.landmarkManager.teleportToWaypoint(hit.worldX, hit.worldZ, label);
+      this.landmarkManager.teleportToWaypoint(
+        hit.teleportX ?? hit.worldX,
+        hit.teleportZ ?? hit.worldZ,
+        label
+      );
     }
   }
 
@@ -1909,6 +1999,8 @@ export class WorldMap {
     this.hoveredMarker = null;
     this.tooltipEl.classList.add('hidden');
   }
+
+  private lastStatsText = '';
 
   private updateStatsReadout(): void {
     const cellsCount = this.discoveredCells.size;
@@ -1920,9 +2012,13 @@ export class WorldMap {
     const hutsCount = this.discoveredHuts.size;
     const chestsCount = this.treasureManager.chestsCollected;
 
-    this.statsEl.textContent =
+    const nextText =
       `Explored: ${areaSqMeters.toLocaleString()} m² (${areaHa} ha) • Span: ${spanX}m × ${spanZ}m • ` +
       `🔥 ${litBeacons} Beacon${litBeacons === 1 ? '' : 's'} • 🏠 ${hutsCount} Hut${hutsCount === 1 ? '' : 's'} • 🪙 ${chestsCount} Chest${chestsCount === 1 ? '' : 's'}`;
+    if (nextText !== this.lastStatsText) {
+      this.lastStatsText = nextText;
+      this.statsEl.textContent = nextText;
+    }
   }
 
   private playMapRustleSound(opening: boolean): void {

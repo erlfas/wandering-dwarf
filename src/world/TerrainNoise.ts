@@ -30,10 +30,29 @@ const COL_TRACK_DIRT_MID = new THREE.Color(0xa88354);   // Warm ochre footpath e
 const COL_TRACK_RUT_DARK = new THREE.Color(0x7d603c);   // Deeper compacted earth in ruts & root shadows
 const COL_TRACK_GRAVEL = new THREE.Color(0x94897b);     // Weathered grey-taupe stony patches in center
 const COL_TRACK_VERGE_MOSS = new THREE.Color(0x668236); // Mossy yellow-green grass encroaching track edges
+// Colossal Active Volcano (Mount Doomforge) palette
+const COL_VOLCANO_ASH = new THREE.Color(0x2d282b);      // Scorched dark ash-grey lower slopes
+const COL_VOLCANO_BASALT = new THREE.Color(0x181417);   // Jagged dark obsidian/basalt cone
+const COL_VOLCANO_SCORIA = new THREE.Color(0x592519);   // Heated rust-red volcanic scoria near rim
+const COL_VOLCANO_LAVA_CRUST = new THREE.Color(0xb82909); // Deep crimson magma crust
+const COL_VOLCANO_LAVA_HOT = new THREE.Color(0xff6a00);   // Incandescent orange molten lava
+const COL_VOLCANO_LAVA_CORE = new THREE.Color(0xffd03b);  // Bright yellow-white magma core
 const tempColorA = new THREE.Color();
 const tempColorB = new THREE.Color();
 const tempColorC = new THREE.Color();
 const INV_MESO_NORM = 1.0 / 1.7104;
+
+// Coordinates and dimensions of the single giant active volcano (Mount Doomforge)
+export const VOLCANO_X = 240.0;
+export const VOLCANO_Z = 320.0;
+export const VOLCANO_OUTER_RADIUS = 196.0;
+export const VOLCANO_OUTER_RADIUS_SQ = VOLCANO_OUTER_RADIUS * VOLCANO_OUTER_RADIUS;
+export const VOLCANO_BARREN_RADIUS = 158.0;
+export const VOLCANO_BARREN_RADIUS_SQ = VOLCANO_BARREN_RADIUS * VOLCANO_BARREN_RADIUS;
+export const VOLCANO_RIM_RADIUS = 44.0;
+export const VOLCANO_CRATER_RADIUS = 32.0;
+export const VOLCANO_PEAK_HEIGHT = 118.0;
+export const VOLCANO_LAVA_LAKE_Y = 89.5;
 
 export class TerrainNoise {
   private macroNoise!: NoiseFunction2D;
@@ -243,6 +262,13 @@ export class TerrainNoise {
       return 0;
     }
 
+    const vdx = x - VOLCANO_X;
+    const vdz = z - VOLCANO_Z;
+    const vDistSq = vdx * vdx + vdz * vdz;
+    if (vDistSq <= 125.0 * 125.0) {
+      return 0;
+    }
+
     const d = this.getTrackDistance(x, z, precomputedMacro);
     const halfDirt = cfg.trackWidth * 0.5;
     const maxRadius = halfDirt + 2.1;
@@ -276,6 +302,10 @@ export class TerrainNoise {
         cfg.waterLevel + 1.05
       );
       weight *= waterFade;
+    }
+
+    if (vDistSq < 168.0 * 168.0) {
+      weight *= THREE.MathUtils.smoothstep(Math.sqrt(vDistSq), 125.0, 168.0);
     }
 
     return weight;
@@ -344,9 +374,25 @@ export class TerrainNoise {
       meso * cfg.mesoAmplitude * valleyMask +
       micro * cfg.microAmplitude;
 
-    // 5. Meandering Rivers & Natural Pond Basins
-    if (cfg.riverCarveStrength > 0 || cfg.pondFrequency > 0) {
+    const vdx = x - VOLCANO_X;
+    const vdz = z - VOLCANO_Z;
+    const vDistSq = vdx * vdx + vdz * vdz;
+    const insideVolcano = vDistSq < VOLCANO_OUTER_RADIUS_SQ;
+    const vDist = insideVolcano ? Math.sqrt(vDistSq) : 0;
+
+    // 5. Meandering Rivers & Natural Pond Basins (suppressed inside the volcano cone)
+    if (
+      (cfg.riverCarveStrength > 0 || cfg.pondFrequency > 0) &&
+      (!insideVolcano || vDistSq > VOLCANO_BARREN_RADIUS_SQ)
+    ) {
       const waterY = cfg.waterLevel;
+      const outerFade = insideVolcano
+        ? THREE.MathUtils.smoothstep(
+            vDist,
+            VOLCANO_BARREN_RADIUS,
+            VOLCANO_OUTER_RADIUS
+          )
+        : 1.0;
 
       // A) Meandering River Network using zero-crossing of domain-warped simplex noise
       if (cfg.riverCarveStrength > 0) {
@@ -370,14 +416,14 @@ export class TerrainNoise {
             height = THREE.MathUtils.lerp(
               height,
               Math.min(height, bankElevation + (height - bankElevation) * 0.18),
-              valleyT * cfg.riverCarveStrength
+              valleyT * cfg.riverCarveStrength * outerFade
             );
 
             // Carve the wet river channel below waterLevel
             if (rVal < channelHalfWidth) {
               const channelT = 1.0 - THREE.MathUtils.smoothstep(rVal, 0, channelHalfWidth);
               const bedDepth = 2.2 * widthMod;
-              height -= channelT * bedDepth * cfg.riverCarveStrength;
+              height -= channelT * bedDepth * cfg.riverCarveStrength * outerFade;
             }
           }
         }
@@ -415,7 +461,7 @@ export class TerrainNoise {
           // Only form ponds where terrain isn't a high mountain peak
           const elevWeight = 1.0 - THREE.MathUtils.smoothstep(height, waterY + 1.0, waterY + 11.0);
           const basinTarget = waterY - 1.85;
-          height = THREE.MathUtils.lerp(height, basinTarget, pondFactor * elevWeight * 0.92);
+          height = THREE.MathUtils.lerp(height, basinTarget, pondFactor * elevWeight * 0.92 * outerFade);
         }
       }
     }
@@ -425,6 +471,7 @@ export class TerrainNoise {
     if (
       !skipTracks &&
       cfg.enableTracks &&
+      (!insideVolcano || vDistSq > 125.0 * 125.0) &&
       (!cfg.enableWater || height > cfg.waterLevel + 0.15)
     ) {
       const trackW = this.getTrackWeight(x, z, height);
@@ -442,7 +489,76 @@ export class TerrainNoise {
       }
     }
 
+    // 7. Single Colossal Active Volcano (Mount Doomforge at VOLCANO_X, VOLCANO_Z)
+    if (insideVolcano) {
+      const angle = Math.atan2(vdz, vdx);
+      // Jagged radial basalt ribs & crags along the volcanic cone
+      const ribWave =
+        Math.sin(angle * 7.0 + micro * 0.85) * 0.55 +
+        Math.cos(angle * 13.0 - vDist * 0.045) * 0.45;
+      const lavaChannel = this.getVolcanoLavaChannelWeight(vdx, vdz, vDist, angle);
+      const channelCarve = lavaChannel * 1.65;
+
+      if (vDist >= VOLCANO_RIM_RADIUS) {
+        const u = THREE.MathUtils.clamp(
+          (VOLCANO_OUTER_RADIUS - vDist) / (VOLCANO_OUTER_RADIUS - VOLCANO_RIM_RADIUS),
+          0,
+          1
+        );
+        // Smooth concave-upward stratovolcano cone profile that rounds at the caldera rim
+        const skirtBlend = THREE.MathUtils.smoothstep(u, 0.0, 0.22);
+        const coneProfile = Math.pow(u, 1.48) * (1.0 - 0.12 * Math.pow(u, 5.0)) / 0.88;
+        const rimCrags =
+          ribWave * (2.6 * Math.sin(u * Math.PI) + 1.8 * THREE.MathUtils.smoothstep(u, 0.78, 1.0));
+        const volcanoElev =
+          VOLCANO_PEAK_HEIGHT * coneProfile + rimCrags - channelCarve + micro * 1.15;
+        height = THREE.MathUtils.lerp(height, Math.max(height, volcanoElev), skirtBlend);
+      } else {
+        // Inside the Caldera Rim: steep rocky inner crater walls plunging into the molten magma cauldron
+        const rimPeakY =
+          VOLCANO_PEAK_HEIGHT + ribWave * 1.8 - channelCarve + micro * 1.15;
+        const craterT = THREE.MathUtils.smoothstep(
+          vDist,
+          VOLCANO_CRATER_RADIUS * 0.65,
+          VOLCANO_RIM_RADIUS
+        );
+        const craterFloorY = VOLCANO_LAVA_LAKE_Y - 4.5 + micro * 0.6;
+        height = THREE.MathUtils.lerp(craterFloorY, rimPeakY, craterT * craterT);
+      }
+    }
+
     return height;
+  }
+
+  /**
+   * Returns true if world (x, z) lies on the barren basalt/lava slopes of Mount Doomforge
+   * where meadow grass and trees should not grow.
+   */
+  public isInsideVolcanoBarrenZone(x: number, z: number): boolean {
+    const dx = x - VOLCANO_X;
+    const dz = z - VOLCANO_Z;
+    return dx * dx + dz * dz < VOLCANO_BARREN_RADIUS_SQ;
+  }
+
+  /**
+   * Returns [0, 1] weight for the 4 glowing radial magma rivers flowing down Mount Doomforge's flanks.
+   */
+  public getVolcanoLavaChannelWeight(
+    vdx: number,
+    vdz: number,
+    vDist: number,
+    precomputedAngle?: number
+  ): number {
+    if (vDist < 36.0 || vDist > 152.0) return 0;
+    const angle = precomputedAngle !== undefined ? precomputedAngle : Math.atan2(vdz, vdx);
+    const meander = Math.sin(vDist * 0.055 + angle * 2.0) * 0.24;
+    const wave = Math.cos((angle + meander) * 4.0);
+    if (wave <= 0.76) return 0;
+    const channelCross = THREE.MathUtils.smoothstep(wave, 0.76, 0.96);
+    const radialFade =
+      THREE.MathUtils.smoothstep(vDist, 36.0, 48.0) *
+      (1.0 - THREE.MathUtils.smoothstep(vDist, 118.0, 152.0));
+    return channelCross * radialFade;
   }
 
   /**
@@ -477,6 +593,9 @@ export class TerrainNoise {
   public getTallGrassFactor(x: number, z: number): number {
     const coverage = this.config.tallGrassCoverage;
     if (coverage <= 0.001) return 0;
+    const vdx = x - VOLCANO_X;
+    const vdz = z - VOLCANO_Z;
+    if (vdx * vdx + vdz * vdz < VOLCANO_OUTER_RADIUS_SQ) return 0;
 
     // Scenic starter tall-grass meadows right beside the initial footpath near (0, 0)
     let starterBoost = 0;
@@ -524,7 +643,18 @@ export class TerrainNoise {
     // Keep a small natural clearing right at player spawn (0, 0) for an unobstructed initial vista
     const spawnDistSq = x * x + z * z;
     if (spawnDistSq <= 100) return 0;
+
+    // Keep the slopes and caldera of Mount Doomforge barren of trees
+    const vdx = x - VOLCANO_X;
+    const vdz = z - VOLCANO_Z;
+    const vDistSq = vdx * vdx + vdz * vdz;
+    if (vDistSq <= VOLCANO_BARREN_RADIUS_SQ) return 0;
+
     const spawnClearing = THREE.MathUtils.smoothstep(spawnDistSq, 100, 550);
+    const volcanoClearing =
+      vDistSq < VOLCANO_OUTER_RADIUS_SQ
+        ? THREE.MathUtils.smoothstep(vDistSq, VOLCANO_BARREN_RADIUS_SQ, VOLCANO_OUTER_RADIUS_SQ)
+        : 1.0;
 
     const n1 = this.forestNoise(x * 0.0055, z * 0.0055);
     const n2 = 0.45 * this.forestNoise(x * 0.014 - 41.2, z * 0.014 + 27.8);
@@ -535,7 +665,7 @@ export class TerrainNoise {
     if (normalized <= cutoff) return 0;
 
     const grove = THREE.MathUtils.smoothstep(normalized, cutoff, Math.min(1.0, cutoff + 0.28));
-    return grove * spawnClearing;
+    return grove * spawnClearing * volcanoClearing;
   }
 
   /**
@@ -639,6 +769,46 @@ export class TerrainNoise {
           const deepFactor = THREE.MathUtils.smoothstep(-distAboveWater, 0.1, 1.8);
           tempColorB.lerp(COL_RIVERBED, deepFactor * 0.85);
         }
+      }
+    }
+
+    // Colossal Active Volcano (Mount Doomforge) Basalt, Scoria & Molten Magma Coloring
+    const vdx = x - VOLCANO_X;
+    const vdz = z - VOLCANO_Z;
+    const vDistSq = vdx * vdx + vdz * vdz;
+    if (vDistSq < VOLCANO_OUTER_RADIUS_SQ) {
+      const vDist = Math.sqrt(vDistSq);
+      const volcanoBlend = 1.0 - THREE.MathUtils.smoothstep(vDist, 142.0, VOLCANO_OUTER_RADIUS - 4.0);
+      if (volcanoBlend > 0.001) {
+        const elevT = THREE.MathUtils.clamp((y - 12.0) / (VOLCANO_PEAK_HEIGHT - 12.0), 0, 1);
+        tempColorC.copy(COL_VOLCANO_ASH).lerp(COL_VOLCANO_BASALT, Math.min(1, elevT * 1.15 + slope * 0.35));
+
+        // Heated rust-red scoria & sulfur tint near the caldera rim and steep upper crags
+        if (vDist < 78.0) {
+          const rimHeat = 1.0 - THREE.MathUtils.smoothstep(vDist, VOLCANO_RIM_RADIUS - 4.0, 78.0);
+          tempColorC.lerp(COL_VOLCANO_SCORIA, rimHeat * 0.65);
+        }
+
+        // Glowing radial lava channels down the volcano flanks
+        const lavaChannel = this.getVolcanoLavaChannelWeight(vdx, vdz, vDist);
+        if (lavaChannel > 0.02) {
+          tempColorC.lerp(COL_VOLCANO_LAVA_CRUST, THREE.MathUtils.smoothstep(lavaChannel, 0.02, 0.45));
+          tempColorC.lerp(COL_VOLCANO_LAVA_HOT, THREE.MathUtils.smoothstep(lavaChannel, 0.35, 0.82));
+          tempColorC.lerp(COL_VOLCANO_LAVA_CORE, THREE.MathUtils.smoothstep(lavaChannel, 0.75, 0.98) * 0.85);
+        }
+
+        // Molten inner caldera crater walls & magma cauldron floor
+        if (vDist < VOLCANO_RIM_RADIUS + 1.5) {
+          const innerDepthT = 1.0 - THREE.MathUtils.smoothstep(vDist, VOLCANO_CRATER_RADIUS * 0.7, VOLCANO_RIM_RADIUS + 1.5);
+          tempColorC.lerp(COL_VOLCANO_LAVA_CRUST, Math.min(1, innerDepthT * 1.35));
+          if (vDist < VOLCANO_CRATER_RADIUS + 4.0) {
+            const coreT = 1.0 - THREE.MathUtils.smoothstep(vDist, 10.0, VOLCANO_CRATER_RADIUS + 4.0);
+            tempColorC.lerp(COL_VOLCANO_LAVA_HOT, coreT);
+            tempColorC.lerp(COL_VOLCANO_LAVA_CORE, coreT * coreT * 0.9);
+          }
+        }
+
+        tempColorB.lerp(tempColorC, volcanoBlend);
       }
     }
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { defaultWorldConfig } from './world/Config';
-import { TerrainNoise } from './world/TerrainNoise';
+import { TerrainNoise, VOLCANO_X, VOLCANO_Z } from './world/TerrainNoise';
 import { ChunkManager } from './world/ChunkManager';
 import { DwarfCharacter } from './player/DwarfCharacter';
 import { RelicStore } from './player/RelicStore';
@@ -18,6 +18,7 @@ import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { CastleInteriorManager } from './world/CastleInteriorManager';
 import { TrollCombatManager } from './world/TrollCombatManager';
+import { VOLCANO_HEAT_HAZARD_RADIUS, VolcanoManager } from './world/VolcanoManager';
 import {
   AssignmentManager,
   AssignmentSnapshot,
@@ -82,12 +83,12 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 appContainer.appendChild(renderer.domElement);
 
-// 3. Camera
+// 3. Camera (far plane extended to 3500m so the colossal volcano, flames & 560m smoke plume are visible from across the world)
 const camera = new THREE.PerspectiveCamera(
   50,
   window.innerWidth / window.innerHeight,
   0.5,
-  900
+  3500
 );
 
 // 4. Lighting (Warm morning/afternoon sunlight + soft sky/ground hemisphere bounce)
@@ -169,6 +170,7 @@ const landmarkManager = new LandmarkManager(
     castleInteriorManager.exitCurrentCastle(true);
     fishingManager.exitFishingMode();
     huntingManager.exitHuntingMode();
+    volcanoManager?.resetHazardState();
     syncBeaconFog();
     explorer.setPose(tx, tz, explorer.getHeading(), explorer.yaw, explorer.pitch, explorer.distance);
     chunkManager.update(
@@ -213,6 +215,23 @@ scene.add(livingWorldManager.group);
 const challengeManager = new ChallengeManager(config, noise, treasureManager);
 challengeManager.setChunkManager(chunkManager);
 scene.add(challengeManager.group);
+
+const bgm = new BackgroundMusic();
+challengeManager.onChallengeStateChange = (active) => {
+  if (active) {
+    bgm.startChallengeTune();
+  } else {
+    bgm.stopChallengeTune();
+  }
+};
+
+const volcanoManager = new VolcanoManager(config, noise, bgm, (wp) => {
+  landmarkManager.unlockCustomWaypoint(wp, 250);
+  worldMap?.revealCircle(wp.x, wp.z, 128);
+  persistCurrentProgress(false);
+});
+scene.add(volcanoManager.group);
+explorer.setVolcanoManager(volcanoManager);
 
 const fishingManager = new FishingAndFishManager(
   config,
@@ -285,6 +304,48 @@ castleAndQuarryManager.onStateChanged = () => {
   persistCurrentProgress(false);
 };
 
+// Safe distance outside the 132m lethal heat zone (146m < 152.2m Overlook so Overlook saves are preserved)
+const MIN_SAFE_VOLCANO_SAVE_DIST = VOLCANO_HEAT_HAZARD_RADIUS + 14.0;
+
+function sanitizeSafePlayerPos(pos: { x: number; y: number; z: number }): void {
+  const vdx = pos.x - VOLCANO_X;
+  const vdz = pos.z - VOLCANO_Z;
+  const vDist = Math.hypot(vdx, vdz);
+  if (vDist < MIN_SAFE_VOLCANO_SAVE_DIST) {
+    const ang = vDist > 0.1 ? Math.atan2(vdx, vdz) : Math.atan2(-VOLCANO_X, -VOLCANO_Z);
+    pos.x = Math.round((VOLCANO_X + Math.sin(ang) * MIN_SAFE_VOLCANO_SAVE_DIST) * 100) / 100;
+    pos.z = Math.round((VOLCANO_Z + Math.cos(ang) * MIN_SAFE_VOLCANO_SAVE_DIST) * 100) / 100;
+    pos.y = Math.round(noise.getHeight(pos.x, pos.z) * 100) / 100;
+  }
+}
+
+// Wire Mount Doomforge Volcanic Heat Strength Drain, Rapid Heat Death & Immediate Crater Bottom Death
+volcanoManager.onApplyVolcanicHazard = (strengthDrain, healthDrain, instantDeath) =>
+  castleAndQuarryManager.applyVolcanicHazard(strengthDrain, healthDrain, instantDeath);
+volcanoManager.onSpawnScorchBurst = (x, y, z, count) => {
+  dwarf.spawnBurst(x, y, z, count);
+};
+volcanoManager.onPlayerDiedInVolcano = (reason) => {
+  fishingManager.exitFishingMode();
+  huntingManager.exitHuntingMode();
+  volcanoManager.resetHazardState();
+  const saved = loadProgress() ?? loadProgressFromSlot(1);
+  if (saved) {
+    sanitizeSafePlayerPos(saved.playerPos);
+    applyLoadedGameState(saved);
+    castleAndQuarryManager.healAndRestoreFull();
+    persistCurrentProgress(true);
+    treasureManager.grantBonusGold(
+      0,
+      reason === 'bottom'
+        ? '🛡️ Rescued from the Volcano Crater! Restored to safe ground with full ❤️ Health & ⚡ Strength!'
+        : '🛡️ Rescued from Mount Doomforge’s Heat! Restored to safe ground with full ❤️ Health & ⚡ Strength!'
+    );
+  } else {
+    restartNewGame();
+  }
+};
+
 // Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
 const sampleSurfaceHeight = (wx: number, wz: number): number =>
   chunkManager.getSurfaceHeight(wx, wz);
@@ -313,10 +374,13 @@ const trollCombatManager = new TrollCombatManager(
   },
   () => {
     // Dwarf defeated by Troll -> Restore to Last Saved Location with full Health & Strength!
+    volcanoManager.resetHazardState();
     const saved = loadProgress() ?? loadProgressFromSlot(1);
     if (saved) {
+      sanitizeSafePlayerPos(saved.playerPos);
       applyLoadedGameState(saved);
       castleAndQuarryManager.healAndRestoreFull();
+      persistCurrentProgress(true);
       treasureManager.grantBonusGold(
         0,
         '🛡️ Restored to your Last Saved Location with full Health & Strength!'
@@ -327,7 +391,8 @@ const trollCombatManager = new TrollCombatManager(
   },
   () => {
     fishingManager.interruptFishingFromTroll();
-  }
+  },
+  noise
 );
 scene.add(trollCombatManager.group);
 
@@ -337,6 +402,7 @@ const exteriorSceneGroups: THREE.Object3D[] = [
   landmarkManager.group,
   livingWorldManager.group,
   challengeManager.group,
+  volcanoManager.group,
   fishingManager.group,
   huntingManager.group,
   castleAndQuarryManager.group,
@@ -485,6 +551,7 @@ waterReflection.excludeFromReflection.push(
   dwarf.trailPoints,
   treasureManager.group,
   challengeManager.group,
+  volcanoManager.group,
   fishingManager.group,
   huntingManager.group,
   trollCombatManager.group,
@@ -671,6 +738,7 @@ if (savedProgress) {
   landmarkManager.refreshWaypointBar();
   dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
   syncBeaconFog();
+  sanitizeSafePlayerPos(savedProgress.playerPos);
   explorer.setPose(
     savedProgress.playerPos.x,
     savedProgress.playerPos.z,
@@ -678,6 +746,10 @@ if (savedProgress) {
     savedProgress.yaw,
     savedProgress.pitch,
     savedProgress.distance
+  );
+  volcanoManager.restoreState(
+    landmarkManager.isBeaconLit('wt_volcano_rim'),
+    explorer.playerPos
   );
 }
 
@@ -709,13 +781,28 @@ const reusableSaveState: SavedProgress = {
 function populateSaveState(): SavedProgress {
   const outdoorPose =
     castleInteriorManager.getOutdoorSavePose() ?? hutManager.getOutdoorSavePose();
-  const saveX = outdoorPose ? outdoorPose.x : explorer.playerPos.x;
-  const saveY = outdoorPose ? outdoorPose.y : explorer.playerPos.y;
-  const saveZ = outdoorPose ? outdoorPose.z : explorer.playerPos.z;
+  let saveX = outdoorPose ? outdoorPose.x : explorer.playerPos.x;
+  let saveY = outdoorPose ? outdoorPose.y : explorer.playerPos.y;
+  let saveZ = outdoorPose ? outdoorPose.z : explorer.playerPos.z;
   const saveHeading = outdoorPose ? outdoorPose.heading : explorer.getHeading();
   const saveYaw = outdoorPose ? outdoorPose.yaw : explorer.yaw;
   const savePitch = outdoorPose ? outdoorPose.pitch : explorer.pitch;
   const saveDistance = outdoorPose ? outdoorPose.distance : explorer.distance;
+
+  // Never save a checkpoint inside Mount Doomforge's lethal heat zone (`dist < 146m`)
+  const vdx = saveX - VOLCANO_X;
+  const vdz = saveZ - VOLCANO_Z;
+  const vDist = Math.hypot(vdx, vdz);
+  if (vDist < MIN_SAFE_VOLCANO_SAVE_DIST) {
+    const ang = vDist > 0.1 ? Math.atan2(vdx, vdz) : Math.atan2(-VOLCANO_X, -VOLCANO_Z);
+    saveX = VOLCANO_X + Math.sin(ang) * MIN_SAFE_VOLCANO_SAVE_DIST;
+    saveZ = VOLCANO_Z + Math.cos(ang) * MIN_SAFE_VOLCANO_SAVE_DIST;
+    saveY = noise.getHeight(saveX, saveZ);
+  }
+
+  const rawEnergy = Math.round(castleAndQuarryManager.energy);
+  const rawHealth = Math.round(castleAndQuarryManager.health);
+  const isDying = rawHealth <= 0 || volcanoManager.isDefeatPending();
 
   reusableSaveState.seed = config.seed;
   reusableSaveState.playerPos.x = Math.round(saveX * 100) / 100;
@@ -737,11 +824,11 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.quarries = castleAndQuarryManager.getSerializedQuarries();
   reusableSaveState.castles = castleAndQuarryManager.getSerializedCastles();
   reusableSaveState.unlockedHouseEquipment = castleAndQuarryManager.getUnlockedEquipmentIds();
-  reusableSaveState.energy = Math.round(castleAndQuarryManager.energy);
+  reusableSaveState.energy = isDying ? Math.max(20, rawEnergy) : rawEnergy;
   reusableSaveState.foodCount = castleAndQuarryManager.foodCount;
   reusableSaveState.carriedRawStones = castleAndQuarryManager.carriedRawStones;
   reusableSaveState.carriedChiseledBlocks = castleAndQuarryManager.carriedChiseledBlocks;
-  reusableSaveState.health = Math.round(castleAndQuarryManager.health);
+  reusableSaveState.health = isDying ? Math.max(25, rawHealth) : rawHealth;
   reusableSaveState.unlockedArmory = castleAndQuarryManager.getUnlockedArmoryIds();
   reusableSaveState.equippedWeapon = castleAndQuarryManager.equippedWeaponId;
   reusableSaveState.equippedShield = castleAndQuarryManager.equippedShieldId;
@@ -821,6 +908,7 @@ const worldMap = new WorldMap(
   () => relicStore.has('lodestone_amulet'),
   () => {
     chunkManager.material.wireframe = config.wireframe;
+    volcanoManager.setWireframe(config.wireframe);
     debugOverlay.syncDisplay();
   },
   () => {
@@ -841,6 +929,8 @@ function restartNewGame(): void {
   treasureManager.resetProgress();
   relicStore.reset();
   landmarkManager.reset();
+  volcanoManager.reset();
+  volcanoManager.rebuildGeometry();
   livingWorldManager.rebuildAll();
   challengeManager.reset();
   fishingManager.exitFishingMode();
@@ -882,6 +972,7 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   if (config.seed !== loaded.seed) {
     config.seed = loaded.seed;
     noise.reseed(config.seed);
+    volcanoManager.rebuildGeometry();
   }
   treasureManager.resetProgress();
   treasureManager.restoreProgress(
@@ -901,6 +992,7 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   fishingManager.fishCaughtCount = loaded.fishCaughtTotal ?? 0;
   huntingManager.setDeerHuntedCount(loaded.deerHuntedTotal ?? 0);
 
+  sanitizeSafePlayerPos(loaded.playerPos);
   explorer.setPose(
     loaded.playerPos.x,
     loaded.playerPos.z,
@@ -908,6 +1000,10 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.yaw,
     loaded.pitch,
     loaded.distance
+  );
+  volcanoManager.restoreState(
+    landmarkManager.isBeaconLit('wt_volcano_rim'),
+    explorer.playerPos
   );
   chunkManager.rebuildAll(
     explorer.playerPos.x,
@@ -976,6 +1072,7 @@ const debugOverlay = new DebugOverlay(
   persistCurrentProgress,
   restartNewGame,
   () => {
+    volcanoManager.rebuildGeometry();
     worldMap.invalidateTerrainTiles();
   }
 );
@@ -983,12 +1080,73 @@ const debugOverlay = new DebugOverlay(
 const gameMenuModalEl = document.getElementById('game-menu-modal');
 const gameMenuToggleBtn = document.getElementById('game-menu-toggle');
 const gameMenuCloseBtn = document.getElementById('game-menu-close');
+const gameMenuTitleEl = document.querySelector('#game-menu-modal .game-menu-title');
+const gameMenuPauseBtn = document.getElementById('game-menu-pause-btn');
+const gameMenuPauseIconEl = document.getElementById('game-menu-pause-icon');
+const gameMenuPauseLabelEl = document.getElementById('game-menu-pause-label');
+const gameMenuPauseSubEl = document.getElementById('game-menu-pause-sub');
+const gameMenuMusicBtn = document.getElementById('game-menu-music-btn');
+const gameMenuMusicIconEl = document.getElementById('game-menu-music-icon');
+const gameMenuMusicLabelEl = document.getElementById('game-menu-music-label');
+const gameMenuMusicSubEl = document.getElementById('game-menu-music-sub');
 const gameMenuSaveBtn = document.getElementById('game-menu-save-btn');
 const gameMenuLoadBtn = document.getElementById('game-menu-load-btn');
 const gameMenuRestartBtn = document.getElementById('game-menu-restart-btn');
 const gameMenuSummaryEl = document.getElementById('game-menu-current-summary');
 const gameMenuSlotsListEl = document.getElementById('game-menu-slots-list');
 const gameMenuStatusEl = document.getElementById('game-menu-status');
+
+let isGamePaused = false;
+
+function syncPauseMenuButtons(): void {
+  if (gameMenuTitleEl) {
+    gameMenuTitleEl.textContent = isGamePaused
+      ? '⏸️ DWARVEN CHRONICLE — GAME PAUSED'
+      : '⚙️ DWARVEN CHRONICLE — GAME MENU';
+  }
+  if (gameMenuPauseBtn) {
+    gameMenuPauseBtn.classList.toggle('is-paused', isGamePaused);
+    gameMenuPauseBtn.classList.toggle('is-playing', !isGamePaused);
+  }
+  if (gameMenuPauseIconEl) {
+    gameMenuPauseIconEl.textContent = isGamePaused ? '⏸️' : '▶️';
+  }
+  if (gameMenuPauseLabelEl) {
+    gameMenuPauseLabelEl.textContent = isGamePaused ? 'Game Paused' : 'Game Running';
+  }
+  if (gameMenuPauseSubEl) {
+    gameMenuPauseSubEl.textContent = isGamePaused
+      ? 'Click to unpause world (or press Esc to resume)'
+      : 'Click to pause the 3D world simulation';
+  }
+
+  const musicPlaying = bgm.isPlayingNow();
+  if (gameMenuMusicBtn) {
+    gameMenuMusicBtn.classList.toggle('is-paused', !musicPlaying);
+    gameMenuMusicBtn.classList.toggle('is-playing', musicPlaying);
+  }
+  if (gameMenuMusicIconEl) {
+    gameMenuMusicIconEl.textContent = musicPlaying ? '🔊' : '🔇';
+  }
+  if (gameMenuMusicLabelEl) {
+    gameMenuMusicLabelEl.textContent = musicPlaying
+      ? 'Music Playing'
+      : bgm.isMutedNow()
+        ? 'Music Muted'
+        : 'Music Paused';
+  }
+  if (gameMenuMusicSubEl) {
+    gameMenuMusicSubEl.textContent = musicPlaying
+      ? 'Click or press P to pause/mute music'
+      : 'Paused with Esc • Click or press P to play';
+  }
+}
+
+bgm.setOnStateChange(() => {
+  if (isGameMenuOpen()) {
+    syncPauseMenuButtons();
+  }
+});
 
 function formatSaveSummary(state: SavedProgress): string {
   const castles = state.castles ?? [];
@@ -1076,9 +1234,45 @@ function setGameMenuOpen(open: boolean): void {
   gameMenuModalEl.classList.toggle('hidden', !open);
   gameMenuToggleBtn?.classList.toggle('active', open);
   if (open) {
+    isGamePaused = true;
+    explorer.clearInputState();
+    bgm.setPausedByMenu(true);
+    volcanoManager.pauseVolcanoSfx();
+    if (gameMenuStatusEl) {
+      gameMenuStatusEl.textContent = '⏸️ Game & music paused • Press Esc or O anytime to resume';
+    }
+    syncPauseMenuButtons();
     renderGameMenu();
+  } else {
+    isGamePaused = false;
+    bgm.setPausedByMenu(false);
+    syncPauseMenuButtons();
   }
 }
+
+gameMenuPauseBtn?.addEventListener('click', () => {
+  isGamePaused = !isGamePaused;
+  if (isGamePaused) {
+    explorer.clearInputState();
+    volcanoManager.pauseVolcanoSfx();
+  }
+  if (gameMenuStatusEl) {
+    gameMenuStatusEl.textContent = isGamePaused
+      ? '⏸️ World simulation paused • Click Game Paused or press Esc to resume'
+      : '▶️ World simulation running in background • Click to pause again';
+  }
+  syncPauseMenuButtons();
+});
+
+gameMenuMusicBtn?.addEventListener('click', () => {
+  const nowPlaying = bgm.toggleMute();
+  if (gameMenuStatusEl) {
+    gameMenuStatusEl.textContent = nowPlaying
+      ? '🔊 Background music resumed!'
+      : '🔇 Background music paused/muted!';
+  }
+  syncPauseMenuButtons();
+});
 
 gameMenuToggleBtn?.addEventListener('click', () => {
   setGameMenuOpen(!isGameMenuOpen());
@@ -1138,12 +1332,20 @@ window.addEventListener(
       return;
     }
 
-    // 1. When Game Menu modal is open, only allow Escape or KeyO to close it; block all background 3D actions
+    // 1. When Game Menu modal is open, allow Escape/KeyO to close it and KeyP to toggle music; block background 3D actions
     if (isGameMenuOpen()) {
       if (e.code === 'Escape' || e.code === 'KeyO') {
         if (!e.repeat) {
           setGameMenuOpen(false);
         }
+      } else if (e.code === 'KeyP' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const nowPlaying = bgm.toggleMute();
+        if (gameMenuStatusEl) {
+          gameMenuStatusEl.textContent = nowPlaying
+            ? '🔊 Background music resumed!'
+            : '🔇 Background music paused/muted!';
+        }
+        syncPauseMenuButtons();
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
         e.stopImmediatePropagation();
@@ -1195,14 +1397,6 @@ window.addEventListener('keydown', (e) => {
     }
   }
 });
-const bgm = new BackgroundMusic();
-challengeManager.onChallengeStateChange = (active) => {
-  if (active) {
-    bgm.startChallengeTune();
-  } else {
-    bgm.stopChallengeTune();
-  }
-};
 
 // 8. Resize Handler (coalesced into animation loop to avoid mid-frame framebuffer reallocations)
 let resizePending = false;
@@ -1212,6 +1406,7 @@ window.addEventListener('resize', () => {
 
 // 9. Main Loop
 const clock = new THREE.Clock();
+let simElapsedTime = 0;
 let lastShadowX = NaN;
 let lastShadowY = NaN;
 let lastShadowZ = NaN;
@@ -1247,8 +1442,15 @@ function animate(): void {
     }
   }
 
-  const dt = Math.min(clock.getDelta(), 0.1);
-  const elapsedTime = clock.elapsedTime;
+  const rawDt = Math.min(clock.getDelta(), 0.1);
+  if (isGamePaused) {
+    renderer.render(scene, camera);
+    return;
+  }
+
+  const dt = rawDt;
+  simElapsedTime += dt;
+  const elapsedTime = simElapsedTime;
 
   // Update player movement, dwarf animation, and camera orbit
   explorer.update(dt);
@@ -1263,11 +1465,11 @@ function animate(): void {
   );
 
   // Read player coordinates & interior state after interior enter/exit updates
-  const px = explorer.playerPos.x;
-  const py = explorer.playerPos.y;
-  const pz = explorer.playerPos.z;
+  let px = explorer.playerPos.x;
+  let py = explorer.playerPos.y;
+  let pz = explorer.playerPos.z;
   const hasLodestone = relicStore.has('lodestone_amulet');
-  const insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
+  let insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
   if (insideInterior !== wasInsideInterior) {
     wasInsideInterior = insideInterior;
     livingWorldManager.setInsideInterior(insideInterior);
@@ -1280,7 +1482,20 @@ function animate(): void {
     !insideInterior && (trollCombatManager.isNightNow() || trollCombatManager.hasActiveTrolls()),
     !insideInterior && trollCombatManager.isTrollAggroOnPlayer(explorer.playerPos)
   );
+  volcanoManager.update(
+    dt,
+    elapsedTime,
+    explorer.playerPos,
+    insideInterior,
+    config.cameraMode === 'free'
+  );
   assignmentManager.update(dt);
+
+  // Refresh player coordinates & interior state in case trollCombatManager or volcanoManager triggered a respawn
+  px = explorer.playerPos.x;
+  py = explorer.playerPos.y;
+  pz = explorer.playerPos.z;
+  insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
 
   if (!insideInterior) {
     chunkManager.update(px, py, pz, elapsedTime, false);
@@ -1429,12 +1644,18 @@ function animate(): void {
     }
   }
 
-  // Auto-save player coordinates & camera pose every 2s when changed
+  // Auto-save player coordinates & camera pose every 2s when changed (skip inside volcano heat zone or while dying)
   if (elapsedTime - lastSaveTime >= 2.0) {
     lastSaveTime = elapsedTime;
-    const movedSq = (px - lastSavedX) * (px - lastSavedX) + (pz - lastSavedZ) * (pz - lastSavedZ);
-    if (movedSq > 0.05 || Math.abs(explorer.yaw - lastSavedYaw) > 0.02) {
-      persistCurrentProgress();
+    const inHazardOrFreeCam =
+      volcanoManager.isDefeatPending() ||
+      volcanoManager.isPlayerInHeatZone(px, pz) ||
+      config.cameraMode === 'free';
+    if (!inHazardOrFreeCam) {
+      const movedSq = (px - lastSavedX) * (px - lastSavedX) + (pz - lastSavedZ) * (pz - lastSavedZ);
+      if (movedSq > 0.05 || Math.abs(explorer.yaw - lastSavedYaw) > 0.02) {
+        persistCurrentProgress();
+      }
     }
   }
 

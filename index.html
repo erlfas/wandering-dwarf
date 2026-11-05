@@ -52,8 +52,8 @@
             <button id="world-map-toggle" type="button" title="Open Discovered World Map (M)">
               🗺️ Map (M)
             </button>
-            <button id="game-menu-toggle" type="button" title="Open Game Menu — Save, Load &amp; Restart Game (O)">
-              ⚙️ Menu (O)
+            <button id="game-menu-toggle" type="button" title="Open Game Menu — Pause, Save, Load &amp; Restart Game (Esc or O)">
+              ⚙️ Menu (Esc)
             </button>
             <button id="top-hotkeys-toggle" type="button" title="View All Game Hotkeys &amp; Controls (? or F1)">
               ⌨️ Hotkeys (?)
@@ -289,20 +289,37 @@
         </div>
       </div>
 
-      <!-- Game Menu Modal (Save Game, Load Game & Restart Game) -->
+      <!-- Game Menu Modal (Pause, Music, Save Game, Load Game & Restart Game) -->
       <div id="game-menu-modal" class="hidden">
         <div class="game-menu-frame">
           <div class="game-menu-header">
             <div>
-              <div class="game-menu-title">⚙️ DWARVEN CHRONICLE — GAME MENU</div>
-              <div id="game-menu-subtitle">Save, Load, or Restart your expedition &amp; castle construction</div>
+              <div class="game-menu-title">⏸️ DWARVEN CHRONICLE — GAME PAUSED</div>
+              <div id="game-menu-subtitle">Pause, Save, Load, or Restart your expedition &amp; castle construction</div>
             </div>
-            <button id="game-menu-close" type="button" class="map-tool-btn close-btn" title="Close Menu (O or Esc)">
-              ✕ Close (<kbd>O</kbd>)
+            <button id="game-menu-close" type="button" class="map-tool-btn close-btn" title="Resume Game &amp; Close Menu (Esc or O)">
+              ▶️ Resume (<kbd>Esc</kbd>)
             </button>
           </div>
 
           <div id="game-menu-current-summary" class="game-menu-summary"></div>
+
+          <div class="game-menu-pause-bar">
+            <button id="game-menu-pause-btn" type="button" class="game-menu-pause-toggle is-paused" title="Pause or Resume the 3D World Simulation">
+              <span class="gm-pause-icon" id="game-menu-pause-icon">⏸️</span>
+              <span class="gm-pause-text">
+                <strong id="game-menu-pause-label">Game Paused</strong>
+                <small id="game-menu-pause-sub">Click or press Esc to resume adventure</small>
+              </span>
+            </button>
+            <button id="game-menu-music-btn" type="button" class="game-menu-pause-toggle is-paused" title="Pause or Resume Background Music (P)">
+              <span class="gm-pause-icon" id="game-menu-music-icon">🔇</span>
+              <span class="gm-pause-text">
+                <strong id="game-menu-music-label">Music Paused</strong>
+                <small id="game-menu-music-sub">Click or press P to toggle music</small>
+              </span>
+            </button>
+          </div>
 
           <div class="game-menu-primary-actions">
             <button id="game-menu-save-btn" type="button" class="game-menu-btn save">
@@ -331,7 +348,8 @@
           <div class="game-menu-slots-title">📜 SAVE SLOTS (Optional Manual Checkpoints)</div>
           <div id="game-menu-slots-list" class="game-menu-slots-list"></div>
 
-          <div id="game-menu-status" class="game-menu-status">Auto-save is active • Press O or Esc anytime to open this menu</div>
+          <div id="game-menu-status" class="game-menu-status">⏸️ Game &amp; music paused • Press Esc or O anytime to resume</div>
+          <div class="game-menu-credit">Made by Erlend Heggelund</div>
         </div>
       </div>
 

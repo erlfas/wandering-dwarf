@@ -1,10 +1,14 @@
 # Endless Procedural World
 
+🌐 **Play Online:** [https://wandering-dwarf.netlify.app](https://wandering-dwarf.netlify.app)
+
 An endless, deterministic 3D procedural world adventure built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, winding forest footpaths, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a traveling dwarf—complete with expressive traversal (jumping, valley wind-gliding, downhill shield-surfing), **Backpack Fishing & 3D River Fish**, **Backpack Bow & Arrow Deer Hunting**, diegetic firefly treasure tracking, rune-sealed mythic chests, ancient stone circles & fast-travel watchtower beacons, and a **Dwarven Relic Forge**.
 
 ---
 
 ## How to Run
+
+The game is published and playable directly in your browser at **[https://wandering-dwarf.netlify.app](https://wandering-dwarf.netlify.app)**. To run it locally:
 
 ### Prerequisites
 - **Node.js** (v18+ recommended) and **npm**
@@ -48,8 +52,9 @@ npm run preview
 | **Left / Right Mouse Drag** | Orbit camera around the dwarf (use **Right-Click Drag** while in Bow Hunting Mode) |
 | **Mouse Wheel** | Zoom camera in / out (`4m` – `45m`) |
 | **`V`** | Toggle Camera Mode (`dwarf` third-person follow vs. `free` high-speed overview) |
-| **`M`** | Toggle terrain wireframe rendering |
-| **`P`** | Mute / unmute background music (*Wandering Through the Pines*) |
+| **`M`** | Open the discovered **World Map** (`Shift+M` toggles terrain wireframe rendering) |
+| **`Esc`** or **`O`** | Open **Game Menu** — **Pauses the game & music**, Save / Load / Restart |
+| **`P`** | Pause / resume (mute / unmute) background music (*Wandering Through the Pines*) |
 | **Top-Right GUI (`lil-gui`)** | Live-tune terrain noise, footpaths, water, forest groves, grass, wind, and reset saved progress |
 
 ---

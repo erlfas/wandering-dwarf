@@ -22,7 +22,10 @@ import {
 import { ChunkManager } from './ChunkManager';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
-import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+import {
+  createSeededRandom,
+  TerrainNoise,
+} from './TerrainNoise';
 
 export type HouseEquipmentId =
   | 'chisel_upgrade'
@@ -2595,7 +2598,7 @@ export class CastleAndQuarryManager {
 
   constructor(
     private config: WorldConfig,
-    _noise: TerrainNoise,
+    private noise: TerrainNoise,
     private chunkManager: ChunkManager,
     private dwarf: DwarfCharacter,
     private getGold: () => number,
@@ -3047,6 +3050,48 @@ export class CastleAndQuarryManager {
     return { defeated: false };
   }
 
+  private readonly hazardEvalResult = {
+    defeated: false,
+    remainingEnergy: 0,
+    remainingHealth: 0,
+  };
+
+  /**
+   * Drains the dwarf's Strength (`energy`) and/or Health (`health`) when too close to the volcano,
+   * or kills the dwarf immediately (`instantDeath = true`) if they enter the molten bottom of the volcano.
+   */
+  public applyVolcanicHazard(
+    strengthDrain: number,
+    healthDrain: number,
+    instantDeath = false
+  ): { defeated: boolean; remainingEnergy: number; remainingHealth: number } {
+    const out = this.hazardEvalResult;
+    if (instantDeath) {
+      if (this.energy !== 0 || this.health !== 0) {
+        this.energy = 0;
+        this.health = 0;
+        this.syncEnergyAndFoodHUD();
+      }
+      out.defeated = true;
+      out.remainingEnergy = 0;
+      out.remainingHealth = 0;
+      return out;
+    }
+    if (strengthDrain > 0) {
+      this.energy = Math.max(0, this.energy - strengthDrain);
+    }
+    if (healthDrain > 0) {
+      this.health = Math.max(0, this.health - healthDrain);
+    }
+    if (strengthDrain > 0 || healthDrain > 0) {
+      this.syncEnergyAndFoodHUD();
+    }
+    out.defeated = this.health <= 0;
+    out.remainingEnergy = this.energy;
+    out.remainingHealth = this.health;
+    return out;
+  }
+
   public healAndRestoreFull(): void {
     this.health = this.getMaxHealth();
     this.energy = this.getMaxEnergy();
@@ -3253,6 +3298,12 @@ export class CastleAndQuarryManager {
     const groundY = this.chunkManager.getSurfaceHeight(wx, wz);
     const res = this.levelEvalResult;
     res.groundY = groundY;
+    if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) {
+      res.isLevel = false;
+      res.normalY = 1;
+      res.reason = 'Too close to the molten volcano caldera! Move down the outer slope.';
+      return res;
+    }
     if (this.config.enableWater && !this.config.blankClayMode && groundY < this.config.waterLevel + 0.35) {
       res.isLevel = false;
       res.normalY = 1;
@@ -4474,6 +4525,7 @@ export class CastleAndQuarryManager {
       const wx = cx * size + (rng() - 0.5) * (size * 0.84);
       const wz = cz * size + (rng() - 0.5) * (size * 0.84);
       if (wx * wx + wz * wz < 6.5 * 6.5) continue;
+      if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
       const wy = this.chunkManager.getSurfaceHeight(wx, wz);
       if (wy > minLandY) {
         rocks.push(

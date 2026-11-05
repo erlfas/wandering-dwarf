@@ -633,6 +633,13 @@ export class LivingWorldManager {
 
   private spawnEntitiesForChunk(cx: number, cz: number, chunkKey: number): void {
     const size = this.config.chunkSize;
+    const chunkWx = cx * size;
+    const chunkWz = cz * size;
+    if (this.noise.isInsideVolcanoBarrenZone(chunkWx, chunkWz)) {
+      this.activeChunks.set(chunkKey, {});
+      return;
+    }
+
     const chunkSeed = ((cx * 314159265) ^ (cz * 271828183) ^ (this.config.seed + 577)) >>> 0;
     const rng = createSeededRandom(chunkSeed);
     const assets = getSharedLivingAssets();
@@ -645,7 +652,10 @@ export class LivingWorldManager {
       const wx = cx * size + (rng() - 0.5) * (size * 0.7);
       const wz = cz * size + (rng() - 0.5) * (size * 0.7);
       const wy = this.sampleGroundHeight(wx, wz);
-      if (!this.config.enableWater || wy > this.config.waterLevel + 0.8) {
+      if (
+        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+        (!this.config.enableWater || wy > this.config.waterLevel + 0.8)
+      ) {
         const mesh = new THREE.Group();
         mesh.position.set(wx, wy, wz);
         mesh.visible = this.isNight;
@@ -681,7 +691,10 @@ export class LivingWorldManager {
       const wx = isStartChunk ? 5.5 : cx * size + (rng() - 0.5) * (size * 0.65);
       const wz = isStartChunk ? 8.5 : cz * size + (rng() - 0.5) * (size * 0.65);
       const wy = this.sampleGroundHeight(wx, wz);
-      if (!this.config.enableWater || wy > this.config.waterLevel + 0.9) {
+      if (
+        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+        (!this.config.enableWater || wy > this.config.waterLevel + 0.9)
+      ) {
         const group = new THREE.Group();
         group.position.set(wx, wy, wz);
         group.updateMatrix();
@@ -716,7 +729,10 @@ export class LivingWorldManager {
       const wx = isStartChunk ? -6.5 : cx * size + (rng() - 0.5) * (size * 0.6);
       const wz = isStartChunk ? 9.5 : cz * size + (rng() - 0.5) * (size * 0.6);
       const wy = this.sampleGroundHeight(wx, wz);
-      if (!this.config.enableWater || wy > this.config.waterLevel + 1.0) {
+      if (
+        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+        (!this.config.enableWater || wy > this.config.waterLevel + 1.0)
+      ) {
         const mesh = new THREE.Mesh(assets.spiritRabbitGeo, assets.matSpirit);
         mesh.position.set(wx, wy, wz);
         mesh.castShadow = false;
@@ -745,7 +761,10 @@ export class LivingWorldManager {
       const wz = cz * size + (rng() - 0.5) * (size * 0.6);
       const wy = this.sampleGroundHeight(wx, wz);
 
-      if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
+      if (
+        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+        (!this.config.enableWater || wy > this.config.waterLevel + 1.2)
+      ) {
         const mesh = new THREE.Group();
         mesh.position.set(wx, wy, wz);
         mesh.updateMatrix();

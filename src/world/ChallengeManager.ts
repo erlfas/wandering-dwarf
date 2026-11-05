@@ -743,6 +743,11 @@ export class ChallengeManager {
     const coins: TrailCoinInstance[] = [];
     const arches: TrialArchInstance[] = [];
     const assets = getSharedChallengeAssets();
+    if (this.noise.isInsideVolcanoBarrenZone(cx * size, cz * size)) {
+      this.activeCoins.set(chunkKey, coins);
+      this.activeArches.set(chunkKey, arches);
+      return;
+    }
 
     // A. Spawn Glowing Footpath Coin Trails along dirt paths
     const isStartChunk = cx === 0 && cz === 0;
@@ -756,6 +761,7 @@ export class ChallengeManager {
         const lz = isStartChunk && attempt === 0 ? -4.5 : (rng() - 0.5) * (size * 0.72);
         const wx = cx * size + lx;
         const wz = cz * size + lz;
+        if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
         const wy = this.sampleGroundHeight(wx, wz);
 
         if (this.config.enableWater && wy < this.config.waterLevel + 0.5) continue;
@@ -777,7 +783,7 @@ export class ChallengeManager {
 
         for (let i = 0; i < coinCount; i++) {
           const coinId = `coin_${cx}_${cz}_${i}`;
-          if (!this.collectedCoinIds.has(coinId)) {
+          if (!this.collectedCoinIds.has(coinId) && !this.noise.isInsideVolcanoBarrenZone(curX, curZ)) {
             const coinPos = new THREE.Vector3(curX, 0, curZ);
             this.chunkManager?.resolveStructureClearance(coinPos, 5.2, 1.1);
             const wy = this.sampleGroundHeight(coinPos.x, coinPos.z);
@@ -854,7 +860,10 @@ export class ChallengeManager {
       const wy = this.sampleGroundHeight(wx, wz);
       archPos.y = wy;
 
-      if (!this.config.enableWater || wy > this.config.waterLevel + 1.5) {
+      if (
+        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+        (!this.config.enableWater || wy > this.config.waterLevel + 1.5)
+      ) {
         // Orient the archway toward a downhill or scenic trail direction
         let bestYaw = rng() * Math.PI * 2;
         let lowestY = Infinity;

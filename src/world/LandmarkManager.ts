@@ -5,7 +5,13 @@ import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
 import { SavedBeaconWaypoint } from './ProgressStorage';
-import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+import {
+  createSeededRandom,
+  TerrainNoise,
+  VOLCANO_BARREN_RADIUS_SQ,
+  VOLCANO_X,
+  VOLCANO_Z,
+} from './TerrainNoise';
 
 interface WatchtowerInstance {
   id: string;
@@ -926,8 +932,31 @@ export class LandmarkManager {
     this.onBeaconLit?.(waypoint);
   }
 
+  public unlockCustomWaypoint(waypoint: SavedBeaconWaypoint, rewardGold = 250): void {
+    if (this.litBeaconMap.has(waypoint.id)) return;
+    this.litBeaconMap.set(waypoint.id, waypoint);
+    this.litBeaconsDirty = true;
+    this.campfireBuffTimer = Math.max(this.campfireBuffTimer, 90.0);
+    this.renderWaypointBar();
+    this.playBeaconFanfare();
+    this.onGrantGoldAndRefreshStreak(
+      rewardGold,
+      `🌋 Discovered ${waypoint.name}! Fast-Travel Unlocked & 90s Forge-Fire Blessing (+${rewardGold} Gold)`
+    );
+    this.onBeaconLit?.(waypoint);
+  }
+
   private spawnLandmarksForChunk(cx: number, cz: number, chunkKey: number): void {
     const size = this.config.chunkSize;
+    const chunkWx = cx * size;
+    const chunkWz = cz * size;
+    const vdx = chunkWx - VOLCANO_X;
+    const vdz = chunkWz - VOLCANO_Z;
+    if (vdx * vdx + vdz * vdz < VOLCANO_BARREN_RADIUS_SQ) {
+      this.activeLandmarks.set(chunkKey, { bridges: [] });
+      return;
+    }
+
     const chunkSeed = ((cx * 92837111) ^ (cz * 51293847) ^ (this.config.seed + 313)) >>> 0;
     const rng = createSeededRandom(chunkSeed);
 
@@ -960,10 +989,12 @@ export class LandmarkManager {
       const lz = isStarterCampChunk ? -14.0 : (rng() - 0.5) * (size * 0.65);
       const wx = cx * size + lx;
       const wz = cz * size + lz;
-      const wy = this.sampleGroundHeight(wx, wz);
+      if (!this.noise.isInsideVolcanoBarrenZone(wx, wz)) {
+        const wy = this.sampleGroundHeight(wx, wz);
 
-      if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
-        landmarks.campfire = this.buildStoneCircleCampfire(`${cx},${cz}`, wx, wy, wz);
+        if (!this.config.enableWater || wy > this.config.waterLevel + 1.2) {
+          landmarks.campfire = this.buildStoneCircleCampfire(`${cx},${cz}`, wx, wy, wz);
+        }
       }
     }
 
@@ -977,6 +1008,7 @@ export class LandmarkManager {
       for (let i = 0; i < 6; i++) {
         const tx = cx * size + (rng() - 0.5) * (size * 0.72);
         const tz = cz * size + (rng() - 0.5) * (size * 0.72);
+        if (this.noise.isInsideVolcanoBarrenZone(tx, tz)) continue;
         const ty = this.sampleGroundHeight(tx, tz);
         if (ty > bestY) {
           bestY = ty;

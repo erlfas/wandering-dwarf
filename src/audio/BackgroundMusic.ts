@@ -1,23 +1,30 @@
 import bgmUrl from '../../music/Wandering_Through_the_Pines.mp3?url';
 import challengeBgmUrl from '../../music/Dwarven_Ring_Sprint.mp3?url';
 import nightBgmUrl from '../../music/Night_of_the_Trolls.wav?url';
+import volcanoBgmUrl from '../../music/Volcano_Caldera_Omen.mp3?url';
 
 export class BackgroundMusic {
   private audio: HTMLAudioElement;
   private nightAudio: HTMLAudioElement;
+  private volcanoAudio: HTMLAudioElement;
   private challengeAudio: HTMLAudioElement;
   private challengeBlobUrl: string | null = null;
   private nightBlobUrl: string | null = null;
+  private volcanoBlobUrl: string | null = null;
   private isChallengeActive = false;
   private isNightDangerActive = false;
+  private isVolcanoActive = false;
+  private volcanoIntensity = 0;
   private isCombatIntense = false;
   private isStarted = false;
   private isPlayPending = false;
   private isMuted = false;
+  private isPausedByMenu = false;
   private targetVolume = 0.45;
   private statusEl: HTMLElement | null;
+  private onStateChange?: () => void;
   private unlockHandler = () => {
-    if (!this.isStarted) {
+    if (!this.isStarted && !this.isPausedByMenu) {
       this.tryPlay();
     }
   };
@@ -32,6 +39,11 @@ export class BackgroundMusic {
     this.nightAudio.preload = 'auto';
     this.nightAudio.loop = true;
     this.nightAudio.volume = Math.min(1, this.targetVolume * 1.15);
+
+    this.volcanoAudio = new Audio(volcanoBgmUrl);
+    this.volcanoAudio.preload = 'auto';
+    this.volcanoAudio.loop = true;
+    this.volcanoAudio.volume = Math.min(1, this.targetVolume * 1.1);
 
     this.challengeAudio = new Audio(challengeBgmUrl);
     this.challengeAudio.preload = 'auto';
@@ -65,6 +77,19 @@ export class BackgroundMusic {
       })
       .catch(() => {});
 
+    // Pre-buffer the ElevenLabs Volcano Caldera Omen track into an in-memory Blob URL for seamless volcano transitions
+    fetch(volcanoBgmUrl)
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => {
+        if (!blob) return;
+        this.volcanoBlobUrl = URL.createObjectURL(blob);
+        if (!this.isVolcanoActive && this.volcanoAudio.paused) {
+          this.volcanoAudio.src = this.volcanoBlobUrl;
+          this.volcanoAudio.load();
+        }
+      })
+      .catch(() => {});
+
     this.statusEl = document.getElementById(statusElementId);
 
     this.bindEvents();
@@ -73,6 +98,7 @@ export class BackgroundMusic {
 
   private getActiveTrack(): HTMLAudioElement {
     if (this.isChallengeActive) return this.challengeAudio;
+    if (this.isVolcanoActive) return this.volcanoAudio;
     if (this.isNightDangerActive) return this.nightAudio;
     return this.audio;
   }
@@ -83,6 +109,9 @@ export class BackgroundMusic {
     }
     if (active !== this.nightAudio && !this.nightAudio.paused) {
       this.nightAudio.pause();
+    }
+    if (active !== this.volcanoAudio && !this.volcanoAudio.paused) {
+      this.volcanoAudio.pause();
     }
     if (active !== this.challengeAudio && !this.challengeAudio.paused) {
       this.challengeAudio.pause();
@@ -99,17 +128,49 @@ export class BackgroundMusic {
     window.addEventListener('keydown', this.unlockHandler, { passive: true });
     window.addEventListener('pointerdown', this.unlockHandler, { passive: true });
 
-    // Prevent regular daytime music from ever playing on top of an active Ring Sprint or Night Troll danger period
+    // Prevent regular daytime music from ever playing on top of an active Ring Sprint, Volcano Omen, or Night Troll danger period
     this.audio.addEventListener('play', () => {
-      if (this.isChallengeActive || this.isNightDangerActive) {
+      if (this.isChallengeActive || this.isVolcanoActive || this.isNightDangerActive) {
         this.audio.pause();
       }
     });
 
-    // Prevent night soundtrack from playing on top of an active Ring Sprint or during daytime
+    // Prevent night soundtrack from playing on top of an active Ring Sprint, Volcano Omen, or during daytime
     this.nightAudio.addEventListener('play', () => {
-      if (this.isChallengeActive || !this.isNightDangerActive) {
+      if (this.isChallengeActive || this.isVolcanoActive || !this.isNightDangerActive) {
         this.nightAudio.pause();
+      }
+    });
+
+    // Prevent volcano soundtrack from playing on top of an active Ring Sprint or when away from the volcano
+    this.volcanoAudio.addEventListener('play', () => {
+      if (this.isChallengeActive || !this.isVolcanoActive) {
+        this.volcanoAudio.pause();
+      }
+    });
+
+    // Self-healing watchdog: keep Volcano Omen soundtrack playing continuously while near Mount Doomforge
+    const ensureVolcanoPlaying = () => {
+      if (
+        this.isVolcanoActive &&
+        !this.isChallengeActive &&
+        this.isStarted &&
+        !this.isMuted &&
+        this.targetVolume > 0
+      ) {
+        if (this.volcanoAudio.paused) {
+          void this.volcanoAudio.play().catch(() => {});
+        }
+      }
+    };
+    this.volcanoAudio.addEventListener('pause', ensureVolcanoPlaying);
+    this.volcanoAudio.addEventListener('stalled', ensureVolcanoPlaying);
+    this.volcanoAudio.addEventListener('waiting', ensureVolcanoPlaying);
+    this.volcanoAudio.addEventListener('suspend', ensureVolcanoPlaying);
+    this.volcanoAudio.addEventListener('ended', () => {
+      if (this.isVolcanoActive && !this.isChallengeActive && !this.isMuted) {
+        this.volcanoAudio.currentTime = 0;
+        void this.volcanoAudio.play().catch(() => {});
       }
     });
 
@@ -150,6 +211,7 @@ export class BackgroundMusic {
     const ensureNightPlaying = () => {
       if (
         this.isNightDangerActive &&
+        !this.isVolcanoActive &&
         !this.isChallengeActive &&
         this.isStarted &&
         !this.isMuted &&
@@ -165,7 +227,12 @@ export class BackgroundMusic {
     this.nightAudio.addEventListener('waiting', ensureNightPlaying);
     this.nightAudio.addEventListener('suspend', ensureNightPlaying);
     this.nightAudio.addEventListener('ended', () => {
-      if (this.isNightDangerActive && !this.isChallengeActive && !this.isMuted) {
+      if (
+        this.isNightDangerActive &&
+        !this.isVolcanoActive &&
+        !this.isChallengeActive &&
+        !this.isMuted
+      ) {
         this.nightAudio.currentTime = 0;
         void this.nightAudio.play().catch(() => {});
       }
@@ -194,7 +261,7 @@ export class BackgroundMusic {
   }
 
   private tryPlay(): void {
-    if (this.isStarted || this.isPlayPending) return;
+    if (this.isStarted || this.isPlayPending || this.isPausedByMenu) return;
     this.isPlayPending = true;
     const activeTrack = this.getActiveTrack();
     activeTrack
@@ -205,7 +272,9 @@ export class BackgroundMusic {
         this.removeUnlockListeners();
         const currentDesired = this.getActiveTrack();
         this.pauseInactiveTracks(currentDesired);
-        if (currentDesired !== activeTrack && !this.isMuted) {
+        if (this.isPausedByMenu || this.isMuted) {
+          currentDesired.pause();
+        } else if (currentDesired !== activeTrack) {
           void currentDesired.play().catch(() => {});
         }
         this.updateUI();
@@ -217,14 +286,62 @@ export class BackgroundMusic {
       });
   }
 
+  public setOnStateChange(cb: () => void): void {
+    this.onStateChange = cb;
+  }
+
+  public setPausedByMenu(paused: boolean): void {
+    if (this.isPausedByMenu === paused) return;
+    this.isPausedByMenu = paused;
+    if (paused) {
+      if (!this.isPlayPending) {
+        this.audio.pause();
+        this.nightAudio.pause();
+        this.volcanoAudio.pause();
+        this.challengeAudio.pause();
+      }
+    } else if (!this.isMuted && this.targetVolume > 0) {
+      if (!this.isStarted && !this.isChallengeActive) {
+        this.tryPlay();
+      } else {
+        const active = this.getActiveTrack();
+        this.pauseInactiveTracks(active);
+        void active.play().catch(() => {});
+      }
+    }
+    this.updateUI();
+  }
+
+  public isPausedByMenuNow(): boolean {
+    return this.isPausedByMenu;
+  }
+
+  public isPlayingNow(): boolean {
+    return (
+      (this.isStarted || this.isChallengeActive) &&
+      !this.isMuted &&
+      !this.isPausedByMenu &&
+      this.targetVolume > 0
+    );
+  }
+
   public toggleMute(): boolean {
-    this.isMuted = !this.isMuted;
+    // If music was paused automatically by the Esc menu, clicking toggle Music in the menu resumes or mutes it cleanly
+    if (this.isPausedByMenu && !this.isMuted) {
+      this.isPausedByMenu = false;
+      this.isMuted = false;
+    } else {
+      this.isPausedByMenu = false;
+      this.isMuted = !this.isMuted;
+    }
     this.audio.muted = this.isMuted;
     this.nightAudio.muted = this.isMuted;
+    this.volcanoAudio.muted = this.isMuted;
     this.challengeAudio.muted = this.isMuted;
     if (this.isMuted) {
       this.audio.pause();
       this.nightAudio.pause();
+      this.volcanoAudio.pause();
       this.challengeAudio.pause();
     } else if (!this.isStarted && !this.isChallengeActive) {
       this.tryPlay();
@@ -235,6 +352,58 @@ export class BackgroundMusic {
     }
     this.updateUI();
     return !this.isMuted;
+  }
+
+  public isMutedNow(): boolean {
+    return this.isMuted;
+  }
+
+  /**
+   * Switches to the ElevenLabs Volcano soundtrack ("Volcano Caldera Omen") as the player
+   * approaches Mount Doomforge, swelling in volume as the player climbs toward the caldera rim.
+   */
+  public setVolcanoProximity(isNearVolcano: boolean, proximityIntensity = 0): void {
+    const clampedIntensity = Math.max(0, Math.min(1, proximityIntensity));
+    if (Math.abs(this.volcanoIntensity - clampedIntensity) > 0.01) {
+      this.volcanoIntensity = clampedIntensity;
+      const mult = 0.88 + 0.38 * clampedIntensity;
+      this.volcanoAudio.volume = Math.min(1, this.targetVolume * mult);
+    }
+
+    if (this.isVolcanoActive === isNearVolcano) return;
+    this.isVolcanoActive = isNearVolcano;
+    this.volcanoAudio.muted = this.isMuted;
+
+    if (this.isChallengeActive) {
+      this.updateUI();
+      return;
+    }
+
+    if (isNearVolcano) {
+      const mult = 0.88 + 0.38 * this.volcanoIntensity;
+      this.volcanoAudio.volume = Math.min(1, this.targetVolume * mult);
+      if (!this.isPlayPending) {
+        this.audio.pause();
+        this.nightAudio.pause();
+      }
+      if (this.isStarted && !this.isMuted && !this.isPausedByMenu) {
+        void this.volcanoAudio.play().catch(() => {});
+      }
+    } else {
+      if (!this.isPlayPending) {
+        this.volcanoAudio.pause();
+        if (this.volcanoBlobUrl && this.volcanoAudio.src !== this.volcanoBlobUrl) {
+          this.volcanoAudio.src = this.volcanoBlobUrl;
+          this.volcanoAudio.load();
+        }
+      }
+      if (this.isStarted && !this.isMuted && !this.isPausedByMenu) {
+        const nextTrack = this.getActiveTrack();
+        this.pauseInactiveTracks(nextTrack);
+        void nextTrack.play().catch(() => {});
+      }
+    }
+    this.updateUI();
   }
 
   /**
@@ -254,13 +423,15 @@ export class BackgroundMusic {
     this.isNightDangerActive = isNightDanger;
     this.nightAudio.muted = this.isMuted;
 
-    if (this.isChallengeActive) {
+    if (this.isChallengeActive || this.isVolcanoActive) {
       this.updateUI();
       return;
     }
 
     if (isNightDanger) {
-      this.audio.pause();
+      if (!this.isPlayPending) {
+        this.audio.pause();
+      }
       if (this.nightAudio.readyState >= 1) {
         try {
           this.nightAudio.currentTime = 0;
@@ -268,16 +439,18 @@ export class BackgroundMusic {
           // Ignore seek errors
         }
       }
-      if (this.isStarted && !this.isMuted) {
+      if (this.isStarted && !this.isMuted && !this.isPausedByMenu) {
         void this.nightAudio.play().catch(() => {});
       }
     } else {
-      this.nightAudio.pause();
-      if (this.nightBlobUrl && this.nightAudio.src !== this.nightBlobUrl) {
-        this.nightAudio.src = this.nightBlobUrl;
-        this.nightAudio.load();
+      if (!this.isPlayPending) {
+        this.nightAudio.pause();
+        if (this.nightBlobUrl && this.nightAudio.src !== this.nightBlobUrl) {
+          this.nightAudio.src = this.nightBlobUrl;
+          this.nightAudio.load();
+        }
       }
-      if (this.isStarted && !this.isMuted) {
+      if (this.isStarted && !this.isMuted && !this.isPausedByMenu) {
         void this.audio.play().catch(() => {});
       }
     }
@@ -289,6 +462,7 @@ export class BackgroundMusic {
     this.isChallengeActive = true;
     this.audio.pause();
     this.nightAudio.pause();
+    this.volcanoAudio.pause();
     this.challengeAudio.preload = 'auto';
     this.challengeAudio.loop = true;
     if (this.challengeAudio.readyState >= 1) {
@@ -299,7 +473,7 @@ export class BackgroundMusic {
       }
     }
     this.challengeAudio.muted = this.isMuted;
-    if (!this.isMuted) {
+    if (!this.isMuted && !this.isPausedByMenu) {
       this.challengeAudio
         .play()
         .then(() => {
@@ -326,7 +500,7 @@ export class BackgroundMusic {
         // Ignore seek errors
       }
     }
-    if (this.isStarted && !this.isMuted) {
+    if (this.isStarted && !this.isMuted && !this.isPausedByMenu) {
       const nextTrack = this.getActiveTrack();
       this.pauseInactiveTracks(nextTrack);
       void nextTrack.play().catch(() => {});
@@ -341,12 +515,26 @@ export class BackgroundMusic {
       1,
       this.targetVolume * (this.isCombatIntense ? 1.28 : 1.15)
     );
+    this.volcanoAudio.volume = Math.min(
+      1,
+      this.targetVolume * (0.88 + 0.38 * this.volcanoIntensity)
+    );
     this.challengeAudio.volume = Math.min(1, this.targetVolume * 1.25);
     if (this.targetVolume > 0 && this.isMuted) {
       this.isMuted = false;
       this.audio.muted = false;
       this.nightAudio.muted = false;
+      this.volcanoAudio.muted = false;
       this.challengeAudio.muted = false;
+      if (!this.isPausedByMenu) {
+        if (!this.isStarted && !this.isChallengeActive) {
+          this.tryPlay();
+        } else {
+          const active = this.getActiveTrack();
+          this.pauseInactiveTracks(active);
+          void active.play().catch(() => {});
+        }
+      }
     }
     this.updateUI();
   }
@@ -356,25 +544,37 @@ export class BackgroundMusic {
   }
 
   private updateUI(): void {
+    this.onStateChange?.();
     if (!this.statusEl) return;
-    const isNightTrack = !this.isChallengeActive && this.isNightDangerActive;
+    const isVolcanoTrack = !this.isChallengeActive && this.isVolcanoActive;
+    const isNightTrack =
+      !this.isChallengeActive && !this.isVolcanoActive && this.isNightDangerActive;
+    const isPlaying = this.isPlayingNow();
     const trackLabel = this.isChallengeActive
       ? 'Dwarven Ring Sprint'
-      : isNightTrack
-        ? 'Night of the Trolls (Danger)'
-        : 'Wandering Through the Pines';
+      : isVolcanoTrack
+        ? 'Mount Doomforge (Volcano Omen)'
+        : isNightTrack
+          ? 'Night of the Trolls (Danger)'
+          : 'Wandering Through the Pines';
     const shortLabel = this.isChallengeActive
       ? 'Sprint'
-      : isNightTrack
-        ? '👹 Night'
-        : 'Music';
+      : isVolcanoTrack
+        ? '🌋 Volcano'
+        : isNightTrack
+          ? '👹 Night'
+          : 'Music';
     this.statusEl.title = `${trackLabel} — Toggle Music (P)`;
-    this.statusEl.classList.toggle('night-danger', isNightTrack && !this.isMuted);
+    this.statusEl.classList.toggle('night-danger', isNightTrack && isPlaying);
+    this.statusEl.classList.toggle('volcano-omen', isVolcanoTrack && isPlaying);
     if (!this.isStarted && !this.isChallengeActive) {
       this.statusEl.textContent = `♪ ${shortLabel} (P)`;
       this.statusEl.classList.add('paused');
     } else if (this.isMuted || this.targetVolume === 0) {
       this.statusEl.textContent = `♪ Muted (P)`;
+      this.statusEl.classList.add('paused');
+    } else if (this.isPausedByMenu) {
+      this.statusEl.textContent = `♪ Paused (P)`;
       this.statusEl.classList.add('paused');
     } else {
       this.statusEl.textContent = `♪ ${shortLabel} (P)`;

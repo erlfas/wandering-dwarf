@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
-import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+import {
+  createSeededRandom,
+  TerrainNoise,
+  VOLCANO_BARREN_RADIUS,
+  VOLCANO_X,
+  VOLCANO_Z,
+} from './TerrainNoise';
 
 interface RunestoneNode {
   index: number;
@@ -942,6 +948,11 @@ export class TreasureManager {
           continue;
         }
 
+        // Prevent chests from spawning inside the barren/lethal volcano zone
+        if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) {
+          continue;
+        }
+
         if (
           !isStartChunk &&
           this.config.enableTracks &&
@@ -978,8 +989,15 @@ export class TreasureManager {
           for (let rIdx = 0; rIdx < 3; rIdx++) {
             const rAngle = baseAngle + (rIdx * Math.PI * 2) / 3 + (rng() - 0.5) * 0.35;
             const rDist = 13.5 + rng() * 6.5;
-            const rx = wx + Math.cos(rAngle) * rDist;
-            const rz = wz + Math.sin(rAngle) * rDist;
+            let rx = wx + Math.cos(rAngle) * rDist;
+            let rz = wz + Math.sin(rAngle) * rDist;
+            if (this.noise.isInsideVolcanoBarrenZone(rx, rz)) {
+              const vdx = rx - VOLCANO_X;
+              const vdz = rz - VOLCANO_Z;
+              const vLen = Math.hypot(vdx, vdz) || 1;
+              rx = VOLCANO_X + (vdx / vLen) * (VOLCANO_BARREN_RADIUS + 3.0);
+              rz = VOLCANO_Z + (vdz / vLen) * (VOLCANO_BARREN_RADIUS + 3.0);
+            }
             const ry = Math.max(
               this.sampleGroundHeight(rx, rz),
               this.config.enableWater ? this.config.waterLevel + 0.3 : -999
@@ -1066,6 +1084,7 @@ export class TreasureManager {
       const dist = 52 + Math.random() * 32;
       const wx = originPos.x + Math.cos(angle) * dist;
       const wz = originPos.z + Math.sin(angle) * dist;
+      if (this.noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
       const wy = this.sampleGroundHeight(wx, wz);
 
       if (this.config.enableWater && wy < this.config.waterLevel + 1.0) continue;

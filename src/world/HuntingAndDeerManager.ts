@@ -5,7 +5,20 @@ import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
-import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+import {
+  createSeededRandom,
+  TerrainNoise,
+  VOLCANO_OUTER_RADIUS,
+  VOLCANO_X,
+  VOLCANO_Z,
+} from './TerrainNoise';
+
+// Strict exclusion perimeter so no deer ever spawns near or approaches Mount Doomforge
+const DEER_VOLCANO_EXCLUSION_RADIUS = VOLCANO_OUTER_RADIUS + 54.0; // 250m from volcano center
+const DEER_VOLCANO_EXCLUSION_RADIUS_SQ =
+  DEER_VOLCANO_EXCLUSION_RADIUS * DEER_VOLCANO_EXCLUSION_RADIUS;
+const DEER_VOLCANO_TURNBACK_RADIUS_SQ =
+  (DEER_VOLCANO_EXCLUSION_RADIUS + 35.0) * (DEER_VOLCANO_EXCLUSION_RADIUS + 35.0);
 
 interface DeerSpecies {
   name: string;
@@ -804,6 +817,9 @@ export class HuntingAndDeerManager {
       const wx = cx * size + (rng() - 0.5) * (size * 0.8);
       const wz = cz * size + (rng() - 0.5) * (size * 0.8);
       if (wx * wx + wz * wz < 9.0 * 9.0) continue; // Keep exact spawn point clear
+      const vdx = wx - VOLCANO_X;
+      const vdz = wz - VOLCANO_Z;
+      if (vdx * vdx + vdz * vdz < DEER_VOLCANO_EXCLUSION_RADIUS_SQ) continue; // No deer near the volcano ever
       const wy = this.sampleGroundHeight(wx, wz);
       if (wy > minLandY && wy < this.config.waterLevel + 24.0) {
         const speciesIdx = rng() < 0.16 ? 2 : rng() < 0.5 ? 1 : 0;
@@ -938,6 +954,10 @@ export class HuntingAndDeerManager {
           d.grazeTimer = 0;
         }
 
+        const vdx = d.pos.x - VOLCANO_X;
+        const vdz = d.pos.z - VOLCANO_Z;
+        const curVDistSq = vdx * vdx + vdz * vdz;
+
         if (d.fleeTimer > 0) {
           d.fleeTimer = Math.max(0, d.fleeTimer - dt);
           const awayAngle = Math.atan2(-dxP, -dzP);
@@ -947,14 +967,31 @@ export class HuntingAndDeerManager {
           d.heading += diff * Math.min(1, dt * 8.0);
 
           const fleeSpeed = d.speed * (isNight ? 4.3 : 3.1);
-          const nextX = d.pos.x + Math.sin(d.heading) * fleeSpeed * dt;
-          const nextZ = d.pos.z + Math.cos(d.heading) * fleeSpeed * dt;
+          let nextX = d.pos.x + Math.sin(d.heading) * fleeSpeed * dt;
+          let nextZ = d.pos.z + Math.cos(d.heading) * fleeSpeed * dt;
+          const nextVdx = nextX - VOLCANO_X;
+          const nextVdz = nextZ - VOLCANO_Z;
+          const nextVDistSq = nextVdx * nextVdx + nextVdz * nextVdz;
+
+          // Never allow a fleeing deer to approach the volcano
+          if (
+            nextVDistSq < DEER_VOLCANO_EXCLUSION_RADIUS_SQ ||
+            (curVDistSq < DEER_VOLCANO_TURNBACK_RADIUS_SQ && nextVDistSq < curVDistSq)
+          ) {
+            d.heading = Math.atan2(vdx, vdz);
+            nextX = d.pos.x + Math.sin(d.heading) * fleeSpeed * dt;
+            nextZ = d.pos.z + Math.cos(d.heading) * fleeSpeed * dt;
+          }
+
           const nextY = this.sampleGroundHeight(nextX, nextZ);
 
           if (nextY > minLandY) {
             d.pos.x = nextX;
             d.pos.z = nextZ;
             d.pos.y = nextY;
+            if (curVDistSq < DEER_VOLCANO_TURNBACK_RADIUS_SQ) {
+              d.homePos.set(nextX, nextY, nextZ);
+            }
           } else {
             d.heading += Math.PI * 0.65;
           }
@@ -998,14 +1035,33 @@ export class HuntingAndDeerManager {
             d.heading += d.targetYawOffset * dt;
           }
 
-          const nextX = d.pos.x + Math.sin(d.heading) * d.speed * dt;
-          const nextZ = d.pos.z + Math.cos(d.heading) * d.speed * dt;
+          let nextX = d.pos.x + Math.sin(d.heading) * d.speed * dt;
+          let nextZ = d.pos.z + Math.cos(d.heading) * d.speed * dt;
+          const nextVdx = nextX - VOLCANO_X;
+          const nextVdz = nextZ - VOLCANO_Z;
+          const nextVDistSq = nextVdx * nextVdx + nextVdz * nextVdz;
+
+          // Never allow a strolling deer to approach the volcano
+          if (
+            nextVDistSq < DEER_VOLCANO_EXCLUSION_RADIUS_SQ ||
+            (curVDistSq < DEER_VOLCANO_TURNBACK_RADIUS_SQ && nextVDistSq < curVDistSq)
+          ) {
+            d.heading = Math.atan2(vdx, vdz);
+            d.targetYawOffset = 0;
+            d.turnTimer = 2.5;
+            nextX = d.pos.x + Math.sin(d.heading) * d.speed * dt;
+            nextZ = d.pos.z + Math.cos(d.heading) * d.speed * dt;
+          }
+
           const nextY = this.sampleGroundHeight(nextX, nextZ);
 
           if (nextY > minLandY) {
             d.pos.x = nextX;
             d.pos.z = nextZ;
             d.pos.y = nextY;
+            if (curVDistSq < DEER_VOLCANO_TURNBACK_RADIUS_SQ) {
+              d.homePos.set(nextX, nextY, nextZ);
+            }
           } else {
             d.heading += Math.PI * 0.75;
             d.turnTimer = 1.5;

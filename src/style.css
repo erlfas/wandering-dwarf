@@ -631,10 +631,23 @@ body {
   color: #ffffff;
 }
 
+#music-toggle.volcano-omen {
+  background: linear-gradient(135deg, rgba(255, 94, 0, 0.34), rgba(180, 28, 12, 0.38));
+  border-color: rgba(255, 145, 48, 0.85);
+  color: #ffe3b8;
+  box-shadow: 0 0 12px rgba(255, 94, 0, 0.38);
+}
+
+#music-toggle.volcano-omen:hover {
+  background: linear-gradient(135deg, rgba(255, 115, 29, 0.52), rgba(210, 42, 18, 0.56));
+  color: #ffffff;
+}
+
 #music-toggle.paused {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.22);
   color: #cbd5e1;
+  box-shadow: none;
 }
 
 #coords-readout {
@@ -1750,6 +1763,62 @@ kbd {
   gap: 8px 16px;
 }
 
+.game-menu-pause-bar {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.game-menu-pause-toggle {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1.5px solid rgba(255, 209, 102, 0.55);
+  background: linear-gradient(135deg, rgba(244, 162, 97, 0.24), rgba(231, 111, 81, 0.28));
+  color: #fff8e7;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.game-menu-pause-toggle:hover {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, rgba(244, 162, 97, 0.42), rgba(231, 111, 81, 0.48));
+  border-color: #ffd166;
+}
+
+.game-menu-pause-toggle.is-playing {
+  background: linear-gradient(135deg, rgba(82, 183, 136, 0.28), rgba(45, 106, 79, 0.36));
+  border-color: rgba(149, 213, 178, 0.72);
+}
+
+.game-menu-pause-toggle.is-playing:hover {
+  background: linear-gradient(135deg, rgba(82, 183, 136, 0.45), rgba(45, 106, 79, 0.55));
+}
+
+.gm-pause-icon {
+  font-size: 20px;
+}
+
+.gm-pause-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gm-pause-text strong {
+  font-size: 12.5px;
+  color: #ffffff;
+}
+
+.gm-pause-text small {
+  font-size: 10px;
+  color: #d8ccb8;
+  line-height: 1.2;
+}
+
 .game-menu-primary-actions {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1913,6 +1982,16 @@ kbd {
   text-align: center;
   padding-top: 4px;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.game-menu-credit {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: #ffd166;
+  text-align: center;
+  opacity: 0.92;
+  margin-top: -4px;
 }
 
 /* Royal Decrees, Dwarven Rank & Guild Contracts HUD */

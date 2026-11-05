@@ -10,6 +10,7 @@ import { HuntingAndDeerManager } from '../world/HuntingAndDeerManager';
 import { HutManager } from '../world/HutManager';
 import { CastleAndQuarryManager } from '../world/CastleAndQuarryManager';
 import { CastleInteriorManager } from '../world/CastleInteriorManager';
+import { VolcanoManager } from '../world/VolcanoManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -65,6 +66,7 @@ export class ExplorerCamera {
   private hutManager?: HutManager;
   private castleManager?: CastleAndQuarryManager;
   private castleInteriorManager?: CastleInteriorManager;
+  private volcanoManager?: VolcanoManager;
   public lastAimForward = 0;
   public lastAimRight = 0;
 
@@ -109,6 +111,10 @@ export class ExplorerCamera {
 
   public setCastleInteriorManager(cim: CastleInteriorManager): void {
     this.castleInteriorManager = cim;
+  }
+
+  public setVolcanoManager(vm: VolcanoManager): void {
+    this.volcanoManager = vm;
   }
 
   public isSprintingNow(): boolean {
@@ -198,6 +204,11 @@ export class ExplorerCamera {
     const trackHeading = this.config.enableTracks ? this.noise.getTrackHeading(0, 0) : 0;
     const defaultYaw = trackHeading + Math.PI;
     this.setPose(0, 0, trackHeading, defaultYaw, 0.46, 11.5);
+  }
+
+  public clearInputState(): void {
+    this.keys.clear();
+    this.isDragging = false;
   }
 
   private bindEvents(domElement: HTMLElement): void {
@@ -518,6 +529,7 @@ export class ExplorerCamera {
           this.heightAboveGround
         );
         this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
+        this.volcanoManager?.resolveCalderaRimCollision(this.playerPos);
       }
       const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
       if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
@@ -556,6 +568,7 @@ export class ExplorerCamera {
               this.heightAboveGround
             );
             this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
+            this.volcanoManager?.resolveCalderaRimCollision(this.playerPos);
           }
           const movedDist = Math.hypot(this.playerPos.x - prevX, this.playerPos.z - prevZ);
           if (stepDist > 0.0001 && movedDist < stepDist * 0.15) {
@@ -565,6 +578,7 @@ export class ExplorerCamera {
       } else if (this.config.cameraMode === 'dwarf' && !insideInterior) {
         // Ensure placing a Quarry or Castle Block while stationary immediately resolves collision
         this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
+        this.volcanoManager?.resolveCalderaRimCollision(this.playerPos);
       }
     }
 
