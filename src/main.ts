@@ -1543,8 +1543,13 @@ function animate(): void {
       explorer.lastAimRight
     );
     huntingManager.update(dt, elapsedTime, explorer.playerPos);
-  } else if (landmarkManager.campfireBuffTimer > 0) {
-    landmarkManager.campfireBuffTimer = Math.max(0, landmarkManager.campfireBuffTimer - dt);
+  } else {
+    if (challengeManager.isChallengeActive()) {
+      challengeManager.abandonChallenge(false);
+    }
+    if (landmarkManager.campfireBuffTimer > 0) {
+      landmarkManager.campfireBuffTimer = Math.max(0, landmarkManager.campfireBuffTimer - dt);
+    }
   }
 
   // Keep directional sun shadow frustum centered on player in discrete grid steps

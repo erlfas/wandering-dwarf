@@ -222,6 +222,7 @@ export class ChallengeManager {
   private currentRingIndex = 0;
   private trialTimer = 0;
   private readonly initialTrialSeconds = 20.0;
+  private readonly maxAbandonDistance = 30.0;
 
   // Guiding particle stream toward the active Checkpoint Ring during a Trial
   private readonly guideCount = 20;
@@ -566,6 +567,15 @@ export class ChallengeManager {
       return;
     }
 
+    // If the dwarf simply walks away from the course or drops far down a cliff, end the run immediately
+    const targetRing = this.activeRings[this.currentRingIndex];
+    const distToCourse = this.getDistanceToChallenge(playerPos);
+    const vertDist = targetRing ? Math.abs(playerPos.y - targetRing.worldPos.y) : 0;
+    if (distToCourse >= this.maxAbandonDistance || vertDist > 22.0) {
+      this.abandonChallenge(true);
+      return;
+    }
+
     this.trialTimer = Math.max(0, this.trialTimer - dt);
     if (this.trialTimer <= 0) {
       const failedArch = this.currentTrialArch;
@@ -578,7 +588,6 @@ export class ChallengeManager {
     }
 
     const assets = getSharedChallengeAssets();
-    const targetRing = this.activeRings[this.currentRingIndex];
 
     // Animate active rings
     for (let i = this.currentRingIndex; i < this.activeRings.length; i++) {
@@ -693,6 +702,76 @@ export class ChallengeManager {
       posArr[i * 3 + 1] = -9999;
     }
     this.guidePosAttr.needsUpdate = true;
+  }
+
+  private getHorizontalDistanceToSegment(
+    px: number,
+    pz: number,
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number
+  ): number {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const lenSq = dx * dx + dz * dz;
+    if (lenSq < 0.0001) {
+      return Math.hypot(px - ax, pz - az);
+    }
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / lenSq));
+    const projX = ax + t * dx;
+    const projZ = az + t * dz;
+    return Math.hypot(px - projX, pz - projZ);
+  }
+
+  public getDistanceToChallenge(playerPos: THREE.Vector3): number {
+    if (!this.currentTrialArch || this.activeRings.length === 0) return 0;
+
+    const targetRing = this.activeRings[this.currentRingIndex];
+    if (!targetRing) return 0;
+
+    const legStartPos =
+      this.currentRingIndex === 0
+        ? this.currentTrialArch.worldPos
+        : this.currentTrialArch.ringSpecs[this.currentRingIndex - 1].worldPos;
+
+    // Horizontal distance to the current active course leg segment
+    let minDist = this.getHorizontalDistanceToSegment(
+      playerPos.x,
+      playerPos.z,
+      legStartPos.x,
+      legStartPos.z,
+      targetRing.worldPos.x,
+      targetRing.worldPos.z
+    );
+
+    // Also compare against all upcoming rings on the sprint path
+    for (let i = this.currentRingIndex + 1; i < this.activeRings.length; i++) {
+      const ring = this.activeRings[i];
+      const d = Math.hypot(playerPos.x - ring.worldPos.x, playerPos.z - ring.worldPos.z);
+      if (d < minDist) {
+        minDist = d;
+      }
+    }
+
+    return minDist;
+  }
+
+  /**
+   * Ends an active challenge (e.g. when the player walks away from the course
+   * or enters an interior). Clears rings, resets archway, hides the banner,
+   * stops special music, and returns the world to ambient exploration.
+   */
+  public abandonChallenge(showToastMessage = true): void {
+    if (!this.currentTrialArch) return;
+    const arch = this.currentTrialArch;
+    arch.cooldown = 4.0;
+    arch.portalRingMesh.material = getSharedChallengeAssets().matPortalReady;
+    this.clearActiveRings();
+    this.syncChallengeBanner();
+    if (showToastMessage) {
+      this.showToast('🏃 Ring Sprint Ended — Walked away from challenge.', false);
+    }
   }
 
   private clearActiveRings(): void {
