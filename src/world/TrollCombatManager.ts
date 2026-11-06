@@ -217,6 +217,14 @@ export class TrollCombatManager {
   private lastBannerVisible = false;
   private lastTrollsSlainText = '';
 
+  // Batched Turret Kills HUD
+  private activeTurretKillToastEl: HTMLElement | null = null;
+  private activeTurretKillToastTimer: number | null = null;
+  private batchedTurretKills = 0;
+  private batchedTurretGold = 0;
+  private batchedTurretRations = 0;
+  private lastTurretKillTimestamp = 0;
+
   constructor(
     private config: WorldConfig,
     private domElement: HTMLElement,
@@ -242,7 +250,13 @@ export class TrollCombatManager {
     private onConsumeCombatEnergy: (cost: number) => { hadEnough: boolean; remainingEnergy: number },
     private onApplyPlayerDamage: (damage: number, sourceTitle: string) => { defeated: boolean },
     private onEatFoodRequest: () => void,
-    private onTrollDefeatedReward: (gold: number, rations: number, trophiesTotal: number, title: string) => void,
+    private onTrollDefeatedReward: (
+      gold: number,
+      rations: number,
+      trophiesTotal: number,
+      title: string,
+      source?: 'player' | 'turret'
+    ) => void,
     private onRestoreLastSavedLocation: () => void,
     private onInterruptFishingNight?: () => void,
     private noise?: TerrainNoise
@@ -887,17 +901,18 @@ export class TrollCombatManager {
   private applyDamageToTroll(
     troll: TrollInstance,
     damage: number,
-    playerPos: THREE.Vector3,
-    isExhaustedStrike: boolean
+    sourcePos: THREE.Vector3,
+    isExhaustedStrike: boolean,
+    source: 'player' | 'turret' = 'player'
   ): void {
     troll.hp = Math.max(0, troll.hp - damage);
     troll.hitFlashTimer = 0.22;
 
     // Knockback & brief stagger when struck with full Strength
-    const dx = troll.pos.x - playerPos.x;
-    const dz = troll.pos.z - playerPos.z;
+    const dx = troll.pos.x - sourcePos.x;
+    const dz = troll.pos.z - sourcePos.z;
     const len = Math.hypot(dx, dz) || 1;
-    const knockDist = isExhaustedStrike ? 0.12 : 0.48;
+    const knockDist = isExhaustedStrike ? 0.12 : source === 'turret' ? 0.25 : 0.48;
     troll.pos.x += (dx / len) * knockDist;
     troll.pos.z += (dz / len) * knockDist;
     troll.pos.y = this.sampleGroundHeight(troll.pos.x, troll.pos.z);
@@ -930,17 +945,49 @@ export class TrollCombatManager {
 
       const bountyGold = 300;
       const droppedRations = 3;
-      this.onTrollDefeatedReward(bountyGold, droppedRations, this.trollsSlain, troll.title);
+      this.onTrollDefeatedReward(bountyGold, droppedRations, this.trollsSlain, troll.title, source);
 
       if (this.activeSiegeRemaining > 0) {
         this.activeSiegeRemaining = Math.max(0, this.activeSiegeRemaining - 1);
         if (this.activeSiegeRemaining === 0) {
+          this.clearActiveTurretKillToast();
           this.onSiegeVictoryReward?.(this.activeSiegeCastleName, 450, 5);
-        } else {
+        } else if (source === 'player') {
           this.showToast(
             `🛡️ Castle Siege Progress: ${3 - this.activeSiegeRemaining}/3 Siege Trolls Slain! (${this.activeSiegeRemaining} remaining)`,
             true
           );
+        }
+      }
+
+      if (source === 'turret') {
+        const now = performance.now();
+        if (this.batchedTurretKills > 0 && now - this.lastTurretKillTimestamp < 3500) {
+          this.batchedTurretKills += 1;
+          this.batchedTurretGold += bountyGold;
+          this.batchedTurretRations += droppedRations;
+        } else {
+          this.batchedTurretKills = 1;
+          this.batchedTurretGold = bountyGold;
+          this.batchedTurretRations = droppedRations;
+        }
+        this.lastTurretKillTimestamp = now;
+
+        if (this.activeSiegeRemaining > 0) {
+          const slainSiege = 3 - this.activeSiegeRemaining;
+          const msg =
+            this.batchedTurretKills === 1
+              ? `🏰 Roof Turret slew ${troll.title}! (${slainSiege}/3 Siege Trolls) +${bountyGold}g, +${droppedRations}🍖`
+              : `🏰 Roof Turrets slew ${this.batchedTurretKills} Trolls! (${slainSiege}/3 Siege Trolls) +${this.batchedTurretGold}g, +${this.batchedTurretRations}🍖`;
+          this.showOrUpdateTurretKillToast(msg);
+        } else if (this.activeSiegeRemaining === 0 && this.activeSiegeCastleName) {
+          // Siege completed, victory banner already triggered
+        } else {
+          const msg =
+            this.batchedTurretKills === 1
+              ? `🏰 Roof Turret slew ${troll.title}! +${bountyGold}g, +${droppedRations}🍖`
+              : `🏰 Roof Turrets slew ${this.batchedTurretKills} Trolls! +${this.batchedTurretGold}g, +${this.batchedTurretRations}🍖`;
+          this.showOrUpdateTurretKillToast(msg);
         }
       }
     }
@@ -957,7 +1004,7 @@ export class TrollCombatManager {
         const stats = this.getCombatStats();
         const trophyMult = 1.0 + Math.min(0.3, this.trollsSlain * 0.05);
         const dmg = Math.max(12, Math.round(baseDamage * trophyMult * stats.kingsValorBonus));
-        this.applyDamageToTroll(t, dmg, this.dwarf.root.position, false);
+        this.applyDamageToTroll(t, dmg, this.dwarf.root.position, false, 'player');
         t.staggerTimer = Math.max(t.staggerTimer, 0.55);
         if (t.hp > 0) {
           this.showToast(
@@ -965,6 +1012,25 @@ export class TrollCombatManager {
             true
           );
         }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public tryHitTrollWithSiegeBolt(boltPos: THREE.Vector3, baseDamage = 48): boolean {
+    if (this.defeatRestorePending) return false;
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = boltPos.x - t.pos.x;
+      const dz = boltPos.z - t.pos.z;
+      const dy = boltPos.y - t.pos.y;
+      if (dx * dx + dz * dz <= 2.35 * 2.35 && dy >= -0.4 && dy <= 3.1) {
+        const stats = this.getCombatStats();
+        const trophyMult = 1.0 + Math.min(0.3, this.trollsSlain * 0.05);
+        const dmg = Math.max(12, Math.round(baseDamage * trophyMult * stats.kingsValorBonus));
+        this.applyDamageToTroll(t, dmg, boltPos, false, 'turret');
+        t.staggerTimer = Math.max(t.staggerTimer, 0.4);
         return true;
       }
     }
@@ -1518,21 +1584,76 @@ export class TrollCombatManager {
   }
 
   public reset(): void {
+    this.clearActiveTurretKillToast();
     this.trollsSlain = 0;
     this.defeatRestorePending = false;
     this.despawnAllTrolls(false);
     this.syncTrollsSlainHUD();
   }
 
+  public clearActiveTurretKillToast(): void {
+    if (this.activeTurretKillToastTimer !== null) {
+      window.clearTimeout(this.activeTurretKillToastTimer);
+      this.activeTurretKillToastTimer = null;
+    }
+    if (this.activeTurretKillToastEl) {
+      this.activeTurretKillToastEl.remove();
+      this.activeTurretKillToastEl = null;
+    }
+    this.batchedTurretKills = 0;
+    this.batchedTurretGold = 0;
+    this.batchedTurretRations = 0;
+  }
+
+  private showOrUpdateTurretKillToast(text: string): void {
+    if (!this.toastContainer) return;
+
+    if (this.activeTurretKillToastTimer !== null) {
+      window.clearTimeout(this.activeTurretKillToastTimer);
+      this.activeTurretKillToastTimer = null;
+    }
+
+    if (this.activeTurretKillToastEl && this.activeTurretKillToastEl.isConnected) {
+      this.activeTurretKillToastEl.textContent = text;
+      // Re-trigger animation cleanly without creating a new stacked element
+      this.activeTurretKillToastEl.classList.remove('rare');
+      void this.activeTurretKillToastEl.offsetWidth;
+      this.activeTurretKillToastEl.classList.add('rare');
+    } else {
+      while (this.toastContainer.children.length >= 3) {
+        this.toastContainer.firstElementChild?.remove();
+      }
+      const toast = document.createElement('div');
+      toast.className = 'pickup-toast rare';
+      toast.textContent = text;
+      this.toastContainer.appendChild(toast);
+      this.activeTurretKillToastEl = toast;
+    }
+
+    this.activeTurretKillToastTimer = window.setTimeout(() => {
+      if (this.activeTurretKillToastEl) {
+        this.activeTurretKillToastEl.remove();
+        this.activeTurretKillToastEl = null;
+      }
+      this.activeTurretKillToastTimer = null;
+      this.batchedTurretKills = 0;
+      this.batchedTurretGold = 0;
+      this.batchedTurretRations = 0;
+    }, 2800);
+  }
+
   private showToast(text: string, isHighlight: boolean): void {
     if (!this.toastContainer) return;
+    while (this.toastContainer.children.length >= 3) {
+      this.toastContainer.firstElementChild?.remove();
+    }
     const toast = document.createElement('div');
     toast.className = `pickup-toast ${isHighlight ? 'rare' : ''}`;
     toast.textContent = text;
     this.toastContainer.appendChild(toast);
     window.setTimeout(() => {
       toast.remove();
-    }, 3100);
+    }, 2400);
   }
 
   private playOneShotPool(

@@ -115,6 +115,10 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  pointer-events: none;
+  user-select: none;
+  max-width: 86vw;
+  z-index: 90;
 }
 
 .pickup-toast {
@@ -127,6 +131,10 @@ body {
   border-radius: 999px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   animation: floatUpFade 2.1s ease-out forwards;
+  pointer-events: none;
+  user-select: none;
+  max-width: 100%;
+  text-align: center;
 }
 
 .pickup-toast.rare {

@@ -364,13 +364,17 @@ const trollCombatManager = new TrollCombatManager(
   () => {
     castleAndQuarryManager.eatFood(false);
   },
-  (gold, rations, trophiesTotal, title) => {
+  (gold, rations, trophiesTotal, title, source = 'player') => {
     castleAndQuarryManager.addFoodRations(rations, 'troll');
     castleAndQuarryManager.setTrollsSlainBonusCount(trophiesTotal);
-    treasureManager.grantBonusGold(
-      gold,
-      `👹 DEFEATED ${title.toUpperCase()}! +${gold}g, +${rations}🍖 Rations & Troll Slayer Trophy #${trophiesTotal} (+10 Max ❤️ & +5% DMG)!`
-    );
+    if (source === 'turret') {
+      treasureManager.grantBonusGold(gold, '', false);
+    } else {
+      treasureManager.grantBonusGold(
+        gold,
+        `👹 DEFEATED ${title.toUpperCase()}! +${gold}g, +${rations}🍖 Rations & Troll Slayer Trophy #${trophiesTotal} (+10 Max ❤️ & +5% DMG)!`
+      );
+    }
     persistCurrentProgress(true);
   },
   () => {
@@ -539,7 +543,7 @@ castleAndQuarryManager.onWeaponTempered = () => {
 castleAndQuarryManager.findNearestActiveTrollFn = (wx, wz, maxRange) =>
   trollCombatManager.findNearestActiveTrollPosition(wx, wz, maxRange);
 castleAndQuarryManager.tryHitTrollWithSiegeBoltFn = (boltPos, damage) =>
-  trollCombatManager.tryHitTrollWithArrow(boltPos, damage);
+  trollCombatManager.tryHitTrollWithSiegeBolt(boltPos, damage);
 castleAndQuarryManager.onRequestStartCastleSiege = (cx, cz, name) =>
   trollCombatManager.startCastleSiegeWave(cx, cz, name);
 castleAndQuarryManager.isCastleSiegeActiveFn = () => trollCombatManager.isCastleSiegeActive();

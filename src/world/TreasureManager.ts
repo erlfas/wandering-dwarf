@@ -1151,7 +1151,7 @@ export class TreasureManager {
     return true;
   }
 
-  public grantBonusGold(amount: number, toastMessage: string): void {
+  public grantBonusGold(amount: number, toastMessage = '', showToast = true): void {
     const finalAmount =
       amount > 0 && this.hasDurinCrownFn() ? Math.round(amount * 1.25) : amount;
     this.score = Math.max(0, this.score + finalAmount);
@@ -1160,7 +1160,9 @@ export class TreasureManager {
     }
     this.syncHUDTotals();
     this.syncStreakHUD();
-    this.showToast(toastMessage, finalAmount >= 0);
+    if (showToast && toastMessage) {
+      this.showToast(toastMessage, finalAmount >= 0);
+    }
     if (finalAmount !== 0) {
       this.onChestCollected?.(false);
     }
@@ -1254,6 +1256,9 @@ export class TreasureManager {
 
   private showToast(text: string, isHighlight: boolean): void {
     if (!this.toastContainer) return;
+    while (this.toastContainer.children.length >= 3) {
+      this.toastContainer.firstElementChild?.remove();
+    }
     const toast = document.createElement('div');
     toast.className = `pickup-toast ${isHighlight ? 'rare' : ''}`;
     toast.textContent = text;

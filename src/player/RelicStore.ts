@@ -244,6 +244,9 @@ export class RelicStore {
 
   private showToast(message: string, isHighlight: boolean): void {
     if (!this.toastContainer) return;
+    while (this.toastContainer.children.length >= 3) {
+      this.toastContainer.firstElementChild?.remove();
+    }
     const toast = document.createElement('div');
     toast.className = `pickup-toast ${isHighlight ? 'rare' : ''}`;
     toast.textContent = message;

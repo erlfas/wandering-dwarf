@@ -1259,6 +1259,9 @@ export class HutManager {
 
   private showToast(text: string, isRare: boolean): void {
     if (!this.toastContainer) return;
+    while (this.toastContainer.children.length >= 3) {
+      this.toastContainer.firstElementChild?.remove();
+    }
     const toast = document.createElement('div');
     toast.className = `pickup-toast ${isRare ? 'rare' : ''}`;
     toast.textContent = text;
