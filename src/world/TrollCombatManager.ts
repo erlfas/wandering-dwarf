@@ -199,6 +199,13 @@ export class TrollCombatManager {
   public isFishingOrHuntingActiveFn: () => boolean = () => false;
   public onBeforeMeleeSwing?: () => void;
   public onPerfectParryReward?: () => void;
+  public cameraShakeFn?: (intensity: number, duration: number) => void;
+  public onShieldBashSound?: () => void;
+  public tryHitGoblinFallback?: (playerPos: THREE.Vector3, heading: number) => boolean;
+
+  // Active Shield-Bash Counter-Parry Window
+  private counterBashWindowTimer = 0;
+  private counterBashTargetTroll: TrollInstance | null = null;
 
   // ElevenLabs Audio Elements
   private ominousLoopAudio: HTMLAudioElement;
@@ -862,6 +869,10 @@ export class TrollCombatManager {
     const nearest = this.getNearestActiveTroll(playerPos);
 
     if (!nearest || nearest.dist > 3.85) {
+      // Check if we strike an active Goblin in front of us!
+      if (this.tryHitGoblinFallback && this.tryHitGoblinFallback(playerPos, this.dwarf.heading)) {
+        return true;
+      }
       const fwdX = Math.sin(this.dwarf.heading) * 0.95;
       const fwdZ = Math.cos(this.dwarf.heading) * 0.95;
       this.dwarf.spawnBurst(playerPos.x + fwdX, playerPos.y + 0.88, playerPos.z + fwdZ, 6);
@@ -873,6 +884,33 @@ export class TrollCombatManager {
     // Face the troll when striking
     this.dwarf.heading = Math.atan2(troll.pos.x - playerPos.x, troll.pos.z - playerPos.z);
     this.dwarf.root.rotation.y = this.dwarf.heading;
+
+    // Check if we are executing a SHIELD-BASH COUNTER!
+    if (this.counterBashWindowTimer > 0 && this.counterBashTargetTroll === troll && troll.state !== 'dying') {
+      this.counterBashWindowTimer = 0;
+      this.counterBashTargetTroll = null;
+      const counterDmg = Math.round(stats.weaponDamage * 2.5);
+      troll.staggerTimer = 2.8;
+      troll.attackCooldown = 3.2;
+
+      // Heavy kinetic knockback along the strike vector
+      const dx = troll.pos.x - playerPos.x;
+      const dz = troll.pos.z - playerPos.z;
+      const len = Math.hypot(dx, dz) || 1;
+      troll.pos.x += (dx / len) * 4.6;
+      troll.pos.z += (dz / len) * 4.6;
+      troll.pos.y = this.sampleGroundHeight(troll.pos.x, troll.pos.z);
+
+      this.applyDamageToTroll(troll, counterDmg, playerPos, false);
+      this.cameraShakeFn?.(0.55, 0.35);
+      this.onShieldBashSound?.();
+      this.dwarf.spawnBurst(troll.pos.x, troll.pos.y + 1.25, troll.pos.z, 28);
+      this.showToast(
+        `💥 CRUSHING SHIELD-BASH COUNTER! (-${counterDmg} HP) Staggered ${troll.title}!`,
+        true
+      );
+      return true;
+    }
 
     const energyCheck = this.onConsumeCombatEnergy(stats.weaponEnergyCost);
     const isExhausted = !energyCheck.hadEnough || energyCheck.remainingEnergy < 5;
@@ -1278,6 +1316,9 @@ export class TrollCombatManager {
         if (!t.damageDealtInSwing && t.attackTimer <= 0.42) {
           t.damageDealtInSwing = true;
           this.playOneShotPool(this.smashAudioPool, 0.82, () => this.playFallbackSmashSynth());
+          if (dist <= 12.0) {
+            this.cameraShakeFn?.(dist <= 4.0 ? 0.38 : 0.18, 0.22);
+          }
           if (dist <= 3.15) {
             this.resolveTrollStrikeOnDwarf(t);
           }
@@ -1421,9 +1462,12 @@ export class TrollCombatManager {
       const reflectDmg = stats.shieldId === 'mithril_aegis' ? 36 : 25;
       troll.staggerTimer = 1.65;
       troll.attackCooldown = 2.4;
+      this.counterBashWindowTimer = 1.1;
+      this.counterBashTargetTroll = troll;
+      this.cameraShakeFn?.(0.35, 0.22);
       this.applyDamageToTroll(troll, reflectDmg, this.dwarf.root.position, false);
       this.showToast(
-        `⚡ PERFECT SHIELD PARRY! Deflected ${troll.title} for 0 ❤️ damage, +15⚡ Strength & reflected ${reflectDmg} DMG!`,
+        `⚡ PERFECT SHIELD PARRY! Deflected ${troll.title} — Press Attack (<kbd>Click</kbd>/<kbd>E</kbd>) for SHIELD-BASH COUNTER!`,
         true
       );
       return;

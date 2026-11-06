@@ -13,6 +13,7 @@ import { CastleInteriorManager } from '../world/CastleInteriorManager';
 import { VolcanoManager } from '../world/VolcanoManager';
 import { TrollCombatManager } from '../world/TrollCombatManager';
 import { LivingWorldManager } from '../world/LivingWorldManager';
+import { MountainTraversalManager } from '../world/MountainTraversalManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -73,11 +74,22 @@ export class ExplorerCamera {
   private volcanoManager?: VolcanoManager;
   private trollCombatManager?: TrollCombatManager;
   private livingWorldManager?: LivingWorldManager;
+  private mountainTraversalManager?: MountainTraversalManager;
   public onGroundSlamImpact?: (pos: THREE.Vector3) => void;
   public onSurfRamCollision?: (pos: THREE.Vector3, speed: number, heading: number) => void;
   public onCatchThermalUpdraft?: (pos: THREE.Vector3) => void;
   public lastAimForward = 0;
   public lastAimRight = 0;
+
+  // External velocity impulse (Grapple fling, explosions, speed boosts)
+  private impulseX = 0;
+  private impulseZ = 0;
+
+  // Screen shake and dynamic FOV zoom
+  private shakeTimer = 0;
+  private shakeDuration = 0;
+  private shakeIntensity = 0;
+  private targetFov = 50;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -92,6 +104,16 @@ export class ExplorerCamera {
     this.camera = camera;
     this.resetToOrigin();
     this.bindEvents(domElement);
+  }
+
+  public triggerCameraShake(intensity = 0.35, duration = 0.25): void {
+    this.shakeIntensity = Math.max(this.shakeIntensity, intensity);
+    this.shakeDuration = Math.max(this.shakeDuration, duration);
+    this.shakeTimer = this.shakeDuration;
+  }
+
+  public setTargetFov(fov: number): void {
+    this.targetFov = fov;
   }
 
   public setRelicStore(store: RelicStore): void {
@@ -134,6 +156,19 @@ export class ExplorerCamera {
     this.livingWorldManager = lwm;
   }
 
+  public setMountainTraversalManager(mtm: MountainTraversalManager): void {
+    this.mountainTraversalManager = mtm;
+  }
+
+  public applyImpulse(ix: number, iy: number, iz: number): void {
+    this.impulseX += ix;
+    this.impulseZ += iz;
+    if (iy > 0) {
+      this.velY = Math.max(this.velY, iy);
+      this.heightAboveGround = Math.max(this.heightAboveGround, 0.45);
+    }
+  }
+
   public isSprintingNow(): boolean {
     return (
       (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) &&
@@ -143,6 +178,10 @@ export class ExplorerCamera {
 
   public isAttackingOrAirborne(): boolean {
     return this.isSliding || this.isGroundSlamming || this.heightAboveGround > 0.25;
+  }
+
+  public isAirborne(): boolean {
+    return this.heightAboveGround > 0.45 || this.isGliding;
   }
 
   public applyHazardBump(): void {
@@ -155,10 +194,16 @@ export class ExplorerCamera {
     if (this.castleInteriorManager?.isInsideCastle() || this.hutManager?.isInsideHut()) {
       return '';
     }
+    if (this.mountainTraversalManager?.isGrappleActive()) return '🪝 Grapple Reel!';
+    if (this.mountainTraversalManager?.isZiplineRiding()) return '🚠 Zipline!';
     if (this.isGroundSlamming) return '💥 Ground-Slam Plunge!';
     if (this.isInThermalUpdraft) return `🔥 Thermal Updraft (+${Math.max(0, this.velY).toFixed(0)}m/s)!`;
     if (this.isGliding) return '🪂 Gliding';
     if (this.isSliding) return `🛡️ Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
+    const speedMult = this.mountainTraversalManager?.getSpeedMultiplier() ?? 1.0;
+    if (speedMult > 1.05) {
+      return `⚡ Mach Slalom (${this.currentSpeed.toFixed(0)}m/s • +${Math.round((speedMult - 1) * 100)}%)`;
+    }
     const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
     if (this.isTrailblazing && this.currentSpeed > 4.0) {
       const pct = this.relicStore?.has('strider_boots') ? '+45%' : '+25%';
@@ -446,6 +491,9 @@ export class ExplorerCamera {
     if (this.landmarkManager?.hasCampfireBuff()) {
       baseSpeed *= 1.2;
     }
+    if (this.mountainTraversalManager) {
+      baseSpeed *= this.mountainTraversalManager.getSpeedMultiplier();
+    }
     if (this.castleManager) {
       baseSpeed *= this.castleManager.getCarrySpeedMultiplier();
     }
@@ -578,6 +626,7 @@ export class ExplorerCamera {
         );
         if (ramResult?.hit) {
           this.relicStore?.playSurfRamSound();
+          this.triggerCameraShake(0.42, 0.25);
           this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z, 22);
           this.slideSpeed = Math.max(12.0, this.slideSpeed * 0.82);
           this.castleManager?.showToast(
@@ -592,6 +641,7 @@ export class ExplorerCamera {
           this.livingWorldManager?.checkSurfRamGoblin(this.playerPos, 2.2) ?? false;
         if (goblinSmashed) {
           this.relicStore?.playSurfRamSound();
+          this.triggerCameraShake(0.32, 0.18);
           this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z, 16);
         }
       }
@@ -639,6 +689,15 @@ export class ExplorerCamera {
         this.castleManager?.resolveObstacleCollision(this.playerPos, 0.38);
         this.volcanoManager?.resolveCalderaRimCollision(this.playerPos);
       }
+    }
+
+    if (Math.abs(this.impulseX) > 0.01 || Math.abs(this.impulseZ) > 0.01) {
+      this.playerPos.x += this.impulseX * dt;
+      this.playerPos.z += this.impulseZ * dt;
+      const damp = Math.exp(-2.5 * dt);
+      this.impulseX *= damp;
+      this.impulseZ *= damp;
+      actualSpeed = Math.max(actualSpeed, Math.hypot(this.impulseX, this.impulseZ));
     }
 
     this.currentSpeed = actualSpeed;
@@ -724,9 +783,15 @@ export class ExplorerCamera {
           this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.25, this.playerPos.z, 2);
         }
       } else if (!this.isInThermalUpdraft) {
-        const gravity = this.isGliding ? (hasSpringGreaves ? 4.2 : 7.5) : 22.5;
+        const isBulletTime = this.huntingManager?.isBulletTimeActive() ?? false;
+        let gravity = this.isGliding ? (hasSpringGreaves ? 4.2 : 7.5) : 22.5;
+        if (isBulletTime) {
+          gravity *= 0.18; // Dramatic aerial slow-fall hover during bow draw
+        }
         this.velY -= gravity * dt;
-        if (this.isGliding) {
+        if (isBulletTime && this.velY < -1.1) {
+          this.velY = -1.1; // Float in air while aiming!
+        } else if (this.isGliding) {
           const terminalGlideVel = hasSpringGreaves ? -1.85 : -3.1;
           if (this.velY < terminalGlideVel) {
             this.velY = terminalGlideVel;
@@ -744,6 +809,7 @@ export class ExplorerCamera {
           this.pitch = Math.min(Math.PI * 0.44, this.pitch + 0.045);
           this.dwarf.triggerGroundSlamShockwave();
           this.relicStore?.playGroundSlamImpactSound();
+          this.triggerCameraShake(0.52, 0.32);
 
           const slamRadius = hasSlideShield ? 7.6 : 6.5;
           const slamDamage = hasSlideShield ? 95 : 80;
@@ -841,6 +907,15 @@ export class ExplorerCamera {
       this.followActive = false;
     }
 
+    // Dynamic FOV interpolation (e.g. zooming in during mid-air Bow Bullet-Time)
+    if (Math.abs(this.camera.fov - this.targetFov) > 0.05) {
+      this.camera.fov += (this.targetFov - this.camera.fov) * Math.min(1.0, dt * 8.0);
+      this.camera.updateProjectionMatrix();
+    } else if (this.camera.fov !== this.targetFov) {
+      this.camera.fov = this.targetFov;
+      this.camera.updateProjectionMatrix();
+    }
+
     // Position camera on spherical orbit behind target
     const sinYaw = Math.sin(this.yaw);
     const cosYaw = Math.cos(this.yaw);
@@ -848,9 +923,29 @@ export class ExplorerCamera {
     const horizDist = effDist * Math.cos(this.pitch);
     const vertDist = effDist * Math.sin(this.pitch);
 
-    const desiredCamX = this.smoothedTarget.x + sinYaw * horizDist;
-    const desiredCamZ = this.smoothedTarget.z + cosYaw * horizDist;
+    let desiredCamX = this.smoothedTarget.x + sinYaw * horizDist;
+    let desiredCamZ = this.smoothedTarget.z + cosYaw * horizDist;
     let desiredCamY = this.smoothedTarget.y + vertDist;
+
+    // Apply procedural camera shake if active
+    if (this.shakeTimer > 0) {
+      this.shakeTimer = Math.max(0, this.shakeTimer - dt);
+      const frac = this.shakeDuration > 0 ? this.shakeTimer / this.shakeDuration : 0;
+      const curIntensity = this.shakeIntensity * frac;
+      const shakeX = (Math.random() - 0.5) * 2 * curIntensity;
+      const shakeY = (Math.random() - 0.5) * 2 * curIntensity;
+      const shakeZ = (Math.random() - 0.5) * 2 * curIntensity;
+      desiredCamX += shakeX;
+      desiredCamY += shakeY;
+      desiredCamZ += shakeZ;
+      this.smoothedTarget.x += shakeX * 0.45;
+      this.smoothedTarget.y += shakeY * 0.45;
+      this.smoothedTarget.z += shakeZ * 0.45;
+      if (this.shakeTimer <= 0) {
+        this.shakeIntensity = 0;
+        this.shakeDuration = 0;
+      }
+    }
 
     // Prevent camera from clipping below terrain surface or hut/castle floor
     const camGroundY = insideInterior

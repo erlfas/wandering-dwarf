@@ -18,6 +18,9 @@ import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { CastleInteriorManager } from './world/CastleInteriorManager';
 import { TrollCombatManager } from './world/TrollCombatManager';
+import { MountainTraversalManager } from './world/MountainTraversalManager';
+import { DynamicWorldEventManager } from './world/DynamicWorldEventManager';
+import { DwarvenUndergroundManager } from './world/DwarvenUndergroundManager';
 import { VOLCANO_HEAT_HAZARD_RADIUS, VolcanoManager } from './world/VolcanoManager';
 import {
   AssignmentManager,
@@ -402,6 +405,37 @@ const trollCombatManager = new TrollCombatManager(
 scene.add(trollCombatManager.group);
 explorer.setTrollCombatManager(trollCombatManager);
 
+const mountainTraversalManager = new MountainTraversalManager(
+  config,
+  noise,
+  chunkManager,
+  dwarf,
+  relicStore
+);
+scene.add(mountainTraversalManager.group);
+explorer.setMountainTraversalManager(mountainTraversalManager);
+mountainTraversalManager.onCameraShake = (intensity, duration) =>
+  explorer.triggerCameraShake(intensity, duration);
+mountainTraversalManager.onGrantBonusGold = (amt, msg) =>
+  treasureManager.grantBonusGold(amt, msg);
+mountainTraversalManager.onGrappleBoost = (ix, iy, iz) =>
+  explorer.applyImpulse(ix, iy, iz);
+
+const dynamicEventManager = new DynamicWorldEventManager(
+  config,
+  noise,
+  chunkManager,
+  dwarf,
+  relicStore
+);
+scene.add(dynamicEventManager.group);
+dynamicEventManager.onCameraShake = (intensity, duration) =>
+  explorer.triggerCameraShake(intensity, duration);
+dynamicEventManager.onGrantBonusGold = (amt, msg) =>
+  treasureManager.grantBonusGold(amt, msg);
+dynamicEventManager.onApplyPlayerDamage = (damage, source) =>
+  castleAndQuarryManager.applyPlayerDamage(damage, source);
+
 const exteriorSceneGroups: THREE.Object3D[] = [
   chunkManager.group,
   treasureManager.group,
@@ -413,6 +447,8 @@ const exteriorSceneGroups: THREE.Object3D[] = [
   huntingManager.group,
   castleAndQuarryManager.group,
   trollCombatManager.group,
+  mountainTraversalManager.group,
+  dynamicEventManager.group,
 ];
 
 hutManager = new HutManager(
@@ -552,6 +588,23 @@ landmarkManager.getCompletedCastleWaypointsFn = () =>
   castleAndQuarryManager.getCompletedCastleWaypoints();
 landmarkManager.isInsideCastleFn = () => castleInteriorManager.isInsideCastle();
 
+const undergroundManager = new DwarvenUndergroundManager(
+  config,
+  noise,
+  chunkManager,
+  dwarf,
+  relicStore,
+  [...exteriorSceneGroups, hutManager.group, castleInteriorManager.group],
+  (x, z, heading, yaw, pitch, distance) => {
+    explorer.setPose(x, z, heading, yaw, pitch, distance);
+  }
+);
+scene.add(undergroundManager.group);
+undergroundManager.onCameraShake = (intensity, duration) =>
+  explorer.triggerCameraShake(intensity, duration);
+undergroundManager.onGrantBonusGold = (amt, msg) =>
+  treasureManager.grantBonusGold(amt, msg);
+
 const waterReflection = new WaterReflectionController(chunkManager.waterUniforms);
 waterReflection.excludeFromReflection.push(
   dwarf.trailPoints,
@@ -562,6 +615,9 @@ waterReflection.excludeFromReflection.push(
   huntingManager.group,
   livingWorldManager.group,
   trollCombatManager.group,
+  mountainTraversalManager.group,
+  dynamicEventManager.group,
+  undergroundManager.group,
   hutManager.group,
   castleInteriorManager.group
 );
@@ -586,8 +642,35 @@ trollCombatManager.onBeforeMeleeSwing = () => {
 trollCombatManager.onPerfectParryReward = () => {
   castleAndQuarryManager.restoreEnergyAndHealth(15, 5);
 };
+trollCombatManager.cameraShakeFn = (intensity, duration) =>
+  explorer.triggerCameraShake(intensity, duration);
+trollCombatManager.onShieldBashSound = () => relicStore.playShieldBashSound();
+trollCombatManager.tryHitGoblinFallback = (pos, heading) => {
+  const hitGob = livingWorldManager.tryHitGoblinWithMelee(pos, heading, 40);
+  if (hitGob) return true;
+  const hitTitan = dynamicEventManager.tryHitTitanWithMelee(pos, 60);
+  if (hitTitan) return true;
+  const minedMeteor = dynamicEventManager.tryMineMeteorCore(pos);
+  if (minedMeteor) return true;
+  return undergroundManager.tryMineOre(pos);
+};
+
 huntingManager.onTryHitTrollWithArrow = (arrowPos) =>
   trollCombatManager.tryHitTrollWithArrow(arrowPos, 38);
+huntingManager.onTryHitGoblinWithArrow = (arrowPos) =>
+  livingWorldManager.tryHitGoblinWithArrow(arrowPos, 50);
+huntingManager.onTryHitTitanWithArrow = (arrowPos) =>
+  dynamicEventManager.tryHitTitanWithArrow(arrowPos, 45);
+huntingManager.isAirborneFn = () => explorer.isAirborne();
+huntingManager.onBulletTimeStateChange = (active) => explorer.setTargetFov(active ? 42 : 50);
+
+livingWorldManager.cameraShakeFn = (intensity, duration) =>
+  explorer.triggerCameraShake(intensity, duration);
+livingWorldManager.onApplyPlayerDamage = (damage, source) =>
+  castleAndQuarryManager.applyPlayerDamage(damage, source);
+livingWorldManager.onShieldBlockSound = () => relicStore.playShieldBashSound();
+livingWorldManager.onGrantFoodRation = (count) =>
+  castleAndQuarryManager.addFoodRations(count, 'troll');
 
 let windAndSlopeFeats = savedProgress?.windAndSlopeFeats ?? 0;
 explorer.onCatchThermalUpdraft = () => {
@@ -1477,6 +1560,9 @@ function animate(): void {
     return;
   }
 
+  const isBulletTime = huntingManager.isBulletTimeActive();
+  const simDt = isBulletTime ? rawDt * 0.35 : rawDt;
+
   const dt = rawDt;
   simElapsedTime += dt;
   const elapsedTime = simElapsedTime;
@@ -1487,7 +1573,7 @@ function animate(): void {
   hutManager.update(dt, elapsedTime, explorer.playerPos);
   castleInteriorManager.update(dt, elapsedTime, explorer.playerPos);
   castleAndQuarryManager.update(
-    dt,
+    simDt,
     elapsedTime,
     explorer.playerPos,
     explorer.isSprintingNow()
@@ -1498,7 +1584,10 @@ function animate(): void {
   let py = explorer.playerPos.y;
   let pz = explorer.playerPos.z;
   const hasLodestone = relicStore.has('lodestone_amulet');
-  let insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
+  let insideInterior =
+    hutManager.isInsideHut() ||
+    castleInteriorManager.isInsideCastle() ||
+    undergroundManager.isUnderground();
   if (insideInterior !== wasInsideInterior) {
     wasInsideInterior = insideInterior;
     livingWorldManager.setInsideInterior(insideInterior);
@@ -1506,13 +1595,14 @@ function animate(): void {
     lastShadowX = Number.NaN;
   }
 
-  trollCombatManager.update(dt, elapsedTime, explorer.playerPos, camera.position);
+  undergroundManager.update(dt, elapsedTime, explorer.playerPos);
+  trollCombatManager.update(simDt, elapsedTime, explorer.playerPos, camera.position);
   bgm.setNightDangerMode(
     !insideInterior && (trollCombatManager.isNightNow() || trollCombatManager.hasActiveTrolls()),
     !insideInterior && trollCombatManager.isTrollAggroOnPlayer(explorer.playerPos)
   );
   volcanoManager.update(
-    dt,
+    simDt,
     elapsedTime,
     explorer.playerPos,
     insideInterior,
@@ -1524,16 +1614,19 @@ function animate(): void {
   px = explorer.playerPos.x;
   py = explorer.playerPos.y;
   pz = explorer.playerPos.z;
-  insideInterior = hutManager.isInsideHut() || castleInteriorManager.isInsideCastle();
+  insideInterior =
+    hutManager.isInsideHut() ||
+    castleInteriorManager.isInsideCastle() ||
+    undergroundManager.isUnderground();
 
   if (!insideInterior) {
     chunkManager.update(px, py, pz, elapsedTime, false);
     worldMap.updateDiscovery(px, pz, false);
-    treasureManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
-    landmarkManager.update(dt, elapsedTime, explorer.playerPos);
-    challengeManager.update(dt, elapsedTime, explorer.playerPos, hasLodestone);
+    treasureManager.update(simDt, elapsedTime, explorer.playerPos, hasLodestone);
+    landmarkManager.update(simDt, elapsedTime, explorer.playerPos);
+    challengeManager.update(simDt, elapsedTime, explorer.playerPos, hasLodestone);
     livingWorldManager.update(
-      dt,
+      simDt,
       elapsedTime,
       explorer.playerPos,
       explorer.isAttackingOrAirborne(),
@@ -1547,7 +1640,11 @@ function animate(): void {
       explorer.lastAimRight
     );
     huntingManager.update(dt, elapsedTime, explorer.playerPos);
+    mountainTraversalManager.update(simDt, elapsedTime, explorer.playerPos, camera, false);
+    dynamicEventManager.update(simDt, elapsedTime, explorer.playerPos, false);
   } else {
+    mountainTraversalManager.update(simDt, elapsedTime, explorer.playerPos, camera, true);
+    dynamicEventManager.update(simDt, elapsedTime, explorer.playerPos, true);
     if (challengeManager.isChallengeActive()) {
       challengeManager.abandonChallenge(false);
     }

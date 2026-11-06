@@ -45,11 +45,15 @@ export interface GoblinBones {
   baseRightForeArmZ: number;
 }
 
-interface GoblinHazardInstance {
+export type GoblinRole = 'cutpurse' | 'bombardier';
+
+export interface GoblinHazardInstance {
+  role: GoblinRole;
   centerPos: THREE.Vector3;
   pos: THREE.Vector3;
   orbitAngle: number;
   orbitRadius: number;
+  bombCooldown: number;
   defeated: boolean;
   flyTime: number;
   mesh: THREE.Group;
@@ -61,11 +65,22 @@ interface GoblinHazardInstance {
   isNearLOD?: boolean;
 }
 
+export interface GoblinBomb {
+  active: boolean;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  fuseTimer: number;
+  mesh: THREE.Group;
+  bodyMesh: THREE.Mesh;
+  sparkMesh: THREE.Mesh;
+}
+
 interface ChunkLivingEntities {
   starFragment?: StarFragmentInstance;
   birdFlock?: BirdFlockInstance;
   spiritRabbit?: SpiritRabbitInstance;
   goblin?: GoblinHazardInstance;
+  goblins?: GoblinHazardInstance[];
 }
 
 interface SharedLivingAssets {
@@ -76,6 +91,8 @@ interface SharedLivingAssets {
   matGoblinSkin: THREE.MeshStandardMaterial;
   matGoblinTunic: THREE.MeshStandardMaterial;
   matGoldSack: THREE.MeshStandardMaterial;
+  matBomb: THREE.MeshStandardMaterial;
+  matBombFuse: THREE.MeshBasicMaterial;
   starCrystalGeo: THREE.BufferGeometry;
   starRingGeo: THREE.BufferGeometry;
   birdGeo: THREE.BufferGeometry;
@@ -83,6 +100,7 @@ interface SharedLivingAssets {
   spiritRabbitGeo: THREE.BufferGeometry;
   goblinBodyGeo: THREE.BufferGeometry;
   goblinHeadGeo: THREE.BufferGeometry;
+  bombGeo: THREE.BufferGeometry;
 }
 
 let sharedGoblinTemplate: THREE.Group | null = null;
@@ -337,6 +355,25 @@ function getSharedLivingAssets(): SharedLivingAssets {
   const goblinHeadGeo = new THREE.SphereGeometry(0.24, 8, 8);
   goblinHeadGeo.translate(0, 0.82, 0);
 
+  const matBomb = new THREE.MeshStandardMaterial({
+    color: 0x222222,
+    roughness: 0.65,
+    metalness: 0.55,
+  });
+
+  const matBombFuse = new THREE.MeshBasicMaterial({
+    color: 0xff9900,
+  });
+
+  const bombBall = new THREE.SphereGeometry(0.22, 8, 6);
+  const fuseCap = new THREE.CylinderGeometry(0.04, 0.05, 0.09, 5);
+  fuseCap.translate(0, 0.22, 0);
+  const bombGeo = mergeGeometries([bombBall, fuseCap], false);
+  bombBall.dispose();
+  fuseCap.dispose();
+  bombGeo.computeBoundingBox();
+  bombGeo.computeBoundingSphere();
+
   sharedLivingAssets = {
     matStarCrystal,
     matStarRing,
@@ -345,6 +382,8 @@ function getSharedLivingAssets(): SharedLivingAssets {
     matGoblinSkin,
     matGoblinTunic,
     matGoldSack,
+    matBomb,
+    matBombFuse,
     starCrystalGeo,
     starRingGeo,
     birdGeo,
@@ -352,6 +391,7 @@ function getSharedLivingAssets(): SharedLivingAssets {
     spiritRabbitGeo,
     goblinBodyGeo,
     goblinHeadGeo,
+    bombGeo,
   };
   return sharedLivingAssets;
 }
@@ -378,6 +418,14 @@ export class LivingWorldManager {
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
   private readonly skyHorizonColor: THREE.Color;
 
+  // Active Goblin Bombs Pool
+  private bombPool: GoblinBomb[] = [];
+
+  public cameraShakeFn?: (intensity: number, duration: number) => void;
+  public onApplyPlayerDamage?: (damage: number, sourceTitle: string) => void;
+  public onShieldBlockSound?: () => void;
+  public onGrantFoodRation?: (count: number) => void;
+
   constructor(
     private config: WorldConfig,
     private noise: TerrainNoise,
@@ -397,35 +445,59 @@ export class LivingWorldManager {
     this.buildStarfieldDome();
     this.attachDwarfLantern();
 
+    // Initialize 8 reusable Goblin Bombs in pool
+    const assets = getSharedLivingAssets();
+    for (let i = 0; i < 8; i++) {
+      const bombGroup = new THREE.Group();
+      bombGroup.visible = false;
+      const body = new THREE.Mesh(assets.bombGeo, assets.matBomb.clone());
+      body.castShadow = true;
+      bombGroup.add(body);
+      const spark = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), assets.matBombFuse);
+      spark.position.set(0, 0.28, 0);
+      bombGroup.add(spark);
+      this.group.add(bombGroup);
+      this.bombPool.push({
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        fuseTimer: 0,
+        mesh: bombGroup,
+        bodyMesh: body,
+        sparkMesh: spark,
+      });
+    }
+
     loadGoblinModel(() => {
       for (const ent of this.activeChunks.values()) {
-        if (ent.goblin) {
-          if (!ent.goblin.modelGroup) {
+        const gobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+        for (const g of gobs) {
+          if (!g.modelGroup) {
             const inst = createGoblinInstance();
             if (inst) {
-              ent.goblin.modelGroup = inst.group;
-              ent.goblin.bones = inst.bones;
-              ent.goblin.mesh.add(inst.group);
-              if (ent.goblin.glbMesh) ent.goblin.glbMesh.visible = false;
+              g.modelGroup = inst.group;
+              g.bones = inst.bones;
+              g.mesh.add(inst.group);
+              if (g.glbMesh) g.glbMesh.visible = false;
             }
           }
-          if (ent.goblin.modelGroup) {
-            if (ent.goblin.isNearLOD) {
-              ent.goblin.modelGroup.visible = true;
-              ent.goblin.bodyMesh.visible = false;
-              ent.goblin.headMesh.visible = false;
+          if (g.modelGroup) {
+            if (g.isNearLOD) {
+              g.modelGroup.visible = true;
+              g.bodyMesh.visible = false;
+              g.headMesh.visible = false;
             } else {
-              ent.goblin.modelGroup.visible = false;
-              ent.goblin.bodyMesh.visible = true;
-              ent.goblin.headMesh.visible = true;
+              g.modelGroup.visible = false;
+              g.bodyMesh.visible = true;
+              g.headMesh.visible = true;
             }
-          } else if (ent.goblin.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
-            ent.goblin.glbMesh.geometry = sharedGoblinGeo;
-            ent.goblin.glbMesh.material = sharedGoblinMat;
-            if (ent.goblin.isNearLOD) {
-              ent.goblin.glbMesh.visible = true;
-              ent.goblin.bodyMesh.visible = false;
-              ent.goblin.headMesh.visible = false;
+          } else if (g.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
+            g.glbMesh.geometry = sharedGoblinGeo;
+            g.glbMesh.material = sharedGoblinMat;
+            if (g.isNearLOD) {
+              g.glbMesh.visible = true;
+              g.bodyMesh.visible = false;
+              g.headMesh.visible = false;
             }
           }
         }
@@ -703,29 +775,56 @@ export class LivingWorldManager {
         }
       }
 
-      // D) Mischievous Goblin Cutpurses (Smash with C-Dash or Jump for +125 Gold!)
-      if (ent.goblin && ent.goblin.mesh.visible) {
-        const g = ent.goblin;
+      // D) Mischievous Goblin Cutpurses & Bombardiers
+      const chunkGoblins = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGoblins) {
+        if (!g.mesh.visible) continue;
         if (!g.defeated) {
           const cdx = playerPos.x - g.centerPos.x;
           const cdz = playerPos.z - g.centerPos.z;
           const centerDistSq = cdx * cdx + cdz * cdz;
-          const maxSimRadius = 60 + g.orbitRadius;
+          const maxSimRadius = 65 + g.orbitRadius;
           if (centerDistSq <= maxSimRadius * maxSimRadius) {
-            g.orbitAngle += dt * 1.65;
-            g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
-            g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
-            g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
-
-            const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
-            g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
-            g.mesh.rotation.y = -g.orbitAngle;
-            g.mesh.updateMatrix();
-            g.mesh.updateMatrixWorld(true);
-
             const dx = playerPos.x - g.pos.x;
             const dz = playerPos.z - g.pos.z;
             const dSq = dx * dx + dz * dz;
+            const dist = Math.sqrt(dSq);
+
+            if (g.role === 'bombardier') {
+              // Bombardier faces player and maintains tactical medium range
+              g.mesh.rotation.y = Math.atan2(dx, dz);
+              if (dist < 10.0) {
+                // Back away from player
+                g.pos.x -= (dx / (dist || 1)) * dt * 2.8;
+                g.pos.z -= (dz / (dist || 1)) * dt * 2.8;
+              } else if (dist > 22.0) {
+                // Step closer into throwing range
+                g.pos.x += (dx / (dist || 1)) * dt * 2.2;
+                g.pos.z += (dz / (dist || 1)) * dt * 2.2;
+              }
+              g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
+              g.mesh.position.set(g.pos.x, g.pos.y, g.pos.z);
+              g.mesh.updateMatrix();
+              g.mesh.updateMatrixWorld(true);
+
+              if (g.bombCooldown > 0) {
+                g.bombCooldown -= dt;
+              } else if (dist >= 7.5 && dist <= 26.0) {
+                this.throwGoblinBomb(g, playerPos);
+              }
+            } else {
+              // Cutpurse patrols and darts around
+              g.orbitAngle += dt * 1.65;
+              g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
+              g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
+              g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
+
+              const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
+              g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
+              g.mesh.rotation.y = -g.orbitAngle;
+              g.mesh.updateMatrix();
+              g.mesh.updateMatrixWorld(true);
+            }
 
             // Close-range GLB LOD toggle (dist <= 45m): animated 3D goblin model, procedural fallback for far range
             const nearLOD = dSq <= 45 * 45;
@@ -779,23 +878,29 @@ export class LivingWorldManager {
                 g.headMesh.castShadow = castShadow;
               }
             }
-            if (dSq < 1.65 * 1.65) {
+
+            if (dSq < 1.75 * 1.75) {
               if (isPlayerAttackingOrAirborne) {
-                g.defeated = true;
-                this.playStarChime();
-                this.onGrantOrDeductGold(
-                  125,
-                  '🛡️ Smashed Goblin Cutpurse! +125 Gold!',
-                  true
+                this.defeatGoblin(
+                  g,
+                  `🛡️ Smashed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Cutpurse'}! +125 Gold & +1 Food Ration`
                 );
               } else if (this.hazardHitCooldown <= 0) {
-                this.hazardHitCooldown = 2.4;
-                this.playHazardBumpSound();
-                this.onGrantOrDeductGold(
-                  -25,
-                  '👺 Goblin Cutpurse! -25 Gold (Press C/Ctrl or Space to Smash!)',
-                  false
-                );
+                if (this.dwarf.isShieldBlocking()) {
+                  this.hazardHitCooldown = 1.0;
+                  this.dwarf.triggerBlockImpact();
+                  this.onShieldBlockSound?.();
+                  this.onGrantOrDeductGold(0, '🛡️ Shield Deflected Goblin Dagger Strike!', true);
+                } else {
+                  this.hazardHitCooldown = 2.4;
+                  this.playHazardBumpSound();
+                  this.onApplyPlayerDamage?.(12, 'Goblin Raider');
+                  this.onGrantOrDeductGold(
+                    -25,
+                    '👺 Goblin Raider Stole 25 Gold! (-12 ❤️) Hold Shield (Shift) to Block!',
+                    false
+                  );
+                }
               }
             }
           } else {
@@ -820,6 +925,186 @@ export class LivingWorldManager {
         }
       }
     }
+
+    // 4. Update Flying & Bouncing Explosive Goblin Bombs
+    for (const bomb of this.bombPool) {
+      if (!bomb.active) continue;
+      bomb.fuseTimer -= dt;
+      bomb.vel.y -= 18.0 * dt;
+      bomb.pos.addScaledVector(bomb.vel, dt);
+
+      const gy = this.sampleGroundHeight(bomb.pos.x, bomb.pos.z);
+      if (bomb.pos.y <= gy + 0.22) {
+        bomb.pos.y = gy + 0.22;
+        if (bomb.vel.y < -1.1) {
+          bomb.vel.y = -bomb.vel.y * 0.45;
+          bomb.vel.x *= 0.65;
+          bomb.vel.z *= 0.65;
+        } else {
+          bomb.vel.y = 0;
+          bomb.vel.x *= 0.85;
+          bomb.vel.z *= 0.85;
+        }
+      }
+
+      bomb.mesh.position.copy(bomb.pos);
+      bomb.mesh.updateMatrix();
+      bomb.mesh.updateMatrixWorld(true);
+      bomb.sparkMesh.scale.setScalar(1.0 + Math.sin(elapsedTime * 28.0) * 0.4);
+
+      if (bomb.fuseTimer <= 0.45) {
+        (bomb.bodyMesh.material as THREE.MeshStandardMaterial).emissive.setHex(
+          Math.sin(elapsedTime * 24.0) > 0 ? 0xff2200 : 0x000000
+        );
+      } else {
+        (bomb.bodyMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
+      }
+
+      if (bomb.fuseTimer <= 0) {
+        this.detonateBomb(bomb, playerPos);
+      }
+    }
+  }
+
+  private throwGoblinBomb(g: GoblinHazardInstance, playerPos: THREE.Vector3): void {
+    const bomb = this.bombPool.find((b) => !b.active);
+    if (!bomb) return;
+    g.bombCooldown = 4.2 + Math.random() * 1.6;
+    bomb.active = true;
+    bomb.pos.set(g.pos.x, g.pos.y + 0.88, g.pos.z);
+    const dx = playerPos.x - bomb.pos.x;
+    const dz = playerPos.z - bomb.pos.z;
+    const d = Math.hypot(dx, dz);
+    const flightTime = Math.max(0.65, d / 14.5);
+    const gravity = 18.0;
+    bomb.vel.set(
+      dx / flightTime,
+      (playerPos.y + 0.3 - bomb.pos.y) / flightTime + 0.5 * gravity * flightTime,
+      dz / flightTime
+    );
+    bomb.fuseTimer = 1.35;
+    bomb.mesh.position.copy(bomb.pos);
+    bomb.mesh.visible = true;
+    this.playBombFuseSizzleSound();
+    this.onGrantOrDeductGold(
+      0,
+      '💣 Goblin Bombardier threw an Explosive Bomb! Move or Block with Shield!',
+      false
+    );
+  }
+
+  private detonateBomb(bomb: GoblinBomb, playerPos: THREE.Vector3): void {
+    bomb.active = false;
+    bomb.mesh.visible = false;
+    (bomb.bodyMesh.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
+
+    this.playBombExplosionSound();
+    this.cameraShakeFn?.(0.48, 0.3);
+    this.dwarf.spawnBurst(bomb.pos.x, bomb.pos.y + 0.25, bomb.pos.z, 28);
+
+    const dx = playerPos.x - bomb.pos.x;
+    const dz = playerPos.z - bomb.pos.z;
+    const dy = playerPos.y - bomb.pos.y;
+    const distSq = dx * dx + dz * dz;
+
+    if (distSq <= 4.2 * 4.2 && Math.abs(dy) <= 3.0) {
+      if (this.dwarf.isShieldBlocking()) {
+        this.dwarf.triggerBlockImpact();
+        this.onShieldBlockSound?.();
+        this.onGrantOrDeductGold(0, '🛡️ Shield Blocked Goblin Bomb Blast! (0 ❤️ damage)', true);
+      } else {
+        this.onApplyPlayerDamage?.(22, 'Goblin Bomb Explosion');
+        this.onGrantOrDeductGold(
+          -15,
+          '💥 Goblin Bomb Explosion! (-22 ❤️) Hold Shield (Shift) to Block Bombs!',
+          false
+        );
+      }
+    }
+
+    // Damage any other nearby goblins in blast radius
+    for (const ent of this.activeChunks.values()) {
+      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGobs) {
+        if (!g.defeated && g.mesh.visible) {
+          const gdx = g.pos.x - bomb.pos.x;
+          const gdz = g.pos.z - bomb.pos.z;
+          if (gdx * gdx + gdz * gdz <= 4.2 * 4.2) {
+            this.defeatGoblin(g, '💥 Friendly-Fire: Goblin Blown Up by Bomb! +125 Gold');
+          }
+        }
+      }
+    }
+  }
+
+  private defeatGoblin(g: GoblinHazardInstance, message: string): void {
+    g.defeated = true;
+    g.flyTime = 0;
+    this.playStarChime();
+    this.dwarf.spawnBurst(g.pos.x, g.pos.y + 0.8, g.pos.z, 20);
+    this.onGrantOrDeductGold(125, message, true);
+    this.onGrantFoodRation?.(1);
+  }
+
+  public tryHitGoblinWithArrow(arrowPos: THREE.Vector3, _damage = 50): boolean {
+    // Check active bombs first! Shooting a bomb detonates it!
+    for (const bomb of this.bombPool) {
+      if (bomb.active) {
+        const dx = arrowPos.x - bomb.pos.x;
+        const dz = arrowPos.z - bomb.pos.z;
+        const dy = arrowPos.y - bomb.pos.y;
+        if (dx * dx + dz * dz <= 1.25 * 1.25 && Math.abs(dy) <= 1.2) {
+          this.detonateBomb(bomb, this.dwarf.root.position);
+          return true;
+        }
+      }
+    }
+
+    for (const ent of this.activeChunks.values()) {
+      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGobs) {
+        if (!g.defeated && g.mesh.visible) {
+          const dx = arrowPos.x - g.pos.x;
+          const dz = arrowPos.z - g.pos.z;
+          const dy = arrowPos.y - (g.pos.y + 0.55);
+          if (dx * dx + dz * dz <= 1.35 * 1.35 && Math.abs(dy) <= 1.2) {
+            this.defeatGoblin(
+              g,
+              `🏹 Marksman Bow Shot Defeated Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
+            );
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  public tryHitGoblinWithMelee(playerPos: THREE.Vector3, heading: number, _damage = 40): boolean {
+    for (const ent of this.activeChunks.values()) {
+      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGobs) {
+        if (!g.defeated && g.mesh.visible) {
+          const dx = g.pos.x - playerPos.x;
+          const dz = g.pos.z - playerPos.z;
+          const d = Math.hypot(dx, dz);
+          if (d <= 3.4) {
+            const angleToGoblin = Math.atan2(dx, dz);
+            const angleDiff = Math.abs(
+              THREE.MathUtils.euclideanModulo(angleToGoblin - heading + Math.PI, Math.PI * 2) - Math.PI
+            );
+            if (angleDiff <= Math.PI * 0.58) {
+              this.defeatGoblin(
+                g,
+                `⚔️ Melee Strike Crushed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
+              );
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -829,15 +1114,15 @@ export class LivingWorldManager {
     let count = 0;
     const rSq = radius * radius;
     for (const ent of this.activeChunks.values()) {
-      if (ent.goblin && ent.goblin.mesh.visible && !ent.goblin.defeated) {
-        const dx = playerPos.x - ent.goblin.pos.x;
-        const dz = playerPos.z - ent.goblin.pos.z;
-        if (dx * dx + dz * dz <= rSq) {
-          ent.goblin.defeated = true;
-          ent.goblin.flyTime = 0;
-          count++;
-          this.playStarChime();
-          this.onGrantOrDeductGold(125, '💥 Ground-Slam Smashed Goblin Cutpurse! +125 Gold!', true);
+      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGobs) {
+        if (g.mesh.visible && !g.defeated) {
+          const dx = playerPos.x - g.pos.x;
+          const dz = playerPos.z - g.pos.z;
+          if (dx * dx + dz * dz <= rSq) {
+            this.defeatGoblin(g, '💥 Ground-Slam Smashed Goblin Raider! +125 Gold & +1 Food Ration');
+            count++;
+          }
         }
       }
     }
@@ -850,15 +1135,15 @@ export class LivingWorldManager {
   public checkSurfRamGoblin(playerPos: THREE.Vector3, radius = 2.4): boolean {
     const rSq = radius * radius;
     for (const ent of this.activeChunks.values()) {
-      if (ent.goblin && ent.goblin.mesh.visible && !ent.goblin.defeated) {
-        const dx = playerPos.x - ent.goblin.pos.x;
-        const dz = playerPos.z - ent.goblin.pos.z;
-        if (dx * dx + dz * dz <= rSq) {
-          ent.goblin.defeated = true;
-          ent.goblin.flyTime = 0;
-          this.playStarChime();
-          this.onGrantOrDeductGold(125, '🛡️ Surf-Ram Smashed Goblin Cutpurse! +125 Gold!', true);
-          return true;
+      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
+      for (const g of chunkGobs) {
+        if (g.mesh.visible && !g.defeated) {
+          const dx = playerPos.x - g.pos.x;
+          const dz = playerPos.z - g.pos.z;
+          if (dx * dx + dz * dz <= rSq) {
+            this.defeatGoblin(g, '🛡️ Surf-Ram Smashed Goblin Raider! +125 Gold & +1 Food Ration');
+            return true;
+          }
         }
       }
     }
@@ -1058,90 +1343,190 @@ export class LivingWorldManager {
       }
     }
 
-    // 4. Mischievous Goblin Cutpurse in outer chunks
-    if (!isStartChunk && rng() < 0.22) {
-      const wx = cx * size + (rng() - 0.5) * (size * 0.6);
-      const wz = cz * size + (rng() - 0.5) * (size * 0.6);
-      const wy = this.sampleGroundHeight(wx, wz);
+    // 4. Goblin Squads (Cutpurse & Bombardier) in outer chunks (~28% of chunks)
+    if (!isStartChunk && rng() < 0.28) {
+      ent.goblins = [];
+      const squadCount = rng() < 0.45 ? 2 : 1;
+      for (let i = 0; i < squadCount; i++) {
+        const role: GoblinRole = i === 1 ? 'bombardier' : rng() < 0.42 ? 'bombardier' : 'cutpurse';
+        const offsetAng = (i / squadCount) * Math.PI * 2 + rng() * 0.8;
+        const offsetDist = i === 0 ? 0 : 3.6 + rng() * 2.2;
+        const wx = cx * size + (rng() - 0.5) * (size * 0.55) + Math.cos(offsetAng) * offsetDist;
+        const wz = cz * size + (rng() - 0.5) * (size * 0.55) + Math.sin(offsetAng) * offsetDist;
+        const wy = this.sampleGroundHeight(wx, wz);
 
-      if (
-        !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
-        (!this.config.enableWater || wy > this.config.waterLevel + 1.2)
-      ) {
-        const mesh = new THREE.Group();
-        mesh.position.set(wx, wy, wz);
-        mesh.updateMatrix();
-        mesh.matrixAutoUpdate = false;
-
-        const goblinInst = createGoblinInstance();
-        let modelGroup: THREE.Group | undefined;
-        let bones: GoblinBones | undefined;
-        let hasCustomModel = false;
-
-        if (goblinInst) {
-          modelGroup = goblinInst.group;
-          bones = goblinInst.bones;
-          mesh.add(modelGroup);
-          hasCustomModel = true;
+        if (
+          !this.noise.isInsideVolcanoBarrenZone(wx, wz) &&
+          (!this.config.enableWater || wy > this.config.waterLevel + 1.2)
+        ) {
+          const goblinInst = this.createGoblinHazard(wx, wy, wz, role, rng);
+          ent.goblins.push(goblinInst);
+          if (i === 0) {
+            ent.goblin = goblinInst; // Keep backwards compatibility
+          }
         }
-
-        const glbMesh = new THREE.Mesh(
-          sharedGoblinGeo ?? assets.goblinBodyGeo,
-          sharedGoblinMat ?? assets.matGoblinTunic
-        );
-        glbMesh.castShadow = false;
-        glbMesh.receiveShadow = false;
-        glbMesh.matrixAutoUpdate = false;
-        glbMesh.visible = !hasCustomModel && Boolean(sharedGoblinGeo && sharedGoblinMat);
-        mesh.add(glbMesh);
-
-        const body = new THREE.Mesh(assets.goblinBodyGeo, assets.matGoblinTunic);
-        body.castShadow = false;
-        body.matrixAutoUpdate = false;
-        body.visible = !hasCustomModel && !glbMesh.visible;
-        mesh.add(body);
-
-        const head = new THREE.Mesh(assets.goblinHeadGeo, assets.matGoblinSkin);
-        head.castShadow = false;
-        head.matrixAutoUpdate = false;
-        head.visible = !hasCustomModel && !glbMesh.visible;
-        mesh.add(head);
-
-        const sack = new THREE.Mesh(assets.spiritBodyGeo, assets.matGoldSack);
-        sack.position.set(0, 0.22, -0.28);
-        sack.updateMatrix();
-        sack.matrixAutoUpdate = false;
-        mesh.add(sack);
-
-        this.group.add(mesh);
-        mesh.updateMatrixWorld(true);
-
-        ent.goblin = {
-          centerPos: new THREE.Vector3(wx, wy, wz),
-          pos: new THREE.Vector3(wx, wy, wz),
-          orbitAngle: rng() * Math.PI * 2,
-          orbitRadius: 3.8 + rng() * 2.5,
-          defeated: false,
-          flyTime: 0,
-          mesh,
-          bodyMesh: body,
-          headMesh: head,
-          glbMesh,
-          modelGroup,
-          bones,
-          isNearLOD: true,
-        };
       }
     }
 
     this.activeChunks.set(chunkKey, ent);
   }
 
+  private createGoblinHazard(
+    wx: number,
+    wy: number,
+    wz: number,
+    role: GoblinRole,
+    rng: () => number
+  ): GoblinHazardInstance {
+    const assets = getSharedLivingAssets();
+    const mesh = new THREE.Group();
+    mesh.position.set(wx, wy, wz);
+    mesh.updateMatrix();
+    mesh.matrixAutoUpdate = false;
+
+    const goblinInst = createGoblinInstance();
+    let modelGroup: THREE.Group | undefined;
+    let bones: GoblinBones | undefined;
+    let hasCustomModel = false;
+
+    if (goblinInst) {
+      modelGroup = goblinInst.group;
+      bones = goblinInst.bones;
+      mesh.add(modelGroup);
+      hasCustomModel = true;
+    }
+
+    const glbMesh = new THREE.Mesh(
+      sharedGoblinGeo ?? assets.goblinBodyGeo,
+      sharedGoblinMat ?? assets.matGoblinTunic
+    );
+    glbMesh.castShadow = false;
+    glbMesh.receiveShadow = false;
+    glbMesh.matrixAutoUpdate = false;
+    glbMesh.visible = !hasCustomModel && Boolean(sharedGoblinGeo && sharedGoblinMat);
+    mesh.add(glbMesh);
+
+    const body = new THREE.Mesh(assets.goblinBodyGeo, assets.matGoblinTunic);
+    body.castShadow = false;
+    body.matrixAutoUpdate = false;
+    body.visible = !hasCustomModel && !glbMesh.visible;
+    mesh.add(body);
+
+    const head = new THREE.Mesh(assets.goblinHeadGeo, assets.matGoblinSkin);
+    head.castShadow = false;
+    head.matrixAutoUpdate = false;
+    head.visible = !hasCustomModel && !glbMesh.visible;
+    mesh.add(head);
+
+    if (role === 'bombardier') {
+      const bombKeg = new THREE.Mesh(assets.bombGeo, assets.matBomb);
+      bombKeg.position.set(0, 0.35, -0.25);
+      bombKeg.scale.setScalar(0.72);
+      bombKeg.updateMatrix();
+      bombKeg.matrixAutoUpdate = false;
+      mesh.add(bombKeg);
+    } else {
+      const sack = new THREE.Mesh(assets.spiritBodyGeo, assets.matGoldSack);
+      sack.position.set(0, 0.22, -0.28);
+      sack.updateMatrix();
+      sack.matrixAutoUpdate = false;
+      mesh.add(sack);
+    }
+
+    this.group.add(mesh);
+    mesh.updateMatrixWorld(true);
+
+    return {
+      role,
+      centerPos: new THREE.Vector3(wx, wy, wz),
+      pos: new THREE.Vector3(wx, wy, wz),
+      orbitAngle: rng() * Math.PI * 2,
+      orbitRadius: role === 'bombardier' ? 1.5 + rng() * 1.5 : 3.8 + rng() * 2.5,
+      bombCooldown: 2.0 + rng() * 3.0,
+      defeated: false,
+      flyTime: 0,
+      mesh,
+      bodyMesh: body,
+      headMesh: head,
+      glbMesh,
+      modelGroup,
+      bones,
+      isNearLOD: true,
+    };
+  }
+
   private removeChunkEntities(ent: ChunkLivingEntities): void {
     if (ent.starFragment) this.group.remove(ent.starFragment.mesh);
     if (ent.birdFlock) this.group.remove(ent.birdFlock.group);
     if (ent.spiritRabbit) this.group.remove(ent.spiritRabbit.mesh);
-    if (ent.goblin) this.group.remove(ent.goblin.mesh);
+    if (ent.goblins) {
+      for (const g of ent.goblins) {
+        this.group.remove(g.mesh);
+      }
+    } else if (ent.goblin) {
+      this.group.remove(ent.goblin.mesh);
+    }
+  }
+
+  private playBombFuseSizzleSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(850, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.12);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.16);
+  }
+
+  private playBombExplosionSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const sub = ctx.createOscillator();
+    const subGain = ctx.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(150, now);
+    sub.frequency.exponentialRampToValueAtTime(32, now + 0.42);
+    subGain.gain.setValueAtTime(0.001, now);
+    subGain.gain.exponentialRampToValueAtTime(0.32, now + 0.015);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+    sub.connect(subGain);
+    subGain.connect(ctx.destination);
+    sub.onended = () => {
+      sub.disconnect();
+      subGain.disconnect();
+    };
+    sub.start(now);
+    sub.stop(now + 0.5);
+
+    const blast = ctx.createOscillator();
+    const blastGain = ctx.createGain();
+    blast.type = 'sawtooth';
+    blast.frequency.setValueAtTime(360, now);
+    blast.frequency.exponentialRampToValueAtTime(50, now + 0.22);
+    blastGain.gain.setValueAtTime(0.001, now);
+    blastGain.gain.exponentialRampToValueAtTime(0.24, now + 0.01);
+    blastGain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    blast.connect(blastGain);
+    blastGain.connect(ctx.destination);
+    blast.onended = () => {
+      blast.disconnect();
+      blastGain.disconnect();
+    };
+    blast.start(now);
+    blast.stop(now + 0.3);
   }
 
   public rebuildAll(): void {

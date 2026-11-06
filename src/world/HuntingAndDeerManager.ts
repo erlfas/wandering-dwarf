@@ -337,6 +337,15 @@ export class HuntingAndDeerManager {
   }
 
   public onTryHitTrollWithArrow?: (arrowPos: THREE.Vector3) => boolean;
+  public onTryHitGoblinWithArrow?: (arrowPos: THREE.Vector3) => boolean;
+  public onTryHitTitanWithArrow?: (arrowPos: THREE.Vector3) => boolean;
+  public isAirborneFn?: () => boolean;
+  public onBulletTimeStateChange?: (active: boolean) => void;
+  private isBulletTime = false;
+
+  public isBulletTimeActive(): boolean {
+    return this.isBulletTime;
+  }
 
   public getDeerHuntedCount(): number {
     return this.deerHuntedCount;
@@ -603,6 +612,11 @@ export class HuntingAndDeerManager {
 
   public exitHuntingMode(): void {
     if (!this.isHuntingMode) return;
+    if (this.isBulletTime) {
+      this.isBulletTime = false;
+      this.onBulletTimeStateChange?.(false);
+      this.playBulletTimeExitSound();
+    }
     this.isHuntingMode = false;
     this.isDrawingBow = false;
     this.bowDrawPower = 0;
@@ -634,6 +648,11 @@ export class HuntingAndDeerManager {
   }
 
   private fireArrow(): void {
+    if (this.isBulletTime) {
+      this.isBulletTime = false;
+      this.onBulletTimeStateChange?.(false);
+      this.playBulletTimeExitSound();
+    }
     if (!this.isHuntingMode || this.shotCooldown > 0) {
       this.isDrawingBow = false;
       this.bowDrawPower = 0;
@@ -704,11 +723,14 @@ export class HuntingAndDeerManager {
     }
 
     this.huntingBannerEl.classList.remove('hidden');
+    const bulletTimeBadge = this.isBulletTime
+      ? `<span class="hunt-tag locked" style="background:rgba(0,212,255,0.28);border-color:#00e5ff;color:#e0f7fa;">⏱️ BULLET-TIME AIM (Hover)</span>`
+      : '';
     const targetBadge = this.lockedDeer
       ? `<span class="hunt-tag locked">🎯 Locked: ${this.lockedDeer.species.name} (${this.aimDistance.toFixed(0)}m)</span>`
       : `<span class="hunt-tag aim">🏹 Aiming (${this.aimDistance.toFixed(0)}m / ${this.maxAimDistance.toFixed(0)}m)</span>`;
 
-    const statusHtml = `🦌 <strong>DEER HUNTING</strong> ${targetBadge} • Mouse Aim • <kbd>Click</kbd> / <kbd>E</kbd> / <kbd>R</kbd> Shoot Arrow • <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Stalk`;
+    const statusHtml = `🦌 <strong>BOW HUNTING</strong> ${bulletTimeBadge} ${targetBadge} • Mouse Aim • <kbd>Click</kbd> / <kbd>E</kbd> / <kbd>R</kbd> Shoot Arrow • <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move`;
 
     this.huntingBannerEl.innerHTML = `
       <span class="hunting-banner-text">${statusHtml}</span>
@@ -1126,6 +1148,20 @@ export class HuntingAndDeerManager {
         continue;
       }
 
+      // Check hit against any active Goblin!
+      if (this.onTryHitGoblinWithArrow && this.onTryHitGoblinWithArrow(arrow.pos)) {
+        arrow.active = false;
+        arrow.mesh.visible = false;
+        continue;
+      }
+
+      // Check hit against Colossal Crag-Titan World Boss!
+      if (this.onTryHitTitanWithArrow && this.onTryHitTitanWithArrow(arrow.pos)) {
+        arrow.active = false;
+        arrow.mesh.visible = false;
+        continue;
+      }
+
       // Check hit against all active deer
       let hitDeer: DeerInstance | null = null;
       for (const deerList of this.activeChunkDeer.values()) {
@@ -1193,8 +1229,23 @@ export class HuntingAndDeerManager {
     elapsedTime: number,
     playerPos: THREE.Vector3
   ): void {
+    const isAirborne = this.isAirborneFn?.() ?? false;
+    const shouldBulletTime = this.isDrawingBow && isAirborne;
+    if (shouldBulletTime !== this.isBulletTime) {
+      this.isBulletTime = shouldBulletTime;
+      this.onBulletTimeStateChange?.(shouldBulletTime);
+      if (shouldBulletTime) {
+        this.playBulletTimeEnterSound();
+      } else {
+        this.playBulletTimeExitSound();
+      }
+      this.updateBannerUI();
+    }
+
     if (this.isDrawingBow) {
-      this.bowDrawPower = Math.min(1.0, this.bowDrawPower + dt * 1.15);
+      // Draw bow slightly faster in bullet-time so the player gets a clean shot ready
+      const drawSpeed = this.isBulletTime ? 2.4 : 1.15;
+      this.bowDrawPower = Math.min(1.0, this.bowDrawPower + dt * drawSpeed);
       this.dwarf.setBowDraw(this.bowDrawPower);
     } else {
       this.dwarf.setBowDraw(0.22);
@@ -1361,5 +1412,53 @@ export class HuntingAndDeerManager {
       osc.start(now + idx * 0.075);
       osc.stop(now + idx * 0.075 + 0.36);
     });
+  }
+
+  private playBulletTimeEnterSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(560, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.35);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.16, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.42);
+  }
+
+  private playBulletTimeExitSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(620, now + 0.18);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.24);
   }
 }
