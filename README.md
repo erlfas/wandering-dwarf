@@ -69,7 +69,7 @@ The project is organized into modular subsystems under `src/`:
 ```text
 procedural-world/
 ├── index.html                  # App shell & HUD overlay (Compass + Chest Pointer, Gold/Fish/Hunt HUD, Relic Forge, Controls)
-├── 3dmodels/                   # Close-range GLB assets (dwarf, deer, pine, oak, dwarven hut, stone circle, grass clump)
+├── 3dmodels/                   # Close-range GLB assets (dwarf, deer, pine, oak, dwarven hut, stone circle, grass clump, steam automaton, fantasy goblin)
 ├── art/                        # Concept art & visual reference sheets
 ├── music/                      # Background & ring-challenge soundtrack MP3s
 └── src/

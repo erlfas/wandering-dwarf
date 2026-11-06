@@ -59,6 +59,7 @@ for (const file of files) {
     'src/world/HutManager.ts',
     'src/world/LandmarkManager.ts',
     'src/world/HuntingAndDeerManager.ts',
+    'src/world/LivingWorldManager.ts',
   ];
   if (nonInstancedGlbManagers.includes(rel)) {
     const mergeMatches = [...content.matchAll(/mergeVertices\s*\(\s*geo/g)];

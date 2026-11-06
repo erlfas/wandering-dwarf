@@ -7,6 +7,7 @@ import medievalCastleModelUrl from '../../3dmodels/medieval castle 3d model.glb?
 import naturalRockModelUrl from '../../3dmodels/natural rock 3d model.glb?url';
 import stoneFortressModelUrl from '../../3dmodels/stone fortress 3d model.glb?url';
 import woodenJibCraneModelUrl from '../../3dmodels/wooden jib crane 3d model.glb?url';
+import steamAutomatonModelUrl from '../../3dmodels/dwarven steam automaton 3d model.glb?url';
 import {
   DwarfCharacter,
   EquippedShieldId,
@@ -308,6 +309,7 @@ interface QuarryInstance {
   workRingMesh: THREE.Mesh;
   stockpileMeshes: THREE.Mesh[];
   automatonTopperGroup?: THREE.Group;
+  automatonMesh?: THREE.Mesh;
 }
 
 type CastleMatKey = 'stone' | 'darkStone' | 'wood' | 'iron' | 'roof' | 'gold' | 'flame';
@@ -737,21 +739,32 @@ let sharedWorkbenchGeo: THREE.BufferGeometry | null = null;
 let sharedWorkbenchMat: THREE.MeshStandardMaterial | null = null;
 let sharedJibCraneGeo: THREE.BufferGeometry | null = null;
 let sharedJibCraneMat: THREE.MeshStandardMaterial | null = null;
+let sharedSteamAutomatonGeo: THREE.BufferGeometry | null = null;
+let sharedSteamAutomatonMat: THREE.MeshStandardMaterial | null = null;
 let quarryPropsLoadStarted = false;
 const onQuarryPropsLoadedCallbacks: Array<() => void> = [];
 
 /**
- * Asynchronously loads and optimizes the two Quarry `.glb` models:
+ * Asynchronously loads and optimizes the Quarry `.glb` models:
  * 1. `3dmodels/dwarven workbench 3d model.glb` (`18,242` tris, `6.27 MB` textures)
  *    normalized to `2.15m` width (`~0.76m` height, `~1.72m` depth) with base at `Y = 0`.
  * 2. `3dmodels/wooden jib crane 3d model.glb` (`19,812` tris, `9.59 MB` textures)
  *    normalized to `4.35m` height with base at `Y = 0`.
+ * 3. `3dmodels/dwarven steam automaton 3d model.glb` (`18,144` tris, `10.96 MB` textures)
+ *    normalized to `2.05m` height with base at `Y = 0`.
  * Strips `KHR_materials_specular` and secondary PBR PNG/JPEG textures in `beforeRoot` before
  * `ImageBitmap` decoding, guards `computeVertexNormals()`, welds vertices, and caches module-scope
  * geometry/material singletons for close-range (`dist <= 1.8` chunks) Quarry LOD.
  */
 export function loadQuarryPropModels(onLoaded?: () => void): void {
-  if (sharedWorkbenchGeo && sharedWorkbenchMat && sharedJibCraneGeo && sharedJibCraneMat) {
+  if (
+    sharedWorkbenchGeo &&
+    sharedWorkbenchMat &&
+    sharedJibCraneGeo &&
+    sharedJibCraneMat &&
+    sharedSteamAutomatonGeo &&
+    sharedSteamAutomatonMat
+  ) {
     onLoaded?.();
     return;
   }
@@ -767,7 +780,7 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
     for (const cb of onQuarryPropsLoadedCallbacks) {
       cb();
     }
-    if (sharedWorkbenchGeo && sharedJibCraneGeo) {
+    if (sharedWorkbenchGeo && sharedJibCraneGeo && sharedSteamAutomatonGeo) {
       onQuarryPropsLoadedCallbacks.length = 0;
     }
   };
@@ -903,6 +916,72 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       console.error('Failed to load wooden jib crane 3D model:', err);
     }
   );
+
+  loader.load(
+    steamAutomatonModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry;
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanY = Math.max(0.01, box.max.y - box.min.y);
+      const scaleFactor = 2.05 / spanY;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.68,
+        metalness: 0.32,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedSteamAutomatonGeo = geo;
+      sharedSteamAutomatonMat = mat;
+      notifyListeners();
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load dwarven steam automaton 3D model:', err);
+    }
+  );
 }
 
 function formatCompassDir(dx: number, dz: number): string {
@@ -957,6 +1036,7 @@ interface SharedMasonryAssets {
   cyanCrystalMat: THREE.MeshStandardMaterial;
   automatonBoilerGeo: THREE.BufferGeometry;
   automatonCrystalGeo: THREE.BufferGeometry;
+  fallbackAutomatonGeo: THREE.BufferGeometry;
   castleVertexColorMat: THREE.MeshStandardMaterial;
   castleSlots: CastleSlotSpec[];
   castleSlotGeos: THREE.BufferGeometry[];
@@ -2479,6 +2559,35 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
   automatonCrystalGeo.computeBoundingBox();
   automatonCrystalGeo.computeBoundingSphere();
 
+  // Procedural low-poly (< 130 tris) fallback for the Dwarven Steam Automaton golem
+  const fTorso = new THREE.CylinderGeometry(0.36, 0.40, 0.85, 8);
+  fTorso.translate(0, 0.95, 0);
+  const fHead = new THREE.BoxGeometry(0.32, 0.30, 0.32);
+  fHead.translate(0, 1.52, 0);
+  const fSensor = new THREE.BoxGeometry(0.18, 0.08, 0.12);
+  fSensor.translate(0, 1.52, 0.16);
+  const fArmL = new THREE.CylinderGeometry(0.08, 0.08, 0.70, 6);
+  fArmL.translate(-0.46, 1.05, 0);
+  const fArmR = new THREE.CylinderGeometry(0.08, 0.08, 0.70, 6);
+  fArmR.translate(0.46, 1.05, 0);
+  const fLegL = new THREE.CylinderGeometry(0.12, 0.14, 0.60, 6);
+  fLegL.translate(-0.20, 0.30, 0);
+  const fLegR = new THREE.CylinderGeometry(0.12, 0.14, 0.60, 6);
+  fLegR.translate(0.20, 0.30, 0);
+  const fallbackAutomatonGeo = mergeGeometries(
+    [fTorso, fHead, fSensor, fArmL, fArmR, fLegL, fLegR],
+    false
+  );
+  fTorso.dispose();
+  fHead.dispose();
+  fSensor.dispose();
+  fArmL.dispose();
+  fArmR.dispose();
+  fLegL.dispose();
+  fLegR.dispose();
+  fallbackAutomatonGeo.computeBoundingBox();
+  fallbackAutomatonGeo.computeBoundingSphere();
+
   const builtCastle = buildCastleSlotsAndGeometries();
 
   sharedMasonryAssets = {
@@ -2526,6 +2635,7 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     cyanCrystalMat,
     automatonBoilerGeo,
     automatonCrystalGeo,
+    fallbackAutomatonGeo,
     castleVertexColorMat,
     castleSlots: builtCastle.slots,
     castleSlotGeos: builtCastle.geos,
@@ -3680,6 +3790,21 @@ export class CastleAndQuarryManager {
     automatonTopperGroup.visible = tier === 2;
     root.add(automatonTopperGroup);
 
+    // Tier II Dwarven Steam Automaton Golem standing on the quarry pad beside the workbench
+    const useGlbAutomaton = Boolean(sharedSteamAutomatonGeo && sharedSteamAutomatonMat);
+    const automatonMesh = new THREE.Mesh(
+      useGlbAutomaton ? sharedSteamAutomatonGeo! : assets.fallbackAutomatonGeo,
+      useGlbAutomaton ? sharedSteamAutomatonMat! : assets.boilerBrassMat
+    );
+    automatonMesh.position.set(1.45, 0.24, -0.2);
+    automatonMesh.rotation.y = -Math.PI * 0.45;
+    automatonMesh.castShadow = true;
+    automatonMesh.receiveShadow = false;
+    automatonMesh.visible = tier === 2;
+    automatonMesh.updateMatrix();
+    automatonMesh.matrixAutoUpdate = false;
+    root.add(automatonMesh);
+
     this.group.add(root);
 
     const inst: QuarryInstance = {
@@ -3702,6 +3827,7 @@ export class CastleAndQuarryManager {
       workRingMesh,
       stockpileMeshes,
       automatonTopperGroup,
+      automatonMesh,
     };
     if (tier === 2) {
       this.automatonQuarriesCount += 1;
@@ -3744,6 +3870,17 @@ export class CastleAndQuarryManager {
     } else {
       q.benchRockMesh.geometry = assets.fallbackRockGeo;
       q.benchRockMesh.material = assets.fallbackRockMat;
+    }
+
+    if (q.tier === 2 && q.automatonMesh) {
+      if (q.isNearLOD && sharedSteamAutomatonGeo && sharedSteamAutomatonMat) {
+        q.automatonMesh.geometry = sharedSteamAutomatonGeo;
+        q.automatonMesh.material = sharedSteamAutomatonMat;
+      } else {
+        q.automatonMesh.geometry = assets.fallbackAutomatonGeo;
+        q.automatonMesh.material = assets.boilerBrassMat;
+      }
+      q.automatonMesh.visible = true;
     }
   }
 
@@ -4501,6 +4638,11 @@ export class CastleAndQuarryManager {
     if (nearestQuarry.automatonTopperGroup) {
       nearestQuarry.automatonTopperGroup.visible = true;
     }
+    if (nearestQuarry.automatonMesh) {
+      nearestQuarry.automatonMesh.visible = true;
+      this.syncQuarryPropVisuals(nearestQuarry);
+      nearestQuarry.automatonMesh.updateMatrix();
+    }
     this.automatonQuarriesCount += 1;
     this.guidanceUpdateAccum = 999;
     this.playMilestoneFanfare();
@@ -4999,6 +5141,18 @@ export class CastleAndQuarryManager {
       if (wantNearLOD !== q.isNearLOD) {
         q.isNearLOD = wantNearLOD;
         this.syncQuarryPropVisuals(q);
+      }
+
+      if (q.tier === 2 && q.automatonMesh && q.automatonMesh.visible) {
+        const castShadow = dSq < 42 * 42;
+        if (q.automatonMesh.castShadow !== castShadow) {
+          q.automatonMesh.castShadow = castShadow;
+        }
+        if (dSq < 45 * 45) {
+          const steamBob = Math.sin(elapsedTime * 2.8) * 0.02;
+          q.automatonMesh.position.y = 0.24 + steamBob;
+          q.automatonMesh.updateMatrix();
+        }
       }
 
       if (dSq < 45 * 45) {

@@ -556,6 +556,7 @@ waterReflection.excludeFromReflection.push(
   volcanoManager.group,
   fishingManager.group,
   huntingManager.group,
+  livingWorldManager.group,
   trollCombatManager.group,
   hutManager.group,
   castleInteriorManager.group

@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import fantasyGoblinModelUrl from '../../3dmodels/fantasy goblin 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
+import { createOptimizedGlbLoader } from './ForestField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
 interface StarFragmentInstance {
@@ -39,6 +41,8 @@ interface GoblinHazardInstance {
   mesh: THREE.Group;
   bodyMesh: THREE.Mesh;
   headMesh: THREE.Mesh;
+  glbMesh?: THREE.Mesh;
+  isNearLOD?: boolean;
 }
 
 interface ChunkLivingEntities {
@@ -63,6 +67,102 @@ interface SharedLivingAssets {
   spiritRabbitGeo: THREE.BufferGeometry;
   goblinBodyGeo: THREE.BufferGeometry;
   goblinHeadGeo: THREE.BufferGeometry;
+}
+
+let sharedGoblinGeo: THREE.BufferGeometry | null = null;
+let sharedGoblinMat: THREE.MeshStandardMaterial | null = null;
+let goblinLoadStarted = false;
+const onGoblinLoadedCallbacks: Array<() => void> = [];
+
+/**
+ * Asynchronously loads and optimizes `3dmodels/fantasy goblin 3d model.glb` (`17,707` tris, `8.44 MB` textures):
+ * - Strips `KHR_materials_specular` and secondary PBR textures via `createOptimizedGlbLoader()`.
+ * - Downscales baseColor to 1024x1024 ImageBitmap.
+ * - Deletes unused `skinIndex` and `skinWeight` attributes for static chunk hazards.
+ * - Centers X/Z, aligns base at Y = 0, scales to 1.05m standing height.
+ * - Guards `computeVertexNormals()` and welds unindexed vertices.
+ * - Caches module-scope geometry/material singletons for close-range (`dist <= 45m`) LOD.
+ */
+export function loadGoblinModel(onLoaded?: () => void): void {
+  if (sharedGoblinGeo && sharedGoblinMat) {
+    onLoaded?.();
+    return;
+  }
+  if (onLoaded) {
+    onGoblinLoadedCallbacks.push(onLoaded);
+  }
+  if (goblinLoadStarted) return;
+  goblinLoadStarted = true;
+
+  const loader = createOptimizedGlbLoader();
+  loader.load(
+    fantasyGoblinModelUrl,
+    (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let foundMesh: THREE.Mesh | null = null;
+      gltf.scene.traverse((obj) => {
+        if (!foundMesh && obj instanceof THREE.Mesh) {
+          foundMesh = obj;
+        }
+      });
+      if (!foundMesh) return;
+      const mesh = foundMesh as THREE.Mesh;
+
+      let geo = mesh.geometry;
+      geo.applyMatrix4(mesh.matrixWorld);
+      geo.deleteAttribute('skinIndex');
+      geo.deleteAttribute('skinWeight');
+
+      geo.computeBoundingBox();
+      const box = geo.boundingBox!;
+      const centerX = (box.min.x + box.max.x) * 0.5;
+      const centerZ = (box.min.z + box.max.z) * 0.5;
+      const spanY = Math.max(0.01, box.max.y - box.min.y);
+      const scaleFactor = 1.05 / spanY;
+
+      geo.translate(-centerX, -box.min.y, -centerZ);
+      geo.scale(scaleFactor, scaleFactor, scaleFactor);
+
+      if (!geo.attributes.normal) {
+        geo.computeVertexNormals();
+      }
+      if (!geo.index) {
+        const welded = mergeVertices(geo, 1e-4);
+        if (welded !== geo) {
+          geo.dispose();
+          geo = welded;
+        }
+      }
+      geo.computeBoundingBox();
+      geo.computeBoundingSphere();
+
+      const origMat = (
+        Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      ) as THREE.MeshStandardMaterial;
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: origMat.map ?? null,
+        roughness: 0.72,
+        metalness: 0.15,
+      });
+      if (origMat.normalMap && origMat.normalMap !== origMat.map) origMat.normalMap.dispose();
+      if (origMat.roughnessMap && origMat.roughnessMap !== origMat.map) origMat.roughnessMap.dispose();
+      if (origMat.metalnessMap && origMat.metalnessMap !== origMat.map) origMat.metalnessMap.dispose();
+      if (origMat.aoMap && origMat.aoMap !== origMat.map) origMat.aoMap.dispose();
+      origMat.dispose();
+
+      sharedGoblinGeo = geo;
+      sharedGoblinMat = mat;
+      for (const cb of onGoblinLoadedCallbacks) {
+        cb();
+      }
+      onGoblinLoadedCallbacks.length = 0;
+    },
+    undefined,
+    (err) => {
+      console.error('Failed to load fantasy goblin 3D model:', err);
+    }
+  );
 }
 
 let sharedLivingAssets: SharedLivingAssets | null = null;
@@ -224,6 +324,22 @@ export class LivingWorldManager {
         : new THREE.Color(0xd7e3ec);
     this.buildStarfieldDome();
     this.attachDwarfLantern();
+
+    loadGoblinModel(() => {
+      for (const ent of this.activeChunks.values()) {
+        if (ent.goblin && sharedGoblinGeo && sharedGoblinMat) {
+          if (ent.goblin.glbMesh) {
+            ent.goblin.glbMesh.geometry = sharedGoblinGeo;
+            ent.goblin.glbMesh.material = sharedGoblinMat;
+            if (ent.goblin.isNearLOD) {
+              ent.goblin.glbMesh.visible = true;
+              ent.goblin.bodyMesh.visible = false;
+              ent.goblin.headMesh.visible = false;
+            }
+          }
+        }
+      }
+    });
 
     // Press N to jump between Morning -> Sunset -> Starry Night -> Dawn
     window.addEventListener('keydown', (e) => {
@@ -519,10 +635,34 @@ export class LivingWorldManager {
             const dx = playerPos.x - g.pos.x;
             const dz = playerPos.z - g.pos.z;
             const dSq = dx * dx + dz * dz;
-            const castShadow = dSq < 48 * 48;
-            if (g.bodyMesh.castShadow !== castShadow) {
-              g.bodyMesh.castShadow = castShadow;
-              g.headMesh.castShadow = castShadow;
+
+            // Close-range GLB LOD toggle (dist <= 45m): high-poly 3D goblin model, procedural fallback for far range
+            const nearLOD = dSq <= 45 * 45;
+            if (g.isNearLOD !== nearLOD) {
+              g.isNearLOD = nearLOD;
+              if (g.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
+                if (nearLOD) {
+                  g.glbMesh.visible = true;
+                  g.bodyMesh.visible = false;
+                  g.headMesh.visible = false;
+                } else {
+                  g.glbMesh.visible = false;
+                  g.bodyMesh.visible = true;
+                  g.headMesh.visible = true;
+                }
+              }
+            }
+
+            const castShadow = dSq < 42 * 42;
+            if (g.glbMesh && g.glbMesh.visible) {
+              if (g.glbMesh.castShadow !== castShadow) {
+                g.glbMesh.castShadow = castShadow;
+              }
+            } else {
+              if (g.bodyMesh.castShadow !== castShadow) {
+                g.bodyMesh.castShadow = castShadow;
+                g.headMesh.castShadow = castShadow;
+              }
             }
             if (dSq < 1.65 * 1.65) {
               if (isPlayerAttackingOrAirborne) {
@@ -543,9 +683,14 @@ export class LivingWorldManager {
                 );
               }
             }
-          } else if (g.bodyMesh.castShadow) {
-            g.bodyMesh.castShadow = false;
-            g.headMesh.castShadow = false;
+          } else {
+            if (g.bodyMesh.castShadow) {
+              g.bodyMesh.castShadow = false;
+              g.headMesh.castShadow = false;
+            }
+            if (g.glbMesh && g.glbMesh.castShadow) {
+              g.glbMesh.castShadow = false;
+            }
           }
         } else {
           g.flyTime += dt;
@@ -813,14 +958,26 @@ export class LivingWorldManager {
         mesh.updateMatrix();
         mesh.matrixAutoUpdate = false;
 
+        const glbMesh = new THREE.Mesh(
+          sharedGoblinGeo ?? assets.goblinBodyGeo,
+          sharedGoblinMat ?? assets.matGoblinTunic
+        );
+        glbMesh.castShadow = false;
+        glbMesh.receiveShadow = false;
+        glbMesh.matrixAutoUpdate = false;
+        glbMesh.visible = Boolean(sharedGoblinGeo && sharedGoblinMat);
+        mesh.add(glbMesh);
+
         const body = new THREE.Mesh(assets.goblinBodyGeo, assets.matGoblinTunic);
         body.castShadow = false;
         body.matrixAutoUpdate = false;
+        body.visible = !glbMesh.visible;
         mesh.add(body);
 
         const head = new THREE.Mesh(assets.goblinHeadGeo, assets.matGoblinSkin);
         head.castShadow = false;
         head.matrixAutoUpdate = false;
+        head.visible = !glbMesh.visible;
         mesh.add(head);
 
         const sack = new THREE.Mesh(assets.spiritBodyGeo, assets.matGoldSack);
@@ -842,6 +999,8 @@ export class LivingWorldManager {
           mesh,
           bodyMesh: body,
           headMesh: head,
+          glbMesh,
+          isNearLOD: true,
         };
       }
     }
