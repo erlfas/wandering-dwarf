@@ -881,6 +881,16 @@ export class VolcanoManager {
     return dx * dx + dz * dz < VOLCANO_HEAT_HAZARD_RADIUS * VOLCANO_HEAT_HAZARD_RADIUS;
   }
 
+  /**
+   * Checks whether the player is in the convective thermal updraft zone around Mount Doomforge's rim/upper slopes.
+   */
+  public isPlayerInUpdraftZone(x: number, z: number): boolean {
+    const dx = x - VOLCANO_X;
+    const dz = z - VOLCANO_Z;
+    const dSq = dx * dx + dz * dz;
+    return dSq >= 40.0 * 40.0 && dSq <= 96.0 * 96.0;
+  }
+
   public pauseVolcanoSfx(): void {
     if (!this.rumbleAudio.paused) {
       this.rumbleAudio.pause();

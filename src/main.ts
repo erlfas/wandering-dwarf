@@ -211,6 +211,7 @@ const livingWorldManager = new LivingWorldManager(
   }
 );
 scene.add(livingWorldManager.group);
+explorer.setLivingWorldManager(livingWorldManager);
 
 const challengeManager = new ChallengeManager(config, noise, treasureManager);
 challengeManager.setChunkManager(chunkManager);
@@ -395,6 +396,7 @@ const trollCombatManager = new TrollCombatManager(
   noise
 );
 scene.add(trollCombatManager.group);
+explorer.setTrollCombatManager(trollCombatManager);
 
 const exteriorSceneGroups: THREE.Object3D[] = [
   chunkManager.group,
@@ -582,6 +584,14 @@ trollCombatManager.onPerfectParryReward = () => {
 huntingManager.onTryHitTrollWithArrow = (arrowPos) =>
   trollCombatManager.tryHitTrollWithArrow(arrowPos, 38);
 
+let windAndSlopeFeats = savedProgress?.windAndSlopeFeats ?? 0;
+explorer.onCatchThermalUpdraft = () => {
+  windAndSlopeFeats += 1;
+};
+explorer.onSurfRamCollision = () => {
+  windAndSlopeFeats += 1;
+};
+
 const reusableAssignmentSnapshot: AssignmentSnapshot = {
   chestsOpened: 0,
   beaconsLit: 0,
@@ -602,6 +612,9 @@ const reusableAssignmentSnapshot: AssignmentSnapshot = {
   deerHuntedTotal: 0,
   weaponTemperLevel: 0,
   castleSiegesWon: 0,
+  mithrilVeinsMined: 0,
+  automatonQuarriesCount: 0,
+  windAndSlopeFeats: 0,
 };
 
 const assignmentManager = new AssignmentManager({
@@ -626,6 +639,11 @@ const assignmentManager = new AssignmentManager({
     reusableAssignmentSnapshot.deerHuntedTotal = huntingManager.getDeerHuntedCount();
     reusableAssignmentSnapshot.weaponTemperLevel = castleAndQuarryManager.weaponTemperLevel;
     reusableAssignmentSnapshot.castleSiegesWon = castleAndQuarryManager.castleSiegesWon;
+    reusableAssignmentSnapshot.mithrilVeinsMined =
+      castleAndQuarryManager.getMithrilVeinsMinedCount();
+    reusableAssignmentSnapshot.automatonQuarriesCount =
+      castleAndQuarryManager.getAutomatonQuarriesCount();
+    reusableAssignmentSnapshot.windAndSlopeFeats = windAndSlopeFeats;
     return reusableAssignmentSnapshot;
   },
   onGrantReward: (gold, food, message) => {
@@ -733,7 +751,8 @@ if (savedProgress) {
     savedProgress.blocksChiseledTotal,
     savedProgress.weaponTemperLevel,
     savedProgress.castleSiegesWon,
-    savedProgress.unclaimedTributeGold
+    savedProgress.unclaimedTributeGold,
+    savedProgress.mithrilVeinsMined
   );
   landmarkManager.refreshWaypointBar();
   dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));
@@ -844,6 +863,8 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.castleSiegesWon = castleAndQuarryManager.castleSiegesWon;
   reusableSaveState.unclaimedTributeGold =
     Math.round(castleAndQuarryManager.unclaimedTributeGold * 10) / 10;
+  reusableSaveState.mithrilVeinsMined = castleAndQuarryManager.mithrilVeinsMined;
+  reusableSaveState.windAndSlopeFeats = windAndSlopeFeats;
   return reusableSaveState;
 }
 
@@ -943,6 +964,7 @@ function restartNewGame(): void {
   castleAndQuarryManager.reset();
   fishingManager.fishCaughtCount = 0;
   huntingManager.setDeerHuntedCount(0);
+  windAndSlopeFeats = 0;
   assignmentManager.loadState({
     completedChronicleIds: [],
     renownXp: 0,
@@ -991,6 +1013,7 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   trollCombatManager.restoreProgress(loaded.trollsSlain);
   fishingManager.fishCaughtCount = loaded.fishCaughtTotal ?? 0;
   huntingManager.setDeerHuntedCount(loaded.deerHuntedTotal ?? 0);
+  windAndSlopeFeats = loaded.windAndSlopeFeats ?? 0;
 
   sanitizeSafePlayerPos(loaded.playerPos);
   explorer.setPose(
@@ -1043,7 +1066,8 @@ function applyLoadedGameState(loaded: SavedProgress): void {
     loaded.blocksChiseledTotal,
     loaded.weaponTemperLevel,
     loaded.castleSiegesWon,
-    loaded.unclaimedTributeGold
+    loaded.unclaimedTributeGold,
+    loaded.mithrilVeinsMined
   );
   landmarkManager.refreshWaypointBar();
   dwarf.setProgressionVisuals(rankDef.rank, hutManager.hasArtefact('durin_crown'));

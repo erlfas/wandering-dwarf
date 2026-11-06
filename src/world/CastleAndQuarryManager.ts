@@ -260,6 +260,7 @@ export interface SavedQuarrySite {
   z: number;
   rotationY: number;
   stockpiledBlocks: number;
+  tier?: 1 | 2;
 }
 
 export interface SavedCastleSite {
@@ -281,6 +282,7 @@ interface NaturalRockInstance {
   rotY: number;
   respawnTimer: number;
   isNearLOD: boolean;
+  isMithril: boolean;
   root: THREE.Group;
   mesh: THREE.Mesh;
   ringMesh: THREE.Mesh;
@@ -292,8 +294,10 @@ interface QuarryInstance {
   y: number;
   z: number;
   rotationY: number;
+  tier: 1 | 2;
   stockpiledBlocks: number;
   autoCutTimer: number;
+  transferTimer: number;
   chiselStoneTimer: number;
   isNearLOD: boolean;
   root: THREE.Group;
@@ -303,6 +307,7 @@ interface QuarryInstance {
   craneWheelMesh: THREE.Mesh;
   workRingMesh: THREE.Mesh;
   stockpileMeshes: THREE.Mesh[];
+  automatonTopperGroup?: THREE.Group;
 }
 
 type CastleMatKey = 'stone' | 'darkStone' | 'wood' | 'iron' | 'roof' | 'gold' | 'flame';
@@ -489,7 +494,9 @@ export function loadNaturalRockModel(
       // 4. Hot-swap only close-range (dist <= 1.5 chunks) natural rocks
       for (const r of activeNearRocks) {
         r.mesh.geometry = sharedNaturalRockGeo;
-        r.mesh.material = sharedNaturalRockMat;
+        if (!r.isMithril) {
+          r.mesh.material = sharedNaturalRockMat;
+        }
         r.mesh.receiveShadow = false;
       }
       for (const cb of onNaturalRockLoadedCallbacks) {
@@ -944,6 +951,12 @@ interface SharedMasonryAssets {
   ballistaHeadIronGeo: THREE.BufferGeometry;
   ballistaBoltGeo: THREE.BufferGeometry;
   ballistaBoltMat: THREE.MeshBasicMaterial;
+  mithrilRockMat: THREE.MeshStandardMaterial;
+  mithrilRingMat: THREE.MeshBasicMaterial;
+  boilerBrassMat: THREE.MeshStandardMaterial;
+  cyanCrystalMat: THREE.MeshStandardMaterial;
+  automatonBoilerGeo: THREE.BufferGeometry;
+  automatonCrystalGeo: THREE.BufferGeometry;
   castleVertexColorMat: THREE.MeshStandardMaterial;
   castleSlots: CastleSlotSpec[];
   castleSlotGeos: THREE.BufferGeometry[];
@@ -2422,6 +2435,50 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     color: 0x38bdf8,
   });
 
+  const mithrilRockMat = new THREE.MeshStandardMaterial({
+    color: 0x5be9ff,
+    roughness: 0.28,
+    metalness: 0.85,
+    emissive: 0x0f4c6e,
+    emissiveIntensity: 0.55,
+  });
+
+  const mithrilRingMat = new THREE.MeshBasicMaterial({
+    color: 0x00f5d4,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.75,
+  });
+
+  const boilerBrassMat = new THREE.MeshStandardMaterial({
+    color: 0xd4af37,
+    roughness: 0.35,
+    metalness: 0.75,
+  });
+
+  const cyanCrystalMat = new THREE.MeshStandardMaterial({
+    color: 0x00f5d4,
+    roughness: 0.15,
+    metalness: 0.3,
+    emissive: 0x00b4d8,
+    emissiveIntensity: 0.85,
+  });
+
+  const bCyl = new THREE.CylinderGeometry(0.24, 0.28, 0.55, 10);
+  bCyl.translate(0, 0.28, 0);
+  const bPipe = new THREE.CylinderGeometry(0.06, 0.06, 0.35, 8);
+  bPipe.translate(0.12, 0.65, 0);
+  const automatonBoilerGeo = mergeGeometries([bCyl, bPipe], false);
+  bCyl.dispose();
+  bPipe.dispose();
+  automatonBoilerGeo.computeBoundingBox();
+  automatonBoilerGeo.computeBoundingSphere();
+
+  const automatonCrystalGeo = new THREE.OctahedronGeometry(0.18, 0);
+  automatonCrystalGeo.translate(-0.1, 0.72, 0);
+  automatonCrystalGeo.computeBoundingBox();
+  automatonCrystalGeo.computeBoundingSphere();
+
   const builtCastle = buildCastleSlotsAndGeometries();
 
   sharedMasonryAssets = {
@@ -2463,6 +2520,12 @@ function getSharedMasonryAssets(): SharedMasonryAssets {
     ballistaHeadIronGeo,
     ballistaBoltGeo,
     ballistaBoltMat,
+    mithrilRockMat,
+    mithrilRingMat,
+    boilerBrassMat,
+    cyanCrystalMat,
+    automatonBoilerGeo,
+    automatonCrystalGeo,
     castleVertexColorMat,
     castleSlots: builtCastle.slots,
     castleSlotGeos: builtCastle.geos,
@@ -2501,6 +2564,8 @@ export class CastleAndQuarryManager {
   public warhornRallyTimer = 0;
   public trollsSlainBonusCount = 0;
   public blocksChiseledTotal = 0;
+  public mithrilVeinsMined = 0;
+  public automatonQuarriesCount = 0;
   private rankMaxHpBonus = 0;
   private rankMaxEnergyBonus = 0;
   private rankDamageMult = 1.0;
@@ -2709,6 +2774,14 @@ export class CastleAndQuarryManager {
     return this.quarries.length;
   }
 
+  public getAutomatonQuarriesCount(): number {
+    return this.automatonQuarriesCount;
+  }
+
+  public getMithrilVeinsMinedCount(): number {
+    return this.mithrilVeinsMined;
+  }
+
   public getBestCastleBlocks(): number {
     let best = 0;
     for (const c of this.castles) {
@@ -2830,6 +2903,8 @@ export class CastleAndQuarryManager {
         this.claimKingdomTribute(false);
       } else if (target.closest('.masonry-action-siege')) {
         this.tryTriggerCastleSiege();
+      } else if (target.closest('.masonry-action-upgrade-quarry')) {
+        this.tryUpgradeNearestQuarry();
       }
     });
 
@@ -2837,6 +2912,8 @@ export class CastleAndQuarryManager {
       if (e.repeat || this.isActionBlockedFn()) return;
       if (e.code === 'KeyQ') {
         this.setUpQuarryAtPlayer();
+      } else if (e.code === 'KeyU') {
+        this.tryUpgradeNearestQuarry();
       } else if (e.code === 'KeyK') {
         this.setUpCastleAtPlayer();
       } else if (e.code === 'KeyG') {
@@ -3412,6 +3489,7 @@ export class CastleAndQuarryManager {
       z: pz,
       rotationY: rotY,
       stockpiledBlocks: 0,
+      tier: 1,
     });
     this.quarries.push(quarry);
     this.spawnRocksAroundQuarry(quarry);
@@ -3573,7 +3651,7 @@ export class CastleAndQuarryManager {
 
     // Visual stack of chiseled ashlar stone blocks on the left pallet (-2.15..-1.53, 0.39, +0.95..1.39)
     const stockpileMeshes: THREE.Mesh[] = [];
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 24; i++) {
       const col = i % 2;
       const row = Math.floor(i / 2) % 2;
       const layer = Math.floor(i / 4);
@@ -3588,6 +3666,20 @@ export class CastleAndQuarryManager {
       root.add(bm);
     }
 
+    // Tier II Automaton Topper: Brass steam boiler + glowing cyan crystal topper mounted on the crane
+    const tier: 1 | 2 = saved.tier ?? 1;
+    const automatonTopperGroup = new THREE.Group();
+    automatonTopperGroup.position.set(-0.65, 4.35, -1.25);
+    const boilerMesh = new THREE.Mesh(assets.automatonBoilerGeo, assets.boilerBrassMat);
+    boilerMesh.castShadow = true;
+    boilerMesh.receiveShadow = false;
+    automatonTopperGroup.add(boilerMesh);
+    const crystalMesh = new THREE.Mesh(assets.automatonCrystalGeo, assets.cyanCrystalMat);
+    crystalMesh.castShadow = false;
+    automatonTopperGroup.add(crystalMesh);
+    automatonTopperGroup.visible = tier === 2;
+    root.add(automatonTopperGroup);
+
     this.group.add(root);
 
     const inst: QuarryInstance = {
@@ -3596,8 +3688,10 @@ export class CastleAndQuarryManager {
       y: saved.y,
       z: saved.z,
       rotationY: saved.rotationY,
+      tier,
       stockpiledBlocks: saved.stockpiledBlocks,
       autoCutTimer: 0,
+      transferTimer: 0,
       chiselStoneTimer: 0,
       isNearLOD: true,
       root,
@@ -3607,7 +3701,11 @@ export class CastleAndQuarryManager {
       craneWheelMesh,
       workRingMesh,
       stockpileMeshes,
+      automatonTopperGroup,
     };
+    if (tier === 2) {
+      this.automatonQuarriesCount += 1;
+    }
     this.syncQuarryPropVisuals(inst);
     return inst;
   }
@@ -4168,22 +4266,82 @@ export class CastleAndQuarryManager {
 
     rock.respawnTimer = 18.0;
     rock.root.visible = false;
-    this.carriedRawStones += 1;
+    const isMithril = rock.isMithril;
+    const stonesToGain = isMithril ? Math.min(2, maxStones - this.carriedRawStones) : 1;
+    this.carriedRawStones += stonesToGain;
     this.dwarf.setCarriedLoad(this.carriedRawStones, this.carriedChiseledBlocks);
     this.guidanceUpdateAccum = 999;
-    this.dwarf.spawnBurst(rock.wx, rock.wy + 0.3, rock.wz, 10);
+    this.dwarf.spawnBurst(rock.wx, rock.wy + 0.3, rock.wz, isMithril ? 18 : 10);
     this.playPickupStoneSound();
 
-    const hint =
-      this.quarries.length === 0
-        ? 'Walk to a level spot and press Q to set up a Quarry!'
-        : 'Carry it to your Quarry Workbench and press E to chisel into Blocks!';
-    this.showToast(
-      `🪨 Lifted Natural Stone (${this.carriedRawStones}/${maxStones})! (-${energyCost.toFixed(0)}⚡) • ${hint}`,
-      false
-    );
+    if (isMithril) {
+      this.mithrilVeinsMined += 1;
+      this.grantGold(120, '⛏️ Prospected rare glowing Mithril Ore (+120 Gold)!');
+      this.showToast(
+        `💎 Lifted Glowing Mithril Ore (+120 Gold, +${stonesToGain} Raw Stones: ${this.carriedRawStones}/${maxStones})! (-${energyCost.toFixed(0)}⚡)`,
+        true
+      );
+    } else {
+      const hint =
+        this.quarries.length === 0
+          ? 'Walk to a level spot and press Q to set up a Quarry!'
+          : 'Carry it to your Quarry Workbench and press E to chisel into Blocks!';
+      this.showToast(
+        `🪨 Lifted Natural Stone (${this.carriedRawStones}/${maxStones})! (-${energyCost.toFixed(0)}⚡) • ${hint}`,
+        false
+      );
+    }
     this.onStateChanged?.();
     return true;
+  }
+
+  /**
+   * Fractures all natural rocks within ground-slam radius, automatically harvesting them
+   * if the dwarf has carry capacity.
+   */
+  public fractureRocksInRadius(centerPos: THREE.Vector3, radius = 5.2): number {
+    let count = 0;
+    const rSq = radius * radius;
+    const maxStones = this.getMaxRawStonesCarry();
+
+    const checkList = (list: NaturalRockInstance[]) => {
+      for (const rock of list) {
+        if (!rock.root.visible || rock.respawnTimer > 0) continue;
+        const dx = centerPos.x - rock.wx;
+        const dz = centerPos.z - rock.wz;
+        if (dx * dx + dz * dz <= rSq) {
+          rock.respawnTimer = 22.0;
+          rock.root.visible = false;
+          this.dwarf.spawnBurst(rock.wx, rock.wy + 0.4, rock.wz, rock.isMithril ? 24 : 16);
+          this.playPickupStoneSound();
+          count++;
+          if (rock.isMithril) {
+            this.mithrilVeinsMined += 1;
+            this.grantGold(120, '💥 Ground-Slam shattered rare Mithril Vein (+120 Gold)!');
+          }
+          if (this.carriedChiseledBlocks === 0 && this.carriedRawStones < maxStones) {
+            const addStones = rock.isMithril ? Math.min(2, maxStones - this.carriedRawStones) : 1;
+            this.carriedRawStones += addStones;
+            this.dwarf.setCarriedLoad(this.carriedRawStones, this.carriedChiseledBlocks);
+          }
+        }
+      }
+    };
+
+    for (const rocks of this.activeChunkRocks.values()) {
+      checkList(rocks);
+    }
+    checkList(this.quarryBonusRocks);
+
+    if (count > 0) {
+      this.guidanceUpdateAccum = 999;
+      this.showToast(
+        `💥 Ground-Slam shattered ${count} Natural Boulder${count > 1 ? 's' : ''}! (${this.carriedRawStones}/${maxStones} Raw Stones carried)`,
+        true
+      );
+      this.onStateChanged?.();
+    }
+    return count;
   }
 
   private chiselStonesAtQuarry(quarry: QuarryInstance): boolean {
@@ -4297,6 +4455,104 @@ export class CastleAndQuarryManager {
       );
     }
 
+    this.syncMilestoneHUD();
+    this.onStateChanged?.();
+    return true;
+  }
+
+  /**
+   * Upgrades the nearest Quarry within 5.5m to a Tier II Automaton Quarry for 300g (Key U).
+   * Doubles auto-cutting speed, expands stockpile to 24 blocks, and automatically dispatches
+   * chiseled blocks to the nearest incomplete Castle site within 95m every 11s.
+   */
+  public tryUpgradeNearestQuarry(): boolean {
+    const px = this.dwarf.root.position.x;
+    const pz = this.dwarf.root.position.z;
+    const nearestQuarry = this.getNearestQuarry(px, pz);
+    if (!nearestQuarry) {
+      this.showToast('⚠️ No Quarry nearby! Set up a Quarry first (Q).', false);
+      return false;
+    }
+    const dist = Math.hypot(px - nearestQuarry.x, pz - nearestQuarry.z);
+    if (dist > 5.5) {
+      this.showToast('⚠️ Walk closer to your Quarry workbench to upgrade it (U).', false);
+      return false;
+    }
+    if (nearestQuarry.tier === 2) {
+      this.showToast('⚙️ This Quarry is already upgraded to Tier II Automaton Quarry!', false);
+      return false;
+    }
+
+    const UPGRADE_COST = 300;
+    if (this.getGold() < UPGRADE_COST) {
+      this.playDeniedSound();
+      this.showToast(
+        `💰 Need ${UPGRADE_COST} Gold to upgrade to Tier II Automaton Quarry! (Have ${this.getGold()}g)`,
+        false
+      );
+      return false;
+    }
+
+    if (!this.spendGold(UPGRADE_COST)) {
+      return false;
+    }
+
+    nearestQuarry.tier = 2;
+    if (nearestQuarry.automatonTopperGroup) {
+      nearestQuarry.automatonTopperGroup.visible = true;
+    }
+    this.automatonQuarriesCount += 1;
+    this.guidanceUpdateAccum = 999;
+    this.playMilestoneFanfare();
+    this.dwarf.spawnBurst(nearestQuarry.x, nearestQuarry.y + 1.5, nearestQuarry.z, 28);
+    this.showToast(
+      '⚙️ UPGRADED: Tier II Automaton Quarry! Double cutting speed, 24-block stockpile & automated block transport active!',
+      true
+    );
+    this.onStateChanged?.();
+    return true;
+  }
+
+  private placeAutomatedBlockOnCastle(castle: CastleInstance): boolean {
+    const assets = getSharedMasonryAssets();
+    const totalSlots = assets.castleSlots.length;
+    if (castle.blocksPlaced >= totalSlots) return false;
+
+    const prevBlocks = castle.blocksPlaced;
+    const placedSlot = assets.castleSlots[prevBlocks];
+    castle.blocksPlaced += 1;
+    this.completedCastlesDirty = true;
+
+    this.syncCastleSlotHintVisuals(castle);
+
+    tempSlotWorld.set(
+      castle.x + placedSlot.localPos.x,
+      castle.y + placedSlot.localPos.y,
+      castle.z + placedSlot.localPos.z
+    );
+    this.dwarf.spawnBurst(tempSlotWorld.x, tempSlotWorld.y, tempSlotWorld.z, 14);
+
+    let reachedMilestone = false;
+    for (const m of CASTLE_MILESTONES) {
+      if (prevBlocks < m.blocksRequired && castle.blocksPlaced >= m.blocksRequired) {
+        reachedMilestone = true;
+        this.playMilestoneFanfare();
+        this.grantGold(
+          m.rewardGold,
+          `🏆 MILESTONE ACHIEVED: ${m.title} (${castle.name})! +${m.rewardGold} Gold!`
+        );
+      }
+    }
+
+    if (!reachedMilestone) {
+      this.playBuildSound();
+      this.grantGold(
+        25,
+        `⚙️ Automaton dispatch delivered ${placedSlot.label} to ${castle.name} (${castle.blocksPlaced}/${totalSlots})! +25g`
+      );
+    }
+
+    this.guidanceUpdateAccum = 999;
     this.syncMilestoneHUD();
     this.onStateChanged?.();
     return true;
@@ -4560,10 +4816,19 @@ export class CastleAndQuarryManager {
     root.updateMatrix();
     root.matrixAutoUpdate = false;
 
+    const isMithril =
+      wy >= 14.8 ||
+      (Math.hypot(wx, wz) > 230 && (Math.abs(Math.floor(wx * 7 + wz * 13)) % 100) < 35);
+
     const useGlb = forceNear && Boolean(sharedNaturalRockGeo && sharedNaturalRockMat);
+    const rockMat = isMithril
+      ? assets.mithrilRockMat
+      : useGlb
+      ? sharedNaturalRockMat!
+      : assets.fallbackRockMat;
     const mesh = new THREE.Mesh(
       useGlb ? sharedNaturalRockGeo! : assets.fallbackRockGeo,
-      useGlb ? sharedNaturalRockMat! : assets.fallbackRockMat
+      rockMat
     );
     mesh.scale.setScalar(scale);
     mesh.rotation.y = rotY;
@@ -4573,7 +4838,10 @@ export class CastleAndQuarryManager {
     mesh.matrixAutoUpdate = false;
     root.add(mesh);
 
-    const ringMesh = new THREE.Mesh(assets.rockRingGeo, assets.rockRingMat);
+    const ringMesh = new THREE.Mesh(
+      assets.rockRingGeo,
+      isMithril ? assets.mithrilRingMat : assets.rockRingMat
+    );
     ringMesh.position.y = 0.08;
     ringMesh.updateMatrix();
     ringMesh.matrixAutoUpdate = false;
@@ -4590,6 +4858,7 @@ export class CastleAndQuarryManager {
       rotY,
       respawnTimer: 0,
       isNearLOD: forceNear,
+      isMithril,
       root,
       mesh,
       ringMesh,
@@ -4629,14 +4898,16 @@ export class CastleAndQuarryManager {
           r.isNearLOD = wantNear;
           if (wantNear) {
             activeNearRocks.add(r);
-            if (sharedNaturalRockGeo && sharedNaturalRockMat) {
+            if (sharedNaturalRockGeo) {
               r.mesh.geometry = sharedNaturalRockGeo;
-              r.mesh.material = sharedNaturalRockMat;
+              r.mesh.material = r.isMithril
+                ? assets.mithrilRockMat
+                : sharedNaturalRockMat ?? assets.fallbackRockMat;
             }
           } else {
             activeNearRocks.delete(r);
             r.mesh.geometry = assets.fallbackRockGeo;
-            r.mesh.material = assets.fallbackRockMat;
+            r.mesh.material = r.isMithril ? assets.mithrilRockMat : assets.fallbackRockMat;
           }
         }
 
@@ -4667,13 +4938,45 @@ export class CastleAndQuarryManager {
     const nearGlbDistSq = Math.pow(this.config.chunkSize * 1.8, 2);
 
     for (const q of this.quarries) {
-      // Passive auto-chisel bonus block when owning Royal Architect's Pulley Rig
-      if (hasPulley && q.stockpiledBlocks < 16) {
+      // Auto-chisel block: double speed (9s vs 18s) and higher stockpile (24 vs 16) if Tier II
+      const maxStockpile = q.tier === 2 ? 24 : 16;
+      const cutInterval = q.tier === 2 ? 9.0 : 18.0;
+      const canAutoCut = q.tier === 2 || hasPulley;
+
+      if (canAutoCut && q.stockpiledBlocks < maxStockpile) {
         q.autoCutTimer += dt;
-        if (q.autoCutTimer >= 18.0) {
+        if (q.autoCutTimer >= cutInterval) {
           q.autoCutTimer = 0;
           q.stockpiledBlocks += 1;
+          this.blocksChiseledTotal += 1;
           this.syncQuarryStockpileVisuals(q);
+        }
+      }
+
+      // Tier II Steam Automaton block dispatch: dispatch chiseled blocks to nearest incomplete Castle site within 95m every 11s
+      if (q.tier === 2) {
+        q.transferTimer += dt;
+        if (q.transferTimer >= 11.0) {
+          q.transferTimer = 0;
+          if (q.stockpiledBlocks > 0) {
+            let targetCastle: CastleInstance | null = null;
+            let nearestDistSq = 95.0 * 95.0;
+            for (const c of this.castles) {
+              if (c.blocksPlaced < 30) {
+                const cDistSq = (c.x - q.x) * (c.x - q.x) + (c.z - q.z) * (c.z - q.z);
+                if (cDistSq <= nearestDistSq) {
+                  nearestDistSq = cDistSq;
+                  targetCastle = c;
+                }
+              }
+            }
+            if (targetCastle) {
+              q.stockpiledBlocks -= 1;
+              this.syncQuarryStockpileVisuals(q);
+              this.placeAutomatedBlockOnCastle(targetCastle);
+              this.dwarf.spawnBurst(q.x, q.y + 1.2, q.z, 10);
+            }
+          }
         }
       }
 
@@ -4957,9 +5260,13 @@ export class CastleAndQuarryManager {
           const dir = formatCompassDir(nearestQuarry.x - px, nearestQuarry.z - pz);
           const enterableNear = this.getNearestEnterableCastle(px, pz);
           if (dist <= 4.8) {
+            const upgradeBtn =
+              nearestQuarry.tier === 1
+                ? `<button type="button" class="hut-action-pill masonry-action-upgrade-quarry" title="Upgrade to Tier II Automaton Quarry (300g)">⚙️ Upgrade (U, 300g)</button>`
+                : `<span class="masonry-tag">⚙️ Tier II Automaton</span>`;
             bannerHtml =
               `<div class="masonry-main-row"><span>⛏️ <strong>Quarry Workbench</strong> (${this.carriedRawStones}🪨)</span>` +
-              `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel (E)</button></div>` +
+              `<button type="button" class="hut-action-pill masonry-action-work">⛏️ Chisel (E)</button>${upgradeBtn}</div>` +
               (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
           } else if (enterableNear && enterableNear.doorDist <= 5.2) {
             bannerHtml =
@@ -4988,15 +5295,26 @@ export class CastleAndQuarryManager {
             `<div class="masonry-main-row"><span>🏰 <strong>${enterable.castle.name} (Tier ${tier})</strong> • 🏹 ${tier === 3 ? 4 : tier === 2 ? 3 : 1} Ballista${tier > 1 ? 'e' : ''}</span>` +
             `<button type="button" class="hut-action-pill masonry-action-enter-castle">🏰 Enter (E)</button>${siegeBtn}</div>` +
             (enterable.castle.blocksPlaced < 30 ? this.buildCastleProgressStripHtml(enterable.castle) : '');
-        } else if (nearestQuarry && quarryDist <= 5.5 && nearestQuarry.stockpiledBlocks > 0) {
+        } else if (nearestQuarry && quarryDist <= 5.5) {
+          const upgradeBtn =
+            nearestQuarry.tier === 1
+              ? `<button type="button" class="hut-action-pill masonry-action-upgrade-quarry" title="Upgrade to Tier II Automaton Quarry (300g)">⚙️ Upgrade (U, 300g)</button>`
+              : `<span class="masonry-tag">⚙️ Tier II Automaton</span>`;
+          const takeBtn =
+            nearestQuarry.stockpiledBlocks > 0
+              ? `<button type="button" class="hut-action-pill masonry-action-work">🧱 Take (E)</button>`
+              : '';
           bannerHtml =
-            `<div class="masonry-main-row"><span>⛏️ <strong>Quarry:</strong> <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Block${nearestQuarry.stockpiledBlocks > 1 ? 's' : ''} Ready</span></span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🧱 Take (E)</button></div>` +
+            `<div class="masonry-main-row"><span>⛏️ <strong>Quarry:</strong> <span class="masonry-tag">${nearestQuarry.stockpiledBlocks} Block${nearestQuarry.stockpiledBlocks !== 1 ? 's' : ''} Ready</span></span>` +
+            `${takeBtn}${upgradeBtn}</div>` +
             (activeCastle ? this.buildCastleProgressStripHtml(activeCastle) : '');
         } else if (nearestRock && nearestRock.dist <= 3.6 && (activeCastle || this.quarries.length > 0)) {
+          const rockLabel = nearestRock.rock.isMithril
+            ? '💎 <strong>Mithril Ore Vein</strong>'
+            : '🪨 <strong>Natural Stone</strong>';
           bannerHtml =
-            `<div class="masonry-main-row"><span>🪨 <strong>Natural Stone</strong> (${Math.round(nearestRock.dist)}m)</span>` +
-            `<button type="button" class="hut-action-pill masonry-action-work">🪨 Lift (E)</button></div>` +
+            `<div class="masonry-main-row"><span>${rockLabel} (${Math.round(nearestRock.dist)}m)</span>` +
+            `<button type="button" class="hut-action-pill masonry-action-work">${nearestRock.rock.isMithril ? '💎 Mine (E)' : '🪨 Lift (E)'}</button></div>` +
             (activeCastle && castleDist <= 22.0 ? this.buildCastleProgressStripHtml(activeCastle) : '');
         } else if (activeCastle && castleDist <= 18.0) {
           const nextSlot = assets.castleSlots[activeCastle.blocksPlaced];
@@ -5011,10 +5329,11 @@ export class CastleAndQuarryManager {
           } else if (nearestRock) {
             guideTargetX = nearestRock.rock.wx;
             guideTargetZ = nearestRock.rock.wz;
-            guideColor = 0xffe066;
+            guideColor = nearestRock.rock.isMithril ? 0x00f5d4 : 0xffe066;
             const rDir = formatCompassDir(nearestRock.rock.wx - px, nearestRock.rock.wz - pz);
+            const rIcon = nearestRock.rock.isMithril ? '💎' : '🪨';
             bannerHtml =
-              `<div class="masonry-main-row"><span>🏰 Next: <span class="masonry-tag hint">${nextSlot.label}</span> • 🪨 ${nearestRock.dist.toFixed(0)}m ${rDir} (<kbd>E</kbd>)</span></div>` +
+              `<div class="masonry-main-row"><span>🏰 Next: <span class="masonry-tag hint">${nextSlot.label}</span> • ${rIcon} ${nearestRock.dist.toFixed(0)}m ${rDir} (<kbd>E</kbd>)</span></div>` +
               this.buildCastleProgressStripHtml(activeCastle);
           }
         }
@@ -5917,7 +6236,7 @@ export class CastleAndQuarryManager {
     }
   }
 
-  private showToast(text: string, isHighlight: boolean): void {
+  public showToast(text: string, isHighlight: boolean): void {
     if (!this.toastContainer) return;
     const toast = document.createElement('div');
     toast.className = `pickup-toast ${isHighlight ? 'rare' : ''}`;
@@ -5936,6 +6255,7 @@ export class CastleAndQuarryManager {
       z: Math.round(q.z * 10) / 10,
       rotationY: Math.round(q.rotationY * 100) / 100,
       stockpiledBlocks: q.stockpiledBlocks,
+      tier: q.tier,
     }));
   }
 
@@ -5979,9 +6299,14 @@ export class CastleAndQuarryManager {
     blocksChiseledTotal?: number,
     weaponTemperLevel?: number,
     castleSiegesWon?: number,
-    unclaimedTributeGold?: number
+    unclaimedTributeGold?: number,
+    mithrilVeinsMined?: number
   ): void {
     this.clearPlacedInstances();
+    this.mithrilVeinsMined =
+      typeof mithrilVeinsMined === 'number' && mithrilVeinsMined >= 0
+        ? Math.floor(mithrilVeinsMined)
+        : 0;
     this.blocksChiseledTotal =
       typeof blocksChiseledTotal === 'number' && blocksChiseledTotal >= 0
         ? Math.floor(blocksChiseledTotal)
@@ -6076,6 +6401,7 @@ export class CastleAndQuarryManager {
       this.group.remove(q.root);
     }
     this.quarries.length = 0;
+    this.automatonQuarriesCount = 0;
 
     for (const c of this.castles) {
       this.group.remove(c.root);
@@ -6115,6 +6441,8 @@ export class CastleAndQuarryManager {
       bolt.mesh.visible = false;
     }
     this.blocksChiseledTotal = 0;
+    this.mithrilVeinsMined = 0;
+    this.automatonQuarriesCount = 0;
     this.trollsSlainBonusCount = 0;
     this.guidanceUpdateAccum = 999;
     this.dwarf.setEquippedCombatGear('mallet', 'none');

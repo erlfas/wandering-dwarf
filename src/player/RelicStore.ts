@@ -331,6 +331,107 @@ export class RelicStore {
     osc.stop(now + 0.2);
   }
 
+  private lastThermalSfxTime = 0;
+
+  public playThermalUpdraftSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - this.lastThermalSfxTime < 0.55) return;
+    this.lastThermalSfxTime = now;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.exponentialRampToValueAtTime(460, now + 0.42);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.5);
+  }
+
+  public playGroundSlamImpactSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Deep sub-bass boom
+    const subOsc = ctx.createOscillator();
+    const subGain = ctx.createGain();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(140, now);
+    subOsc.frequency.exponentialRampToValueAtTime(32, now + 0.35);
+
+    subGain.gain.setValueAtTime(0.001, now);
+    subGain.gain.exponentialRampToValueAtTime(0.24, now + 0.02);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+
+    subOsc.connect(subGain);
+    subGain.connect(ctx.destination);
+    subOsc.onended = () => {
+      subOsc.disconnect();
+      subGain.disconnect();
+    };
+    subOsc.start(now);
+    subOsc.stop(now + 0.44);
+
+    // Punch crack / transient
+    const crackOsc = ctx.createOscillator();
+    const crackGain = ctx.createGain();
+    crackOsc.type = 'sawtooth';
+    crackOsc.frequency.setValueAtTime(260, now);
+    crackOsc.frequency.exponentialRampToValueAtTime(65, now + 0.14);
+
+    crackGain.gain.setValueAtTime(0.001, now);
+    crackGain.gain.exponentialRampToValueAtTime(0.16, now + 0.01);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+
+    crackOsc.connect(crackGain);
+    crackGain.connect(ctx.destination);
+    crackOsc.onended = () => {
+      crackOsc.disconnect();
+      crackGain.disconnect();
+    };
+    crackOsc.start(now);
+    crackOsc.stop(now + 0.18);
+  }
+
+  public playSurfRamSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Heavy bronze shield collision clang
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.22);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.26);
+  }
+
   private playUnlockFanfare(): void {
     const ctx = this.ensureAudio();
     if (!ctx) return;

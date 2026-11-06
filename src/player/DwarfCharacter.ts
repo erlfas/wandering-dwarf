@@ -55,6 +55,8 @@ export class DwarfCharacter {
   private crownGroup = new THREE.Group();
   private warhornGroup = new THREE.Group();
   private warhornWaveRing!: THREE.Mesh;
+  private slamShockwaveRing!: THREE.Mesh;
+  private slamShockwaveTimer = 0;
   private surfShieldMesh!: THREE.Mesh;
   private swimRippleRing!: THREE.Mesh;
   private swimOuterRing!: THREE.Mesh;
@@ -910,6 +912,20 @@ export class DwarfCharacter {
     this.warhornWaveRing.visible = false;
     this.root.add(this.warhornWaveRing);
 
+    const slamGeo = new THREE.RingGeometry(0.42, 0.65, 28);
+    slamGeo.rotateX(-Math.PI / 2);
+    const slamMat = new THREE.MeshBasicMaterial({
+      color: 0xffb74d,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+    });
+    this.slamShockwaveRing = new THREE.Mesh(slamGeo, slamMat);
+    this.slamShockwaveRing.position.y = 0.12;
+    this.slamShockwaveRing.visible = false;
+    this.root.add(this.slamShockwaveRing);
+
     // Freeze static child meshes on equipment/armor groups so updateMatrixWorld skips Euler/Quat recomputation
     const freezeStaticMeshes = (group: THREE.Object3D) => {
       group.traverse((child) => {
@@ -985,6 +1001,12 @@ export class DwarfCharacter {
     this.warhornWaveTimer = 1.1;
     this.warhornGroup.visible = true;
     this.warhornWaveRing.visible = true;
+  }
+
+  public triggerGroundSlamShockwave(): void {
+    this.slamShockwaveTimer = 0.45;
+    this.slamShockwaveRing.visible = true;
+    this.spawnBurst(this.root.position.x, this.root.position.y + 0.15, this.root.position.z, 28);
   }
 
   private refreshArmorVisibility(): void {
@@ -1427,7 +1449,8 @@ export class DwarfCharacter {
     isGliding = false,
     isSliding = false,
     isTrailblazing = false,
-    slopePitch = 0
+    slopePitch = 0,
+    isGroundSlamming = false
   ): void {
     this.root.position.set(worldX, worldY, worldZ);
 
@@ -1444,13 +1467,13 @@ export class DwarfCharacter {
 
     this.root.rotation.y = this.heading;
 
-    // Smoothly tilt dwarf model forward/downhill when sliding or gliding
+    // Smoothly tilt dwarf model forward/downhill when sliding, gliding, or ground-slamming
     if (isGliding) {
       this.glideTime += dt;
     } else {
       this.glideTime = 0;
     }
-    const desiredTiltX = isSliding ? slopePitch + 0.18 : isGliding ? 0.24 : 0;
+    const desiredTiltX = isGroundSlamming ? 0.64 : isSliding ? slopePitch + 0.18 : isGliding ? 0.24 : 0;
     const desiredTiltZ = isGliding ? Math.sin(this.glideTime * 4.0) * 0.08 : 0;
     if (
       Math.abs(this.slideTiltX - desiredTiltX) > 0.0005 ||
@@ -1477,8 +1500,8 @@ export class DwarfCharacter {
       this.gliderGroup.scale.setScalar(this.gliderBlend);
     }
 
-    // Show Ironbelly Surf-Shield underneath boots when slope-sliding or dashing
-    this.surfShieldMesh.visible = isSliding && !isSwimming;
+    // Show Ironbelly Surf-Shield underneath boots when slope-sliding, dashing, or ground-slamming
+    this.surfShieldMesh.visible = (isSliding || isGroundSlamming) && !isSwimming;
 
     // Animate drawing the Fishing Rod out of the backpack (or stowing it back into the backpack)
     const wantFishing = this.isFishingMode && !isSwimming && !isGliding;
@@ -1778,8 +1801,20 @@ export class DwarfCharacter {
       }
     }
 
-    // Emit & simulate world-space trail particles (sparks when sliding, dust when trailblazing)
-    const shouldEmitTrail = (isSliding || (isTrailblazing && moveSpeed > 9.0)) && !isSwimming;
+    if (this.slamShockwaveTimer > 0) {
+      this.slamShockwaveTimer = Math.max(0, this.slamShockwaveTimer - dt);
+      const p = 1.0 - this.slamShockwaveTimer / 0.45;
+      this.slamShockwaveRing.visible = true;
+      this.slamShockwaveRing.scale.setScalar(1.0 + p * 12.0);
+      (this.slamShockwaveRing.material as THREE.MeshBasicMaterial).opacity =
+        Math.sin(p * Math.PI) * 0.88;
+      if (this.slamShockwaveTimer === 0) {
+        this.slamShockwaveRing.visible = false;
+      }
+    }
+
+    // Emit & simulate world-space trail particles (sparks when sliding or plunging, dust when trailblazing)
+    const shouldEmitTrail = (isSliding || isGroundSlamming || (isTrailblazing && moveSpeed > 9.0)) && !isSwimming;
     if (shouldEmitTrail) {
       const rate = isSliding ? 28 : 14;
       this.emitAccum += dt * rate;

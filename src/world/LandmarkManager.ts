@@ -568,6 +568,22 @@ export class LandmarkManager {
     return this.cachedLitBeacons;
   }
 
+  /**
+   * Checks whether the given world coordinates are within the vertical thermal updraft column
+   * of any lit Watchtower Beacon.
+   */
+  public isInsideLitBeaconUpdraft(worldX: number, worldZ: number, radius = 5.8): boolean {
+    const rSq = radius * radius;
+    for (const b of this.getLitBeacons()) {
+      const dx = worldX - b.x;
+      const dz = worldZ - b.z;
+      if (dx * dx + dz * dz <= rSq) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public restoreLitBeacons(beacons: SavedBeaconWaypoint[] | undefined): void {
     this.litBeaconMap.clear();
     if (beacons) {

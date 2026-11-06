@@ -995,6 +995,69 @@ export class TrollCombatManager {
     return stunnedCount;
   }
 
+  /**
+   * Applies an explosive ground-slam shockwave to all active Trolls within radius.
+   * Staggers, knocks back, and deals heavy impact damage.
+   */
+  public applyGroundSlamShockwave(playerPos: THREE.Vector3, radius = 6.8, damage = 85): number {
+    let hitCount = 0;
+    const rSq = radius * radius;
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = t.pos.x - playerPos.x;
+      const dz = t.pos.z - playerPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq <= rSq) {
+        hitCount++;
+        const len = Math.sqrt(dSq) || 1;
+        t.pos.x += (dx / len) * 3.4;
+        t.pos.z += (dz / len) * 3.4;
+        t.pos.y = this.sampleGroundHeight(t.pos.x, t.pos.z);
+        t.state = 'chase';
+        t.attackTimer = 0;
+        t.attackCooldown = 2.8;
+        t.staggerTimer = 2.2;
+        this.applyDamageToTroll(t, damage, playerPos, false);
+      }
+    }
+    return hitCount;
+  }
+
+  /**
+   * Applies high-speed Ironbelly Surf-Ram collision strike against any Troll in the dwarf's path.
+   */
+  public applySurfRamImpact(
+    playerPos: THREE.Vector3,
+    ramSpeed: number,
+    heading: number
+  ): { hit: boolean; damage: number; trollTitle?: string } {
+    const ramRadius = 2.4;
+    const ramRadiusSq = ramRadius * ramRadius;
+    const damage = Math.round(ramSpeed * 3.4);
+
+    for (const t of this.trollPool) {
+      if (!t.active || t.state === 'dying') continue;
+      const dx = t.pos.x - playerPos.x;
+      const dz = t.pos.z - playerPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq <= ramRadiusSq) {
+        // Knockback in direction of surfing momentum
+        const knockDirX = Math.sin(heading);
+        const knockDirZ = Math.cos(heading);
+        t.pos.x += knockDirX * 3.6;
+        t.pos.z += knockDirZ * 3.6;
+        t.pos.y = this.sampleGroundHeight(t.pos.x, t.pos.z);
+        t.state = 'chase';
+        t.attackTimer = 0;
+        t.attackCooldown = 2.4;
+        t.staggerTimer = 1.9;
+        this.applyDamageToTroll(t, damage, playerPos, false);
+        return { hit: true, damage, trollTitle: t.title };
+      }
+    }
+    return { hit: false, damage: 0 };
+  }
+
   public update(dt: number, elapsedTime: number, playerPos: THREE.Vector3, cameraPos: THREE.Vector3): void {
     this.lastElapsedTime = elapsedTime;
     if (this.playerAttackCooldown > 0) {

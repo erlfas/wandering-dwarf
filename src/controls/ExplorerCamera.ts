@@ -11,6 +11,8 @@ import { HutManager } from '../world/HutManager';
 import { CastleAndQuarryManager } from '../world/CastleAndQuarryManager';
 import { CastleInteriorManager } from '../world/CastleInteriorManager';
 import { VolcanoManager } from '../world/VolcanoManager';
+import { TrollCombatManager } from '../world/TrollCombatManager';
+import { LivingWorldManager } from '../world/LivingWorldManager';
 
 const tempSlopeNormal = new THREE.Vector3();
 
@@ -46,11 +48,13 @@ export class ExplorerCamera {
   private lastTrackSampleZ = NaN;
   private cachedTrackW = 0;
 
-  // Vertical jump & glide physics
+  // Vertical jump, glide, and ground-slam physics
   private velY = 0;
   private heightAboveGround = 0;
   private jumpsUsed = 0;
   private isGliding = false;
+  private isGroundSlamming = false;
+  private isInThermalUpdraft = false;
 
   // Downhill slope surfing & dodge-dash physics
   private slideSpeed = 0;
@@ -67,6 +71,11 @@ export class ExplorerCamera {
   private castleManager?: CastleAndQuarryManager;
   private castleInteriorManager?: CastleInteriorManager;
   private volcanoManager?: VolcanoManager;
+  private trollCombatManager?: TrollCombatManager;
+  private livingWorldManager?: LivingWorldManager;
+  public onGroundSlamImpact?: (pos: THREE.Vector3) => void;
+  public onSurfRamCollision?: (pos: THREE.Vector3, speed: number, heading: number) => void;
+  public onCatchThermalUpdraft?: (pos: THREE.Vector3) => void;
   public lastAimForward = 0;
   public lastAimRight = 0;
 
@@ -117,6 +126,14 @@ export class ExplorerCamera {
     this.volcanoManager = vm;
   }
 
+  public setTrollCombatManager(tcm: TrollCombatManager): void {
+    this.trollCombatManager = tcm;
+  }
+
+  public setLivingWorldManager(lwm: LivingWorldManager): void {
+    this.livingWorldManager = lwm;
+  }
+
   public isSprintingNow(): boolean {
     return (
       (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) &&
@@ -125,7 +142,7 @@ export class ExplorerCamera {
   }
 
   public isAttackingOrAirborne(): boolean {
-    return this.isSliding || this.heightAboveGround > 0.25;
+    return this.isSliding || this.isGroundSlamming || this.heightAboveGround > 0.25;
   }
 
   public applyHazardBump(): void {
@@ -138,6 +155,8 @@ export class ExplorerCamera {
     if (this.castleInteriorManager?.isInsideCastle() || this.hutManager?.isInsideHut()) {
       return '';
     }
+    if (this.isGroundSlamming) return '💥 Ground-Slam Plunge!';
+    if (this.isInThermalUpdraft) return `🔥 Thermal Updraft (+${Math.max(0, this.velY).toFixed(0)}m/s)!`;
     if (this.isGliding) return '🪂 Gliding';
     if (this.isSliding) return `🛡️ Surfing (${this.currentSpeed.toFixed(0)}m/s)`;
     const hasWarmth = this.landmarkManager?.hasCampfireBuff() ?? false;
@@ -336,6 +355,19 @@ export class ExplorerCamera {
   }
 
   private tryStartSlideOrDash(): void {
+    if (this.heightAboveGround > 0.65) {
+      // In mid-air: trigger Airborne Ground-Slam / Shield-Plunge!
+      if (!this.isGroundSlamming) {
+        this.isGroundSlamming = true;
+        this.isGliding = false;
+        const hasShield = this.relicStore?.has('slide_shield') ?? false;
+        this.velY = hasShield ? -32.0 : -27.0;
+        this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y, this.playerPos.z, 10);
+        this.relicStore?.playDashSlideSound();
+      }
+      return;
+    }
+
     if (this.dashCooldown <= 0 && this.heightAboveGround <= 0.25) {
       const hasShield = this.relicStore?.has('slide_shield') ?? false;
       this.dashTimer = hasShield ? 0.36 : 0.24;
@@ -536,6 +568,33 @@ export class ExplorerCamera {
         actualSpeed = 0;
         this.slideSpeed = 0;
       }
+
+      if (actualSpeed >= 15.0) {
+        // Downhill Surf-Ramming against Trolls
+        const ramResult = this.trollCombatManager?.applySurfRamImpact(
+          this.playerPos,
+          actualSpeed,
+          this.dwarf.heading
+        );
+        if (ramResult?.hit) {
+          this.relicStore?.playSurfRamSound();
+          this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z, 22);
+          this.slideSpeed = Math.max(12.0, this.slideSpeed * 0.82);
+          this.castleManager?.showToast(
+            `🛡️ Ironbelly Surf-Ram! (-${ramResult.damage} HP) Staggered ${ramResult.trollTitle ?? 'Troll'} with downhill momentum!`,
+            true
+          );
+          this.onSurfRamCollision?.(this.playerPos, actualSpeed, this.dwarf.heading);
+        }
+
+        // Downhill Surf-Ramming against Goblins
+        const goblinSmashed =
+          this.livingWorldManager?.checkSurfRamGoblin(this.playerPos, 2.2) ?? false;
+        if (goblinSmashed) {
+          this.relicStore?.playSurfRamSound();
+          this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z, 16);
+        }
+      }
     } else {
       this.slideSpeed = Math.max(0, this.slideSpeed - 20.0 * dt);
 
@@ -628,36 +687,100 @@ export class ExplorerCamera {
     const holdingJump = this.keys.has('Space') && !isFishing;
     this.isGliding =
       !isSwimming &&
+      !this.isGroundSlamming &&
       holdingJump &&
       this.velY < 0 &&
       this.heightAboveGround > 0.85;
 
+    // Thermal updraft detection (Lit Watchtower Beacons & Mount Doomforge rim)
+    if (this.isGliding) {
+      const isBeaconUpdraft =
+        this.landmarkManager?.isInsideLitBeaconUpdraft(this.playerPos.x, this.playerPos.z, 6.2) ??
+        false;
+      const isVolcanoUpdraft =
+        this.volcanoManager?.isPlayerInUpdraftZone(this.playerPos.x, this.playerPos.z) ?? false;
+      if (isBeaconUpdraft || isVolcanoUpdraft) {
+        if (!this.isInThermalUpdraft) {
+          this.onCatchThermalUpdraft?.(this.playerPos);
+        }
+        this.isInThermalUpdraft = true;
+        this.velY = Math.min(24.0, this.velY + 38.0 * dt);
+        this.relicStore?.playThermalUpdraftSound();
+        if (Math.random() < 0.35) {
+          this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.1, this.playerPos.z, 2);
+        }
+      } else {
+        this.isInThermalUpdraft = false;
+      }
+    } else {
+      this.isInThermalUpdraft = false;
+    }
+
     if (this.heightAboveGround > 0 || this.velY > 0) {
-      const gravity = this.isGliding ? (hasSpringGreaves ? 4.2 : 7.5) : 22.5;
-      this.velY -= gravity * dt;
-      if (this.isGliding) {
-        const terminalGlideVel = hasSpringGreaves ? -1.85 : -3.1;
-        if (this.velY < terminalGlideVel) {
-          this.velY = terminalGlideVel;
+      if (this.isGroundSlamming) {
+        // Accelerate rapid ground plunge
+        this.velY = Math.max(-38.0, this.velY - 36.0 * dt);
+        if (Math.random() < 0.45) {
+          this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.25, this.playerPos.z, 2);
+        }
+      } else if (!this.isInThermalUpdraft) {
+        const gravity = this.isGliding ? (hasSpringGreaves ? 4.2 : 7.5) : 22.5;
+        this.velY -= gravity * dt;
+        if (this.isGliding) {
+          const terminalGlideVel = hasSpringGreaves ? -1.85 : -3.1;
+          if (this.velY < terminalGlideVel) {
+            this.velY = terminalGlideVel;
+          }
         }
       }
       this.playerPos.y = floorY + this.heightAboveGround + this.velY * dt;
       this.heightAboveGround = this.playerPos.y - floorY;
 
       if (this.heightAboveGround <= 0) {
-        if (this.velY < -7.0 && !isSwimming) {
+        const wasSlamming = this.isGroundSlamming;
+        this.isGroundSlamming = false;
+        if (wasSlamming) {
+          // Ground-Slam Impact!
+          this.pitch = Math.min(Math.PI * 0.44, this.pitch + 0.045);
+          this.dwarf.triggerGroundSlamShockwave();
+          this.relicStore?.playGroundSlamImpactSound();
+
+          const slamRadius = hasSlideShield ? 7.6 : 6.5;
+          const slamDamage = hasSlideShield ? 95 : 80;
+          const trollsHit =
+            this.trollCombatManager?.applyGroundSlamShockwave(
+              this.playerPos,
+              slamRadius,
+              slamDamage
+            ) ?? 0;
+          const goblinsHit =
+            this.livingWorldManager?.defeatGoblinsInRadius(this.playerPos, slamRadius) ?? 0;
+          this.castleManager?.fractureRocksInRadius(this.playerPos, 5.2);
+          this.onGroundSlamImpact?.(this.playerPos);
+
+          if (trollsHit > 0 || goblinsHit > 0) {
+            this.castleManager?.showToast(
+              `💥 Ground-Slam Shockwave! Staggered ${trollsHit} Troll${trollsHit !== 1 ? 's' : ''} & defeated ${goblinsHit} Goblin${goblinsHit !== 1 ? 's' : ''}!`,
+              true
+            );
+          }
+        } else if (this.velY < -7.0 && !isSwimming) {
           this.dwarf.spawnBurst(this.playerPos.x, floorY, this.playerPos.z, 7);
         }
         this.heightAboveGround = 0;
         this.velY = 0;
         this.jumpsUsed = 0;
         this.isGliding = false;
+        this.isInThermalUpdraft = false;
         this.playerPos.y = floorY;
       }
     } else {
       this.heightAboveGround = 0;
       this.velY = 0;
       this.jumpsUsed = 0;
+      this.isGliding = false;
+      this.isInThermalUpdraft = false;
+      this.isGroundSlamming = false;
       this.playerPos.y = floorY;
     }
 
@@ -674,7 +797,8 @@ export class ExplorerCamera {
       this.isGliding,
       this.isSliding,
       this.isTrailblazing,
-      slopePitch
+      slopePitch,
+      this.isGroundSlamming
     );
 
     // Smooth camera target follow (snap at epsilon to avoid subnormal float decay)

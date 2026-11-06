@@ -59,6 +59,8 @@ export interface SavedProgress {
   weaponTemperLevel?: number;
   castleSiegesWon?: number;
   unclaimedTributeGold?: number;
+  mithrilVeinsMined?: number;
+  windAndSlopeFeats?: number;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {

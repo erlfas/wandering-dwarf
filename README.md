@@ -41,10 +41,13 @@ npm run preview
 | :--- | :--- |
 | **`W` `A` `S` `D`** or **Arrow Keys** | Move dwarf / camera relative to view direction (or aim cast in Fishing Mode) |
 | **`Shift`** (Hold) | Sprint (**+25% Trailblazer speed boost** on dirt footpaths, **+45%** with *Boots of the Strider*) |
-| **`Space`** (Press / Hold in air) | **Jump** / **Double-Jump** (*Skyforge Greaves*) / Hold while descending to **Wind-Glide** across valleys |
-| **`C`** or **`Ctrl`** (Press / Hold) | **Dodge-Dash** on flat ground or **Surf Downhill Slopes** on the *Ironbelly Surf-Shield* |
+| **`Space`** (Press / Hold in air) | **Jump** / **Double-Jump** (*Skyforge Greaves*) / Hold while descending to **Wind-Glide** (glide into lit **Watchtower Beacons** or volcano vents to catch soaring **Thermal Updrafts** $+24\text{m/s}$) |
+| **`C`** or **`Ctrl`** (Press / Hold) | **Dodge-Dash** on flat ground, **Airborne Ground-Slam** in mid-air (shockwave shatters rocks, staggers Trolls & defeats Goblins), or **Downhill Surf-Ramming** on the *Ironbelly Surf-Shield* |
 | **`F`** (or **🎣 Fish** HUD Button) | Equip / stow the **3D Fishing Rod** from the dwarf's backpack (`Click` / `Space` to cast & reel in fish) |
-| **`H`** (or **🏹 Hunt** HUD Button) | Equip / stow the **3D Bow & Arrow** from the dwarf's backpack (Mouse to aim & lock onto Deer, `Click` / `E` / `R` to shoot) |
+| **`E`** | **Lift** Natural Stones / mine **Mithril Veins**, chisel blocks at a Quarry, build Castle blocks, or enter Keep Drawbridge |
+| **`Q`** | Set up a new **Stonemason Quarry** on level clearing |
+| **`U`** | Upgrade Quarry to **Tier II Automaton Quarry** (300g — double cutting speed, 24 stockpile, automated block dispatch) |
+| **`K`** | Stake a new **Castle Construction Site** on level clearing |
 | **`1` `2` `3` `4`** | Unlock Dwarven Relics in the **Relic Forge** using collected Gold |
 | **`B`** | Show / collapse the **Dwarven Relic Forge** HUD drawer |
 | **`T`** | Fast-travel between lit **Watchtower Beacons** |

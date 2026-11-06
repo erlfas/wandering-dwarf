@@ -130,6 +130,28 @@ export const DWARVEN_RANKS: DwarvenRankDef[] = [
     carrySpeedBonus: 0.38,
     perkSummary: '+115❤️/+90⚡ Max, +85% Damage, +38% Haul Speed & Citadel Mastery',
   },
+  {
+    rank: 7,
+    title: 'Dragon-Slayer Regent',
+    badge: '🐉 Rank VII',
+    minRenown: 3400,
+    maxHpBonus: 155,
+    maxEnergyBonus: 125,
+    damageMult: 2.15,
+    carrySpeedBonus: 0.46,
+    perkSummary: '+155❤️/+125⚡ Max, +115% Damage, +46% Haul Speed & Dragon-Bane Strike',
+  },
+  {
+    rank: 8,
+    title: 'Immortal Ancestor of Khazad',
+    badge: '⚡ Rank VIII',
+    minRenown: 4800,
+    maxHpBonus: 200,
+    maxEnergyBonus: 165,
+    damageMult: 2.5,
+    carrySpeedBonus: 0.55,
+    perkSummary: '+200❤️/+165⚡ Max, +150% Damage, +55% Haul Speed & Ancestral Aegis',
+  },
 ]
 
 export interface AssignmentSnapshot {
@@ -152,6 +174,9 @@ export interface AssignmentSnapshot {
   deerHuntedTotal: number
   weaponTemperLevel: number
   castleSiegesWon: number
+  mithrilVeinsMined: number
+  automatonQuarriesCount: number
+  windAndSlopeFeats?: number
 }
 
 export interface ChronicleAssignmentDef {
@@ -370,6 +395,66 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     rewardFood: 6,
     getProgress: (s) => ({
       current: Math.min(1, s.castleSiegesWon),
+      target: 1,
+    }),
+  },
+  {
+    id: 'master_wind_and_slope',
+    chapter: 15,
+    title: 'Master of the Wind & Slope',
+    icon: '⚡',
+    description: 'Catch a soaring Watchtower / Caldera Thermal Updraft (Space) OR perform a High-Speed Surf-Ram (C).',
+    hint: 'Wind-glide (Space) into a lit Beacon sky-beam (+24m/s updraft), or surf (C) into enemy ranks at >15m/s!',
+    rewardGold: 320,
+    rewardRenown: 320,
+    rewardFood: 4,
+    getProgress: (s) => ({
+      current: Math.min(1, s.windAndSlopeFeats ?? 0),
+      target: 1,
+    }),
+  },
+  {
+    id: 'the_automated_realm',
+    chapter: 16,
+    title: 'The Automated Realm',
+    icon: '⚙️',
+    description: 'Upgrade an active Quarry to a Tier II Automaton Quarry (Press U at your Quarry, 300g).',
+    hint: 'Walk up to your Quarry workbench and press U (300 Gold) to install the steam automaton conveyor!',
+    rewardGold: 380,
+    rewardRenown: 360,
+    rewardFood: 5,
+    getProgress: (s) => ({
+      current: Math.min(1, s.automatonQuarriesCount),
+      target: 1,
+    }),
+  },
+  {
+    id: 'strike_the_mithril_crags',
+    chapter: 17,
+    title: 'Strike the Mithril Crags',
+    icon: '💎',
+    description: 'Prospect and mine 2 glowing cyan Mithril Ore Veins in high mountain crags (y >= 15m).',
+    hint: 'Climb high mountain peaks or volcanic ridges to find and harvest glowing cyan-veined Mithril boulders!',
+    rewardGold: 450,
+    rewardRenown: 420,
+    rewardFood: 5,
+    getProgress: (s) => ({
+      current: Math.min(2, s.mithrilVeinsMined),
+      target: 2,
+    }),
+  },
+  {
+    id: 'high_kings_grand_citadel_crown',
+    chapter: 18,
+    title: "Mountain King's Grand Citadel Crown",
+    icon: '👑',
+    description: 'Complete all 30 Blocks of a Grand Citadel OR temper your weapon to +3 at the Castle Runic Anvil.',
+    hint: 'Deliver 30 Blocks to crown the Citadel Golden Spire, or temper your weapon to +3 in the Great Hall!',
+    rewardGold: 650,
+    rewardRenown: 600,
+    rewardFood: 8,
+    getProgress: (s) => ({
+      current: Math.min(1, (s.bestCastleBlocks >= 30 ? 1 : 0) + (s.weaponTemperLevel >= 3 ? 1 : 0)),
       target: 1,
     }),
   },

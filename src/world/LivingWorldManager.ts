@@ -562,6 +562,49 @@ export class LivingWorldManager {
     }
   }
 
+  /**
+   * Smashes all active Goblins within a ground-slam radius.
+   */
+  public defeatGoblinsInRadius(playerPos: THREE.Vector3, radius = 6.5): number {
+    let count = 0;
+    const rSq = radius * radius;
+    for (const ent of this.activeChunks.values()) {
+      if (ent.goblin && ent.goblin.mesh.visible && !ent.goblin.defeated) {
+        const dx = playerPos.x - ent.goblin.pos.x;
+        const dz = playerPos.z - ent.goblin.pos.z;
+        if (dx * dx + dz * dz <= rSq) {
+          ent.goblin.defeated = true;
+          ent.goblin.flyTime = 0;
+          count++;
+          this.playStarChime();
+          this.onGrantOrDeductGold(125, '💥 Ground-Slam Smashed Goblin Cutpurse! +125 Gold!', true);
+        }
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Smashes any Goblin colliding during high-speed downhill surf-ramming.
+   */
+  public checkSurfRamGoblin(playerPos: THREE.Vector3, radius = 2.4): boolean {
+    const rSq = radius * radius;
+    for (const ent of this.activeChunks.values()) {
+      if (ent.goblin && ent.goblin.mesh.visible && !ent.goblin.defeated) {
+        const dx = playerPos.x - ent.goblin.pos.x;
+        const dz = playerPos.z - ent.goblin.pos.z;
+        if (dx * dx + dz * dz <= rSq) {
+          ent.goblin.defeated = true;
+          ent.goblin.flyTime = 0;
+          this.playStarChime();
+          this.onGrantOrDeductGold(125, '🛡️ Surf-Ram Smashed Goblin Cutpurse! +125 Gold!', true);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   public updateAtmosphereAndLantern(
     elapsedTime: number,
     playerPos: THREE.Vector3,
