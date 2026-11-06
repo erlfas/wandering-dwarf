@@ -5851,6 +5851,48 @@ export class CastleAndQuarryManager {
       }
     };
 
+    // 0. Natural Stones used for building (world chunk boulders and quarry bonus rocks)
+    const checkRockCollision = (rock: NaturalRockInstance) => {
+      if (!rock.root.visible || rock.respawnTimer > 0) return;
+      if (Math.abs(pos.y - rock.wy) > 2.0) return;
+
+      const dx = pos.x - rock.wx;
+      const dz = pos.z - rock.wz;
+      if (Math.abs(dx) > 2.2 || Math.abs(dz) > 2.2) return;
+
+      const rockRadius = 0.58 * rock.scale;
+      const minDist = rockRadius + playerRadius;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < minDist * minDist) {
+        if (dSq > 0.0001) {
+          const d = Math.sqrt(dSq);
+          const push = (minDist - d) / d;
+          pos.x += dx * push;
+          pos.z += dz * push;
+        } else {
+          pos.z += minDist;
+        }
+      }
+    };
+
+    const size = this.config.chunkSize;
+    const centerCx = Math.round(pos.x / size);
+    const centerCz = Math.round(pos.z / size);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const rocks = this.activeChunkRocks.get(this.getKey(centerCx + dx, centerCz + dz));
+        if (rocks) {
+          for (let i = 0; i < rocks.length; i++) {
+            checkRockCollision(rocks[i]);
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < this.quarryBonusRocks.length; i++) {
+      checkRockCollision(this.quarryBonusRocks[i]);
+    }
+
     // 1. Quarry Colliders (Workbench, Wooden Jib Crane, Minecart & Rails, Rim Rocks, Stockpile)
     for (const q of this.quarries) {
       const qdx = pos.x - q.x;
