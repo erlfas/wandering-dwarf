@@ -189,3 +189,5 @@ Players spend Gold earned from chests, fishing, and deer hunting directly in the
 - **Circular Grid Streaming & Frame-Budgeted Queue**: Streams chunks within `renderRadius` around the player within a `4.5ms` frame budget with decoupled terrain, forest, and grass LODs (`docs/algorithmic-improvements.md`).
 - **Close-Range GLB + Distant Procedural LODs**: Renders detailed GLB models for nearby pines, oaks, dwarven huts, ancient stone circles, grass clumps, and wild deer while switching distant chunks to lightweight procedural geometry.
 - **Exact Triangle Surface Interpolation & O(1) Colliders**: Interpolates exact rendered triangle heights beneath the dwarf's boots, chests, landmarks, fish, and deer in $O(1)$ directly from loaded chunk vertex buffers.
+
+<!-- test commit -->
