@@ -125,7 +125,7 @@ export function loadGoblinModel(onLoaded?: () => void): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry;
+      let geo = mesh.geometry.clone();
       geo.applyMatrix4(mesh.matrixWorld);
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');

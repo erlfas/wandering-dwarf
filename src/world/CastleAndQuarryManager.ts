@@ -950,7 +950,7 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       if (!foundMesh) return;
       const mesh = foundMesh as THREE.Mesh;
 
-      let geo = mesh.geometry;
+      let geo = mesh.geometry.clone();
       geo.applyMatrix4(mesh.matrixWorld);
       geo.deleteAttribute('skinIndex');
       geo.deleteAttribute('skinWeight');
@@ -1014,8 +1014,8 @@ export function createAutomatonInstance(): {
 } | null {
   if (!sharedSteamAutomatonTemplate) return null;
   const group = cloneSkeleton(sharedSteamAutomatonTemplate) as THREE.Group;
-  // Scale model to 2.05m tall (base height 0.52m -> scale 3.94)
-  group.scale.setScalar(3.94);
+  // Scale model to 2.05m tall (base height 0.568m -> scale 3.61)
+  group.scale.setScalar(3.61);
 
   const bones: Partial<AutomatonBones> = {};
   group.traverse((obj) => {
@@ -5871,6 +5871,10 @@ export class CastleAndQuarryManager {
       // Stockpiled Ashlar Blocks pallet when non-empty
       if (q.stockpiledBlocks > 0) {
         pushOutLocalBox(q.x, q.z, cos, sin, -2.48, -1.2, 0.72, 1.62);
+      }
+      // Tier II Dwarven Steam Automaton Golem standing beside workbench at (+1.45, -0.20)
+      if (q.tier === 2) {
+        pushOutLocalCircle(q.x, q.z, cos, sin, 1.45, -0.2, 0.65);
       }
     }
 
