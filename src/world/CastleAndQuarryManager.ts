@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import borderKeepModelUrl from '../../3dmodels/dwarven border keep 3d model.glb?url';
 import dwarvenWorkbenchModelUrl from '../../3dmodels/dwarven workbench 3d model.glb?url';
 import heavyBallistaModelUrl from '../../3dmodels/heavy ballista 3d model.glb?url';
@@ -289,6 +290,21 @@ interface NaturalRockInstance {
   ringMesh: THREE.Mesh;
 }
 
+export interface AutomatonBones {
+  spine: THREE.Bone;
+  head: THREE.Bone;
+  leftArm: THREE.Bone;
+  leftForeArm: THREE.Bone;
+  rightArm: THREE.Bone;
+  rightForeArm: THREE.Bone;
+  baseSpineX: number;
+  baseHeadY: number;
+  baseLeftArmX: number;
+  baseRightArmX: number;
+  baseLeftForeArmZ: number;
+  baseRightForeArmZ: number;
+}
+
 interface QuarryInstance {
   id: string;
   x: number;
@@ -310,6 +326,9 @@ interface QuarryInstance {
   stockpileMeshes: THREE.Mesh[];
   automatonTopperGroup?: THREE.Group;
   automatonMesh?: THREE.Mesh;
+  automatonModelGroup?: THREE.Group;
+  automatonBones?: AutomatonBones;
+  automatonSteamTimer?: number;
 }
 
 type CastleMatKey = 'stone' | 'darkStone' | 'wood' | 'iron' | 'roof' | 'gold' | 'flame';
@@ -741,6 +760,7 @@ let sharedJibCraneGeo: THREE.BufferGeometry | null = null;
 let sharedJibCraneMat: THREE.MeshStandardMaterial | null = null;
 let sharedSteamAutomatonGeo: THREE.BufferGeometry | null = null;
 let sharedSteamAutomatonMat: THREE.MeshStandardMaterial | null = null;
+let sharedSteamAutomatonTemplate: THREE.Group | null = null;
 let quarryPropsLoadStarted = false;
 const onQuarryPropsLoadedCallbacks: Array<() => void> = [];
 
@@ -975,6 +995,10 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
 
       sharedSteamAutomatonGeo = geo;
       sharedSteamAutomatonMat = mat;
+      mesh.material = mat;
+      mesh.castShadow = true;
+      mesh.receiveShadow = false;
+      sharedSteamAutomatonTemplate = gltf.scene;
       notifyListeners();
     },
     undefined,
@@ -982,6 +1006,57 @@ export function loadQuarryPropModels(onLoaded?: () => void): void {
       console.error('Failed to load dwarven steam automaton 3D model:', err);
     }
   );
+}
+
+export function createAutomatonInstance(): {
+  group: THREE.Group;
+  bones?: AutomatonBones;
+} | null {
+  if (!sharedSteamAutomatonTemplate) return null;
+  const group = cloneSkeleton(sharedSteamAutomatonTemplate) as THREE.Group;
+  // Scale model to 2.05m tall (base height 0.52m -> scale 3.94)
+  group.scale.setScalar(3.94);
+
+  const bones: Partial<AutomatonBones> = {};
+  group.traverse((obj) => {
+    if (obj instanceof THREE.Bone) {
+      if (obj.name === 'mixamorigSpine' || obj.name.endsWith('Spine')) bones.spine = obj;
+      else if (obj.name === 'mixamorigHead' || obj.name.endsWith('Head')) bones.head = obj;
+      else if (obj.name === 'mixamorigLeftArm' || obj.name.endsWith('LeftArm')) bones.leftArm = obj;
+      else if (obj.name === 'mixamorigRightArm' || obj.name.endsWith('RightArm')) bones.rightArm = obj;
+      else if (obj.name === 'mixamorigLeftForeArm' || obj.name.endsWith('LeftForeArm')) bones.leftForeArm = obj;
+      else if (obj.name === 'mixamorigRightForeArm' || obj.name.endsWith('RightForeArm')) bones.rightForeArm = obj;
+    }
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = true;
+      obj.receiveShadow = false;
+    }
+  });
+
+  if (bones.leftArm && bones.rightArm && bones.leftForeArm && bones.rightForeArm) {
+    // Bring arms down from the rigid horizontal T-pose into an active operational posture
+    bones.leftArm.rotateX(-1.05);
+    bones.rightArm.rotateX(1.1);
+    bones.leftForeArm.rotateZ(0.5);
+    bones.rightForeArm.rotateZ(-0.5);
+
+    const fullBones: AutomatonBones = {
+      spine: bones.spine!,
+      head: bones.head!,
+      leftArm: bones.leftArm,
+      leftForeArm: bones.leftForeArm,
+      rightArm: bones.rightArm,
+      rightForeArm: bones.rightForeArm,
+      baseSpineX: bones.spine?.rotation.x ?? 0,
+      baseHeadY: bones.head?.rotation.y ?? 0,
+      baseLeftArmX: bones.leftArm.rotation.x,
+      baseRightArmX: bones.rightArm.rotation.x,
+      baseLeftForeArmZ: bones.leftForeArm.rotation.z,
+      baseRightForeArmZ: bones.rightForeArm.rotation.z,
+    };
+    return { group, bones: fullBones };
+  }
+  return { group };
 }
 
 function formatCompassDir(dx: number, dz: number): string {
@@ -3791,11 +3866,7 @@ export class CastleAndQuarryManager {
     root.add(automatonTopperGroup);
 
     // Tier II Dwarven Steam Automaton Golem standing on the quarry pad beside the workbench
-    const useGlbAutomaton = Boolean(sharedSteamAutomatonGeo && sharedSteamAutomatonMat);
-    const automatonMesh = new THREE.Mesh(
-      useGlbAutomaton ? sharedSteamAutomatonGeo! : assets.fallbackAutomatonGeo,
-      useGlbAutomaton ? sharedSteamAutomatonMat! : assets.boilerBrassMat
-    );
+    const automatonMesh = new THREE.Mesh(assets.fallbackAutomatonGeo, assets.boilerBrassMat);
     automatonMesh.position.set(1.45, 0.24, -0.2);
     automatonMesh.rotation.y = -Math.PI * 0.45;
     automatonMesh.castShadow = true;
@@ -3804,6 +3875,18 @@ export class CastleAndQuarryManager {
     automatonMesh.updateMatrix();
     automatonMesh.matrixAutoUpdate = false;
     root.add(automatonMesh);
+
+    let automatonModelGroup: THREE.Group | undefined;
+    let automatonBones: AutomatonBones | undefined;
+    const animAuto = createAutomatonInstance();
+    if (animAuto) {
+      automatonModelGroup = animAuto.group;
+      automatonBones = animAuto.bones;
+      automatonModelGroup.position.set(1.45, 0.24, -0.2);
+      automatonModelGroup.rotation.y = -Math.PI * 0.45;
+      automatonModelGroup.visible = tier === 2;
+      root.add(automatonModelGroup);
+    }
 
     this.group.add(root);
 
@@ -3828,6 +3911,9 @@ export class CastleAndQuarryManager {
       stockpileMeshes,
       automatonTopperGroup,
       automatonMesh,
+      automatonModelGroup,
+      automatonBones,
+      automatonSteamTimer: 0,
     };
     if (tier === 2) {
       this.automatonQuarriesCount += 1;
@@ -3872,15 +3958,28 @@ export class CastleAndQuarryManager {
       q.benchRockMesh.material = assets.fallbackRockMat;
     }
 
-    if (q.tier === 2 && q.automatonMesh) {
-      if (q.isNearLOD && sharedSteamAutomatonGeo && sharedSteamAutomatonMat) {
-        q.automatonMesh.geometry = sharedSteamAutomatonGeo;
-        q.automatonMesh.material = sharedSteamAutomatonMat;
-      } else {
-        q.automatonMesh.geometry = assets.fallbackAutomatonGeo;
-        q.automatonMesh.material = assets.boilerBrassMat;
+    if (q.tier === 2) {
+      if (!q.automatonModelGroup && sharedSteamAutomatonTemplate) {
+        const animAuto = createAutomatonInstance();
+        if (animAuto) {
+          q.automatonModelGroup = animAuto.group;
+          q.automatonBones = animAuto.bones;
+          q.automatonModelGroup.position.set(1.45, 0.24, -0.2);
+          q.automatonModelGroup.rotation.y = -Math.PI * 0.45;
+          q.root.add(q.automatonModelGroup);
+        }
       }
-      q.automatonMesh.visible = true;
+
+      if (q.isNearLOD && q.automatonModelGroup) {
+        q.automatonModelGroup.visible = true;
+        if (q.automatonMesh) q.automatonMesh.visible = false;
+      } else {
+        if (q.automatonModelGroup) q.automatonModelGroup.visible = false;
+        if (q.automatonMesh) q.automatonMesh.visible = true;
+      }
+    } else {
+      if (q.automatonModelGroup) q.automatonModelGroup.visible = false;
+      if (q.automatonMesh) q.automatonMesh.visible = false;
     }
   }
 
@@ -4638,10 +4737,12 @@ export class CastleAndQuarryManager {
     if (nearestQuarry.automatonTopperGroup) {
       nearestQuarry.automatonTopperGroup.visible = true;
     }
+    this.syncQuarryPropVisuals(nearestQuarry);
     if (nearestQuarry.automatonMesh) {
-      nearestQuarry.automatonMesh.visible = true;
-      this.syncQuarryPropVisuals(nearestQuarry);
       nearestQuarry.automatonMesh.updateMatrix();
+    }
+    if (nearestQuarry.automatonModelGroup) {
+      nearestQuarry.automatonModelGroup.updateMatrix();
     }
     this.automatonQuarriesCount += 1;
     this.guidanceUpdateAccum = 999;
@@ -5143,15 +5244,51 @@ export class CastleAndQuarryManager {
         this.syncQuarryPropVisuals(q);
       }
 
-      if (q.tier === 2 && q.automatonMesh && q.automatonMesh.visible) {
-        const castShadow = dSq < 42 * 42;
-        if (q.automatonMesh.castShadow !== castShadow) {
-          q.automatonMesh.castShadow = castShadow;
-        }
-        if (dSq < 45 * 45) {
-          const steamBob = Math.sin(elapsedTime * 2.8) * 0.02;
-          q.automatonMesh.position.y = 0.24 + steamBob;
-          q.automatonMesh.updateMatrix();
+      if (q.tier === 2) {
+        if (q.automatonModelGroup && q.automatonModelGroup.visible) {
+          const castShadow = dSq < 42 * 42;
+          q.automatonModelGroup.traverse((obj) => {
+            if (obj instanceof THREE.Mesh && obj.castShadow !== castShadow) {
+              obj.castShadow = castShadow;
+            }
+          });
+
+          if (dSq < 45 * 45 && q.automatonBones) {
+            const b = q.automatonBones;
+            // Clockwork chiseling / pneumatic lever pump
+            const pumpRate = q.autoCutTimer > 0 ? 4.8 : 2.4;
+            const pump = Math.sin(elapsedTime * pumpRate);
+            const pumpDown = Math.max(0, pump);
+            b.rightArm.rotation.x = b.baseRightArmX + pump * 0.28;
+            b.rightForeArm.rotation.z = b.baseRightForeArmZ - pumpDown * 0.35;
+
+            // Left arm steadying machinery
+            b.leftArm.rotation.x = b.baseLeftArmX + Math.sin(elapsedTime * 1.5) * 0.04;
+
+            // Steam chest / boiler breathing heave
+            b.spine.rotation.x = b.baseSpineX + Math.sin(elapsedTime * 2.2) * 0.05;
+
+            // Head scanning the quarry & watching player
+            const scan = Math.sin(elapsedTime * 0.75) * 0.35;
+            b.head.rotation.y = b.baseHeadY + scan;
+
+            // Periodic steam exhaust venting
+            q.automatonSteamTimer = (q.automatonSteamTimer ?? 0) + dt;
+            if (q.automatonSteamTimer >= 3.0) {
+              q.automatonSteamTimer = 0;
+              this.dwarf.spawnBurst(q.x + 1.45, q.y + 2.1, q.z - 0.2, 8);
+            }
+          }
+        } else if (q.automatonMesh && q.automatonMesh.visible) {
+          const castShadow = dSq < 42 * 42;
+          if (q.automatonMesh.castShadow !== castShadow) {
+            q.automatonMesh.castShadow = castShadow;
+          }
+          if (dSq < 45 * 45) {
+            const steamBob = Math.sin(elapsedTime * 2.8) * 0.02;
+            q.automatonMesh.position.y = 0.24 + steamBob;
+            q.automatonMesh.updateMatrix();
+          }
         }
       }
 

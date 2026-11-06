@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import fantasyGoblinModelUrl from '../../3dmodels/fantasy goblin 3d model.glb?url';
 import { DwarfCharacter } from '../player/DwarfCharacter';
 import { getSharedAudioContext } from '../player/RelicStore';
@@ -31,6 +32,19 @@ interface SpiritRabbitInstance {
   mesh: THREE.Mesh;
 }
 
+export interface GoblinBones {
+  spine: THREE.Bone;
+  head: THREE.Bone;
+  leftArm: THREE.Bone;
+  leftForeArm: THREE.Bone;
+  rightArm: THREE.Bone;
+  rightForeArm: THREE.Bone;
+  baseLeftArmX: number;
+  baseRightArmX: number;
+  baseLeftForeArmZ: number;
+  baseRightForeArmZ: number;
+}
+
 interface GoblinHazardInstance {
   centerPos: THREE.Vector3;
   pos: THREE.Vector3;
@@ -42,6 +56,8 @@ interface GoblinHazardInstance {
   bodyMesh: THREE.Mesh;
   headMesh: THREE.Mesh;
   glbMesh?: THREE.Mesh;
+  modelGroup?: THREE.Group;
+  bones?: GoblinBones;
   isNearLOD?: boolean;
 }
 
@@ -69,6 +85,7 @@ interface SharedLivingAssets {
   goblinHeadGeo: THREE.BufferGeometry;
 }
 
+let sharedGoblinTemplate: THREE.Group | null = null;
 let sharedGoblinGeo: THREE.BufferGeometry | null = null;
 let sharedGoblinMat: THREE.MeshStandardMaterial | null = null;
 let goblinLoadStarted = false;
@@ -153,6 +170,10 @@ export function loadGoblinModel(onLoaded?: () => void): void {
 
       sharedGoblinGeo = geo;
       sharedGoblinMat = mat;
+      mesh.material = mat;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      sharedGoblinTemplate = gltf.scene;
       for (const cb of onGoblinLoadedCallbacks) {
         cb();
       }
@@ -163,6 +184,57 @@ export function loadGoblinModel(onLoaded?: () => void): void {
       console.error('Failed to load fantasy goblin 3D model:', err);
     }
   );
+}
+
+export function createGoblinInstance(): {
+  group: THREE.Group;
+  bones?: GoblinBones;
+} | null {
+  if (!sharedGoblinTemplate) return null;
+  const group = cloneSkeleton(sharedGoblinTemplate) as THREE.Group;
+  // Scale goblin to 1.05m tall (base height 0.61m -> scale 1.72)
+  group.scale.setScalar(1.72);
+  group.position.y = -0.088; // align feet to ground at Y = 0
+
+  const bones: Partial<GoblinBones> = {};
+  group.traverse((obj) => {
+    if (obj instanceof THREE.Bone) {
+      if (obj.name === 'mixamorigSpine' || obj.name.endsWith('Spine')) bones.spine = obj;
+      else if (obj.name === 'mixamorigHead' || obj.name.endsWith('Head')) bones.head = obj;
+      else if (obj.name === 'mixamorigLeftArm' || obj.name.endsWith('LeftArm')) bones.leftArm = obj;
+      else if (obj.name === 'mixamorigRightArm' || obj.name.endsWith('RightArm')) bones.rightArm = obj;
+      else if (obj.name === 'mixamorigLeftForeArm' || obj.name.endsWith('LeftForeArm')) bones.leftForeArm = obj;
+      else if (obj.name === 'mixamorigRightForeArm' || obj.name.endsWith('RightForeArm')) bones.rightForeArm = obj;
+    }
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = false;
+      obj.receiveShadow = false;
+    }
+  });
+
+  if (bones.leftArm && bones.rightArm && bones.leftForeArm && bones.rightForeArm) {
+    // Bring arms down from the rigid horizontal T-pose into an active crouching posture
+    bones.leftArm.rotateX(-1.05);
+    bones.rightArm.rotateX(1.05);
+    bones.leftForeArm.rotateZ(0.5);
+    bones.rightForeArm.rotateZ(-0.5);
+    if (bones.spine) bones.spine.rotateX(0.22); // Sneaky hunchback posture
+
+    const fullBones: GoblinBones = {
+      spine: bones.spine!,
+      head: bones.head!,
+      leftArm: bones.leftArm,
+      leftForeArm: bones.leftForeArm,
+      rightArm: bones.rightArm,
+      rightForeArm: bones.rightForeArm,
+      baseLeftArmX: bones.leftArm.rotation.x,
+      baseRightArmX: bones.rightArm.rotation.x,
+      baseLeftForeArmZ: bones.leftForeArm.rotation.z,
+      baseRightForeArmZ: bones.rightForeArm.rotation.z,
+    };
+    return { group, bones: fullBones };
+  }
+  return { group };
 }
 
 let sharedLivingAssets: SharedLivingAssets | null = null;
@@ -327,8 +399,27 @@ export class LivingWorldManager {
 
     loadGoblinModel(() => {
       for (const ent of this.activeChunks.values()) {
-        if (ent.goblin && sharedGoblinGeo && sharedGoblinMat) {
-          if (ent.goblin.glbMesh) {
+        if (ent.goblin) {
+          if (!ent.goblin.modelGroup) {
+            const inst = createGoblinInstance();
+            if (inst) {
+              ent.goblin.modelGroup = inst.group;
+              ent.goblin.bones = inst.bones;
+              ent.goblin.mesh.add(inst.group);
+              if (ent.goblin.glbMesh) ent.goblin.glbMesh.visible = false;
+            }
+          }
+          if (ent.goblin.modelGroup) {
+            if (ent.goblin.isNearLOD) {
+              ent.goblin.modelGroup.visible = true;
+              ent.goblin.bodyMesh.visible = false;
+              ent.goblin.headMesh.visible = false;
+            } else {
+              ent.goblin.modelGroup.visible = false;
+              ent.goblin.bodyMesh.visible = true;
+              ent.goblin.headMesh.visible = true;
+            }
+          } else if (ent.goblin.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
             ent.goblin.glbMesh.geometry = sharedGoblinGeo;
             ent.goblin.glbMesh.material = sharedGoblinMat;
             if (ent.goblin.isNearLOD) {
@@ -636,11 +727,23 @@ export class LivingWorldManager {
             const dz = playerPos.z - g.pos.z;
             const dSq = dx * dx + dz * dz;
 
-            // Close-range GLB LOD toggle (dist <= 45m): high-poly 3D goblin model, procedural fallback for far range
+            // Close-range GLB LOD toggle (dist <= 45m): animated 3D goblin model, procedural fallback for far range
             const nearLOD = dSq <= 45 * 45;
             if (g.isNearLOD !== nearLOD) {
               g.isNearLOD = nearLOD;
-              if (g.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
+              if (g.modelGroup) {
+                if (nearLOD) {
+                  g.modelGroup.visible = true;
+                  g.bodyMesh.visible = false;
+                  g.headMesh.visible = false;
+                  if (g.glbMesh) g.glbMesh.visible = false;
+                } else {
+                  g.modelGroup.visible = false;
+                  g.bodyMesh.visible = true;
+                  g.headMesh.visible = true;
+                  if (g.glbMesh) g.glbMesh.visible = false;
+                }
+              } else if (g.glbMesh && sharedGoblinGeo && sharedGoblinMat) {
                 if (nearLOD) {
                   g.glbMesh.visible = true;
                   g.bodyMesh.visible = false;
@@ -653,8 +756,20 @@ export class LivingWorldManager {
               }
             }
 
+            // Animate goblin skeletal bones when in close range LOD (distance-gated to 45m)
+            if (g.modelGroup && g.modelGroup.visible && g.bones) {
+              const runPhase = elapsedTime * 9.0;
+              g.bones.leftArm.rotation.x = g.bones.baseLeftArmX + Math.sin(runPhase) * 0.45;
+              g.bones.rightArm.rotation.x = g.bones.baseRightArmX - Math.sin(runPhase) * 0.45;
+              g.bones.leftForeArm.rotation.z = g.bones.baseLeftForeArmZ + Math.cos(runPhase) * 0.2;
+              g.bones.rightForeArm.rotation.z = g.bones.baseRightForeArmZ - Math.cos(runPhase) * 0.2;
+              g.bones.head.rotation.y = Math.sin(elapsedTime * 2.8) * 0.25;
+            }
+
             const castShadow = dSq < 42 * 42;
-            if (g.glbMesh && g.glbMesh.visible) {
+            if (g.modelGroup && g.modelGroup.visible) {
+              // Shadows disabled on mob skinned mesh for performance
+            } else if (g.glbMesh && g.glbMesh.visible) {
               if (g.glbMesh.castShadow !== castShadow) {
                 g.glbMesh.castShadow = castShadow;
               }
@@ -958,6 +1073,18 @@ export class LivingWorldManager {
         mesh.updateMatrix();
         mesh.matrixAutoUpdate = false;
 
+        const goblinInst = createGoblinInstance();
+        let modelGroup: THREE.Group | undefined;
+        let bones: GoblinBones | undefined;
+        let hasCustomModel = false;
+
+        if (goblinInst) {
+          modelGroup = goblinInst.group;
+          bones = goblinInst.bones;
+          mesh.add(modelGroup);
+          hasCustomModel = true;
+        }
+
         const glbMesh = new THREE.Mesh(
           sharedGoblinGeo ?? assets.goblinBodyGeo,
           sharedGoblinMat ?? assets.matGoblinTunic
@@ -965,19 +1092,19 @@ export class LivingWorldManager {
         glbMesh.castShadow = false;
         glbMesh.receiveShadow = false;
         glbMesh.matrixAutoUpdate = false;
-        glbMesh.visible = Boolean(sharedGoblinGeo && sharedGoblinMat);
+        glbMesh.visible = !hasCustomModel && Boolean(sharedGoblinGeo && sharedGoblinMat);
         mesh.add(glbMesh);
 
         const body = new THREE.Mesh(assets.goblinBodyGeo, assets.matGoblinTunic);
         body.castShadow = false;
         body.matrixAutoUpdate = false;
-        body.visible = !glbMesh.visible;
+        body.visible = !hasCustomModel && !glbMesh.visible;
         mesh.add(body);
 
         const head = new THREE.Mesh(assets.goblinHeadGeo, assets.matGoblinSkin);
         head.castShadow = false;
         head.matrixAutoUpdate = false;
-        head.visible = !glbMesh.visible;
+        head.visible = !hasCustomModel && !glbMesh.visible;
         mesh.add(head);
 
         const sack = new THREE.Mesh(assets.spiritBodyGeo, assets.matGoldSack);
@@ -1000,6 +1127,8 @@ export class LivingWorldManager {
           bodyMesh: body,
           headMesh: head,
           glbMesh,
+          modelGroup,
+          bones,
           isNearLOD: true,
         };
       }
