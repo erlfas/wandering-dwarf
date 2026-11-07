@@ -105,6 +105,8 @@ export class DwarfCharacter {
   private rightHandSocket = new THREE.Group();
   private leftArmBone: THREE.Object3D | null = null;
   private leftForeArmBone: THREE.Object3D | null = null;
+  private leftForeArmSocket = new THREE.Group();
+  private spine2Socket = new THREE.Group();
   private chestCarrySocket = new THREE.Group();
   private carryPoseBlend = 0;
   private headBone: THREE.Object3D | null = null;
@@ -231,7 +233,7 @@ export class DwarfCharacter {
     });
 
     // Position backpack on the dwarf's upper back (-Z is behind the dwarf since +Z is forward)
-    this.backpackGroup.position.set(0, 0.82, -0.24);
+    this.backpackGroup.position.set(0, 0, 0);
     const packBodyGeo = new THREE.BoxGeometry(0.38, 0.42, 0.22);
     const packBody = new THREE.Mesh(packBodyGeo, leatherMat);
     packBody.castShadow = true;
@@ -342,7 +344,6 @@ export class DwarfCharacter {
     this.stowedBowGroup.add(stowedBowGrip);
 
     this.backpackGroup.add(this.stowedBowGroup);
-    this.modelContainer.add(this.backpackGroup);
 
     // Equipped 3D Fishing Rod held by the dwarf in Fishing Mode
     this.equippedRodGroup.position.set(0.32, 0.86, 0.28);
@@ -794,7 +795,7 @@ export class DwarfCharacter {
     this.modelContainer.add(this.meleeSlashArcMesh);
 
     // F) Left-Arm Equipped Round Shield & Mithril Aegis (matching art/gameplay_protect_against_enemy.jpg)
-    this.equippedShieldGroup.position.set(-0.34, 0.84, 0.22);
+    this.equippedShieldGroup.position.set(0, 0, 0);
     this.equippedShieldGroup.visible = false;
 
     const buildShieldMesh = (isMithril: boolean): THREE.Group => {
@@ -828,8 +829,6 @@ export class DwarfCharacter {
     mithrilShield.visible = false;
     this.shieldMeshes.mithril_aegis = mithrilShield;
     this.equippedShieldGroup.add(mithrilShield);
-
-    this.modelContainer.add(this.equippedShieldGroup);
 
     // Stowed Shield on Backpack when busy fishing/hunting/carrying stones
     const stowedShieldDisc = new THREE.CylinderGeometry(0.24, 0.24, 0.03, 14);
@@ -896,7 +895,7 @@ export class DwarfCharacter {
     this.helmetGroup.visible = false;
 
     // B. Mithril Winged Pauldrons (Rank III+ or Mithril Aegis)
-    this.pauldronsGroup.position.set(0, 1.0, 0.01);
+    this.pauldronsGroup.position.set(0, 0.14, 0);
     for (const side of [-1, 1]) {
       const shoulder = new THREE.Group();
       shoulder.position.set(side * 0.25, 0, 0);
@@ -914,7 +913,6 @@ export class DwarfCharacter {
       this.pauldronsGroup.add(shoulder);
     }
     this.pauldronsGroup.visible = false;
-    this.modelContainer.add(this.pauldronsGroup);
 
     // C. Golden Crown of Khazad-dûm (Rank V High King or Durin's Crown Artefact) - anchored to headSocket
     this.crownGroup.position.set(0, 0.20, 0.02);
@@ -1349,7 +1347,21 @@ export class DwarfCharacter {
       this.rightHandSocket.add(this.equippedWeaponGroup);
     }
 
+    if (this.leftForeArmBone) {
+      this.leftForeArmSocket.scale.setScalar(1 / this.modelScale);
+      this.leftForeArmSocket.position.set(0, 0.045, 0.02);
+      this.leftForeArmBone.add(this.leftForeArmSocket);
+      this.leftForeArmSocket.add(this.equippedShieldGroup);
+    }
+
     if (this.spine2Bone) {
+      this.spine2Socket.scale.setScalar(1 / this.modelScale);
+      this.spine2Socket.position.set(-0.10, 0.04, 0);
+      this.spine2Socket.rotation.set(0, -Math.PI / 2, 0);
+      this.spine2Bone.add(this.spine2Socket);
+      this.spine2Socket.add(this.backpackGroup);
+      this.spine2Socket.add(this.pauldronsGroup);
+
       this.chestCarrySocket.scale.setScalar(1 / this.modelScale);
       this.chestCarrySocket.position.set(0.18, -0.04, 0);
       this.chestCarrySocket.rotation.set(0, Math.PI / 2, 0);
@@ -1818,21 +1830,11 @@ export class DwarfCharacter {
         targetBlock,
         Math.min(1, dt * 14.0)
       );
-      const impactRecoil =
-        this.shieldImpactTimer > 0
-          ? Math.sin((this.shieldImpactTimer / 0.26) * Math.PI) * 0.09
-          : 0;
-      // Blend from left side-guard (-0.34, 0.84, 0.22) to raised front guard (-0.12, 0.94, 0.44)
-      // matching `art/gameplay_protect_against_enemy.jpg`
-      this.equippedShieldGroup.position.set(
-        THREE.MathUtils.lerp(-0.34, -0.11, this.shieldBlockBlend),
-        THREE.MathUtils.lerp(0.82, 0.94, this.shieldBlockBlend),
-        THREE.MathUtils.lerp(0.22, 0.44 - impactRecoil, this.shieldBlockBlend)
-      );
+      this.equippedShieldGroup.position.set(0, 0, 0);
       this.equippedShieldGroup.rotation.set(
-        THREE.MathUtils.lerp(0.08, -0.18, this.shieldBlockBlend),
-        THREE.MathUtils.lerp(0.28, 1.38, this.shieldBlockBlend),
-        THREE.MathUtils.lerp(-0.12, 0.08, this.shieldBlockBlend)
+        0,
+        THREE.MathUtils.lerp(0, 0.75, this.shieldBlockBlend),
+        THREE.MathUtils.lerp(0, -0.45, this.shieldBlockBlend)
       );
     }
 
@@ -2056,6 +2058,25 @@ export class DwarfCharacter {
         }
         if (this.leftForeArmBone) {
           this.tempSwingEuler.set(0, 0, -0.65 * b);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.leftForeArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+      }
+
+      // Layer procedural left-arm shield blocking posture
+      if (this.shieldBlockBlend > 0.001 && this.carryPoseBlend < 0.1) {
+        const bl = this.shieldBlockBlend;
+        const recoil =
+          this.shieldImpactTimer > 0
+            ? Math.sin((this.shieldImpactTimer / 0.26) * Math.PI) * 0.12
+            : 0;
+        if (this.leftArmBone) {
+          this.tempSwingEuler.set(-0.45 * bl, 0.45 * bl, -0.85 * bl + recoil);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.leftArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.leftForeArmBone) {
+          this.tempSwingEuler.set(0, 0, -0.95 * bl - recoil);
           this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
           this.leftForeArmBone.quaternion.multiply(this.tempSwingQuat);
         }
