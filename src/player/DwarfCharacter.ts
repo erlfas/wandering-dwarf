@@ -100,6 +100,8 @@ export class DwarfCharacter {
   private spine1Bone: THREE.Object3D | null = null;
   private rightArmBone: THREE.Object3D | null = null;
   private rightForeArmBone: THREE.Object3D | null = null;
+  private rightHandBone: THREE.Object3D | null = null;
+  private rightHandSocket = new THREE.Group();
   private headBone: THREE.Object3D | null = null;
   private headSocket = new THREE.Group();
   private readonly tempSwingEuler = new THREE.Euler();
@@ -580,7 +582,7 @@ export class DwarfCharacter {
       emissiveIntensity: 0.45,
     });
 
-    this.equippedWeaponGroup.position.set(0.32, 0.78, 0.24);
+    this.equippedWeaponGroup.position.set(0, 0, 0);
     this.equippedWeaponGroup.visible = false;
 
     // A) Starter Stone Mason's Mallet ('mallet')
@@ -787,8 +789,6 @@ export class DwarfCharacter {
     this.meleeSlashArcMesh.position.set(0.08, 0.88, 0.42);
     this.meleeSlashArcMesh.visible = false;
     this.modelContainer.add(this.meleeSlashArcMesh);
-
-    this.modelContainer.add(this.equippedWeaponGroup);
 
     // F) Left-Arm Equipped Round Shield & Mithril Aegis (matching art/gameplay_protect_against_enemy.jpg)
     this.equippedShieldGroup.position.set(-0.34, 0.84, 0.22);
@@ -1309,6 +1309,15 @@ export class DwarfCharacter {
         this.rightForeArmBone = obj;
       } else if (obj.name.endsWith('Head') && !obj.name.includes('HeadTop')) {
         this.headBone = obj;
+      } else if (
+        obj.name.endsWith('RightHand') &&
+        !obj.name.includes('Index') &&
+        !obj.name.includes('Middle') &&
+        !obj.name.includes('Pinky') &&
+        !obj.name.includes('Ring') &&
+        !obj.name.includes('Thumb')
+      ) {
+        this.rightHandBone = obj;
       }
     });
 
@@ -1321,6 +1330,14 @@ export class DwarfCharacter {
       this.headBone.add(this.headSocket);
       this.headSocket.add(this.crownGroup);
       this.headSocket.add(this.helmetGroup);
+    }
+
+    if (this.rightHandBone) {
+      this.rightHandSocket.scale.setScalar(1 / this.modelScale);
+      this.rightHandSocket.position.set(-0.015, 0.045, 0.012);
+      this.rightHandSocket.rotation.set(Math.PI * 0.42, 0, -0.15);
+      this.rightHandBone.add(this.rightHandSocket);
+      this.rightHandSocket.add(this.equippedWeaponGroup);
     }
 
     // Prune redundant scale, non-root position, and individual finger phalange tracks
@@ -1751,36 +1768,11 @@ export class DwarfCharacter {
 
     let swingProgress = -1;
     if (showWeaponInHand) {
-      const walkSwing = moveSpeed > 0.2 ? Math.sin(this.carryBobTime) * 0.12 : 0;
       if (isSwingingNow) {
-        const p = 1.0 - this.meleeSwingTimer / this.meleeSwingDuration;
-        swingProgress = p;
-        // Wind up (0..0.28), fast cleave forward/down (0.28..0.72), recover (0.72..1.0)
-        let pitch = 0.35;
-        let yaw = 0;
-        let roll = -0.15;
-        if (p < 0.28) {
-          const w = p / 0.28;
-          pitch = THREE.MathUtils.lerp(0.35, -0.88, w);
-          yaw = THREE.MathUtils.lerp(0, -0.48, w);
-          roll = THREE.MathUtils.lerp(-0.15, -0.58, w);
-        } else if (p < 0.72) {
-          const s = (p - 0.28) / 0.44;
-          pitch = THREE.MathUtils.lerp(-0.88, 1.54, s);
-          yaw = THREE.MathUtils.lerp(-0.48, 0.58, s);
-          roll = THREE.MathUtils.lerp(-0.58, 0.42, s);
-        } else {
-          const r = (p - 0.72) / 0.28;
-          pitch = THREE.MathUtils.lerp(1.54, 0.35, r);
-          yaw = THREE.MathUtils.lerp(0.58, 0, r);
-          roll = THREE.MathUtils.lerp(0.42, -0.15, r);
-        }
-        this.equippedWeaponGroup.position.set(0.32, 0.88, 0.36);
-        this.equippedWeaponGroup.rotation.set(pitch, yaw, roll);
+        swingProgress = 1.0 - this.meleeSwingTimer / this.meleeSwingDuration;
       } else {
-        const readyPitch = this.combatReady ? 0.26 : 0.42;
-        this.equippedWeaponGroup.position.set(0.33, 0.78, 0.26);
-        this.equippedWeaponGroup.rotation.set(readyPitch + walkSwing, -0.08, -0.12);
+        const readyAngle = this.combatReady ? 0.12 : 0;
+        this.rightHandSocket.rotation.set(Math.PI * 0.42 + readyAngle, 0, -0.15);
       }
     }
 
