@@ -100,6 +100,8 @@ export class DwarfCharacter {
   private spine1Bone: THREE.Object3D | null = null;
   private rightArmBone: THREE.Object3D | null = null;
   private rightForeArmBone: THREE.Object3D | null = null;
+  private headBone: THREE.Object3D | null = null;
+  private headSocket = new THREE.Group();
   private readonly tempSwingEuler = new THREE.Euler();
   private readonly tempSwingQuat = new THREE.Quaternion();
 
@@ -860,8 +862,8 @@ export class DwarfCharacter {
       metalness: 0.4,
     });
 
-    // A. Horned Dwarven Helmet (Rank II+ or Shield Equipped)
-    this.helmetGroup.position.set(0, 1.29, 0.02);
+    // A. Horned Dwarven Helmet (Rank II+ or Shield Equipped) - anchored to headSocket
+    this.helmetGroup.position.set(0, 0.17, 0.02);
     const domeGeo = new THREE.SphereGeometry(0.18, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.56);
     const dome = new THREE.Mesh(domeGeo, darkIronMat);
     dome.castShadow = true;
@@ -889,7 +891,6 @@ export class DwarfCharacter {
       this.helmetGroup.add(hornPivot);
     }
     this.helmetGroup.visible = false;
-    this.modelContainer.add(this.helmetGroup);
 
     // B. Mithril Winged Pauldrons (Rank III+ or Mithril Aegis)
     this.pauldronsGroup.position.set(0, 1.0, 0.01);
@@ -912,8 +913,8 @@ export class DwarfCharacter {
     this.pauldronsGroup.visible = false;
     this.modelContainer.add(this.pauldronsGroup);
 
-    // C. Golden Crown of Khazad-dûm (Rank V High King or Durin's Crown Artefact)
-    this.crownGroup.position.set(0, 1.33, 0.02);
+    // C. Golden Crown of Khazad-dûm (Rank V High King or Durin's Crown Artefact) - anchored to headSocket
+    this.crownGroup.position.set(0, 0.20, 0.02);
     const circlet = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.17, 0.055, 16), goldMat);
     circlet.castShadow = true;
     this.crownGroup.add(circlet);
@@ -927,7 +928,6 @@ export class DwarfCharacter {
     frontRuby.position.set(0, 0.02, 0.178);
     this.crownGroup.add(frontRuby);
     this.crownGroup.visible = false;
-    this.modelContainer.add(this.crownGroup);
 
     // D. Warhorn of Khazad (stowed at right hip or raised to lips when blown)
     const hornBody = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.28, 10, 1, true), hornIvoryMat);
@@ -1287,6 +1287,7 @@ export class DwarfCharacter {
 
         this.modelContainer.add(model);
         this.setupAnimations(model, gltf.animations);
+        this.refreshArmorVisibility();
       },
       undefined,
       (err) => {
@@ -1306,8 +1307,21 @@ export class DwarfCharacter {
         this.rightArmBone = obj;
       } else if (obj.name.endsWith('RightForeArm')) {
         this.rightForeArmBone = obj;
+      } else if (obj.name.endsWith('Head') && !obj.name.includes('HeadTop')) {
+        this.headBone = obj;
       }
     });
+
+    if (this.headBone) {
+      model.updateMatrixWorld(true);
+      const headWorldQuat = new THREE.Quaternion();
+      this.headBone.getWorldQuaternion(headWorldQuat);
+      this.headSocket.quaternion.copy(headWorldQuat.clone().invert());
+      this.headSocket.scale.setScalar(1 / this.modelScale);
+      this.headBone.add(this.headSocket);
+      this.headSocket.add(this.crownGroup);
+      this.headSocket.add(this.helmetGroup);
+    }
 
     // Prune redundant scale, non-root position, and individual finger phalange tracks
     const FINGER_RE = /(Index|Middle|Ring|Pinky|Thumb)[1-4]/i;
