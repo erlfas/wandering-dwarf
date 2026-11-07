@@ -583,6 +583,27 @@ castleAndQuarryManager.findNearestActiveTrollFn = (wx, wz, maxRange) =>
   trollCombatManager.findNearestActiveTrollPosition(wx, wz, maxRange);
 castleAndQuarryManager.tryHitTrollWithSiegeBoltFn = (boltPos, damage) =>
   trollCombatManager.tryHitTrollWithSiegeBolt(boltPos, damage);
+castleAndQuarryManager.findNearestAerialDragonFn = (wx, wy, wz, maxRange) => {
+  const dInfo = dynamicEventManager.getDragonInfo();
+  if (!dInfo.active || dInfo.hp <= 0) return null;
+  const dx = dInfo.pos.x - wx;
+  const dy = dInfo.pos.y - wy;
+  const dz = dInfo.pos.z - wz;
+  if (dx * dx + dy * dy + dz * dz <= maxRange * maxRange) {
+    return { x: dInfo.pos.x, y: dInfo.pos.y, z: dInfo.pos.z };
+  }
+  return null;
+};
+castleAndQuarryManager.tryHitDragonWithSiegeBoltFn = (boltPos, damage) => {
+  const dInfo = dynamicEventManager.getDragonInfo();
+  if (!dInfo.active || dInfo.hp <= 0) return false;
+  if (boltPos.distanceTo(dInfo.pos) <= 7.2) {
+    dynamicEventManager.damageDragon(damage, 'body');
+    dynamicEventManager.tetherDragonWithHarpoon(boltPos);
+    return true;
+  }
+  return false;
+};
 castleAndQuarryManager.onRequestStartCastleSiege = (cx, cz, name) =>
   trollCombatManager.startCastleSiegeWave(cx, cz, name);
 castleAndQuarryManager.isCastleSiegeActiveFn = () => trollCombatManager.isCastleSiegeActive();

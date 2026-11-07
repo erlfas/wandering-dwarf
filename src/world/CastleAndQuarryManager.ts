@@ -2848,6 +2848,13 @@ export class CastleAndQuarryManager {
     maxRange: number
   ) => { x: number; y: number; z: number } | null;
   public tryHitTrollWithSiegeBoltFn?: (boltPos: THREE.Vector3, damage: number) => boolean;
+  public findNearestAerialDragonFn?: (
+    wx: number,
+    wy: number,
+    wz: number,
+    maxRange: number
+  ) => { x: number; y: number; z: number } | null;
+  public tryHitDragonWithSiegeBoltFn?: (boltPos: THREE.Vector3, damage: number) => boolean;
 
   constructor(
     private config: WorldConfig,
@@ -5322,6 +5329,12 @@ export class CastleAndQuarryManager {
         this.dwarf.spawnBurst(bolt.pos.x, bolt.pos.y, bolt.pos.z, 12);
         continue;
       }
+      if (this.tryHitDragonWithSiegeBoltFn?.(bolt.pos, 75)) {
+        bolt.active = false;
+        bolt.mesh.visible = false;
+        this.dwarf.spawnBurst(bolt.pos.x, bolt.pos.y, bolt.pos.z, 16);
+        continue;
+      }
       const gy = this.chunkManager.getSurfaceHeight(bolt.pos.x, bolt.pos.z);
       if (bolt.age >= 2.2 || bolt.pos.y <= gy) {
         bolt.active = false;
@@ -5356,7 +5369,7 @@ export class CastleAndQuarryManager {
         c.doorRingMesh.updateMatrix();
       }
 
-      // 2. Automated Roof-Mounted Dwarven Ballista Turrets (track & fire at active Night Trolls within 36m)
+      // 2. Automated Roof-Mounted Dwarven Ballista Turrets (track & fire at active Night Trolls within 36m or Wyrm within 65m)
       const completedTier = this.getCompletedMilestoneTier(c.blocksPlaced);
       if (completedTier >= 1 && dSq < 95 * 95) {
         const cos = Math.cos(c.rotationY);
@@ -5378,7 +5391,9 @@ export class CastleAndQuarryManager {
           turret.targetScanTimer = (turret.targetScanTimer ?? 0) + dt;
           if (turret.targetScanTimer >= 0.2 || turret.cachedTarget === undefined) {
             turret.targetScanTimer = 0;
-            turret.cachedTarget = this.findNearestActiveTrollFn?.(twx, twz, 36.0) ?? null;
+            const trollTarget = this.findNearestActiveTrollFn?.(twx, twz, 36.0) ?? null;
+            const dragonTarget = this.findNearestAerialDragonFn?.(twx, twy, twz, 65.0) ?? null;
+            turret.cachedTarget = dragonTarget ?? trollTarget;
           }
           const targetTroll = turret.cachedTarget;
           if (targetTroll) {
