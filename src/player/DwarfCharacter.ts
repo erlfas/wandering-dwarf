@@ -98,10 +98,15 @@ export class DwarfCharacter {
   private actions: Partial<Record<AnimState, THREE.AnimationAction>> = {};
   private currentState: AnimState = 'idle';
   private spine1Bone: THREE.Object3D | null = null;
+  private spine2Bone: THREE.Object3D | null = null;
   private rightArmBone: THREE.Object3D | null = null;
   private rightForeArmBone: THREE.Object3D | null = null;
   private rightHandBone: THREE.Object3D | null = null;
   private rightHandSocket = new THREE.Group();
+  private leftArmBone: THREE.Object3D | null = null;
+  private leftForeArmBone: THREE.Object3D | null = null;
+  private chestCarrySocket = new THREE.Group();
+  private carryPoseBlend = 0;
   private headBone: THREE.Object3D | null = null;
   private headSocket = new THREE.Group();
   private readonly tempSwingEuler = new THREE.Euler();
@@ -466,7 +471,7 @@ export class DwarfCharacter {
     this.modelContainer.add(this.equippedBowGroup);
 
     // 6. Carried Natural Stones & Chiseled Castle Blocks held in front of chest/arms
-    this.carriedStoneGroup.position.set(0, 0.72, 0.36);
+    this.carriedStoneGroup.position.set(0, 0, 0);
     this.carriedStoneGroup.visible = false;
     const fallbackRockGeo = new THREE.DodecahedronGeometry(0.28, 1);
     fallbackRockGeo.scale(1.15, 0.85, 1.05);
@@ -492,10 +497,9 @@ export class DwarfCharacter {
       this.carriedStoneMeshes.push(sm);
       this.carriedStoneGroup.add(sm);
     }
-    this.modelContainer.add(this.carriedStoneGroup);
 
     // 7. Carried Chiseled Ashlar Castle Blocks
-    this.carriedBlockGroup.position.set(0, 0.76, 0.36);
+    this.carriedBlockGroup.position.set(0, 0, 0);
     this.carriedBlockGroup.visible = false;
     const ashlarBlockGeo = new THREE.BoxGeometry(0.46, 0.26, 0.34);
     const ashlarBlockMat = new THREE.MeshStandardMaterial({
@@ -519,7 +523,6 @@ export class DwarfCharacter {
       this.carriedBlockMeshes.push(bm);
       this.carriedBlockGroup.add(bm);
     }
-    this.modelContainer.add(this.carriedBlockGroup);
 
     // 8. Mason's Hammer & Chisel held in hands when chiseling at the Quarry Workbench
     this.chiselToolGroup.position.set(0, 0.88, 0.32);
@@ -1303,10 +1306,16 @@ export class DwarfCharacter {
       if (!obj.name) return;
       if (obj.name.endsWith('Spine1')) {
         this.spine1Bone = obj;
+      } else if (obj.name.endsWith('Spine2')) {
+        this.spine2Bone = obj;
       } else if (obj.name.endsWith('RightArm') && !obj.name.includes('ForeArm')) {
         this.rightArmBone = obj;
       } else if (obj.name.endsWith('RightForeArm')) {
         this.rightForeArmBone = obj;
+      } else if (obj.name.endsWith('LeftArm') && !obj.name.includes('ForeArm')) {
+        this.leftArmBone = obj;
+      } else if (obj.name.endsWith('LeftForeArm')) {
+        this.leftForeArmBone = obj;
       } else if (obj.name.endsWith('Head') && !obj.name.includes('HeadTop')) {
         this.headBone = obj;
       } else if (
@@ -1338,6 +1347,15 @@ export class DwarfCharacter {
       this.rightHandSocket.rotation.set(Math.PI * 0.42, 0, -0.15);
       this.rightHandBone.add(this.rightHandSocket);
       this.rightHandSocket.add(this.equippedWeaponGroup);
+    }
+
+    if (this.spine2Bone) {
+      this.chestCarrySocket.scale.setScalar(1 / this.modelScale);
+      this.chestCarrySocket.position.set(0.18, -0.04, 0);
+      this.chestCarrySocket.rotation.set(0, Math.PI / 2, 0);
+      this.spine2Bone.add(this.chestCarrySocket);
+      this.chestCarrySocket.add(this.carriedStoneGroup);
+      this.chestCarrySocket.add(this.carriedBlockGroup);
     }
 
     // Prune redundant scale, non-root position, and individual finger phalange tracks
@@ -1746,15 +1764,13 @@ export class DwarfCharacter {
     this.carriedStoneGroup.visible = showRawStones;
     this.carriedBlockGroup.visible = showBlocks;
     this.carryBobTime += dt * (moveSpeed > 0.2 ? 9.0 : 2.2);
-    if (showRawStones || showBlocks) {
-      const bobY = Math.sin(this.carryBobTime) * (moveSpeed > 0.2 ? 0.032 : 0.01);
-      if (showRawStones) {
-        this.carriedStoneGroup.position.y = 0.72 + bobY;
-      }
-      if (showBlocks) {
-        this.carriedBlockGroup.position.y = 0.76 + bobY;
-      }
-    }
+
+    const isCarryingNow = showRawStones || showBlocks;
+    this.carryPoseBlend = THREE.MathUtils.lerp(
+      this.carryPoseBlend,
+      isCarryingNow ? 1.0 : 0.0,
+      Math.min(1.0, dt * 10.0)
+    );
 
     const busyWithHands =
       isSwimming || isGliding || rodOut || bowOut || isChiselingNow || showRawStones || showBlocks;
@@ -2017,6 +2033,33 @@ export class DwarfCharacter {
         }
       }
       this.wasSwingingWeapon = isSwingingNow;
+
+      // Layer procedural two-handed boulder / block cradling posture
+      if (this.carryPoseBlend > 0.001) {
+        const b = this.carryPoseBlend;
+        const stepBob = moveSpeed > 0.2 ? Math.sin(this.carryBobTime) * 0.04 : 0;
+
+        if (this.rightArmBone) {
+          this.tempSwingEuler.set(0.65 * b + stepBob, -0.35 * b, 0.15 * b);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.rightArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.rightForeArmBone) {
+          this.tempSwingEuler.set(0.55 * b, 0, 0);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.rightForeArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.leftArmBone) {
+          this.tempSwingEuler.set(-0.35 * b, 0.35 * b, -0.75 * b - stepBob);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.leftArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+        if (this.leftForeArmBone) {
+          this.tempSwingEuler.set(0, 0, -0.65 * b);
+          this.tempSwingQuat.setFromEuler(this.tempSwingEuler);
+          this.leftForeArmBone.quaternion.multiply(this.tempSwingQuat);
+        }
+      }
     }
 
     if (isSwimming) {
