@@ -61,6 +61,9 @@ export interface SavedProgress {
   unclaimedTributeGold?: number;
   mithrilVeinsMined?: number;
   windAndSlopeFeats?: number;
+  dragonSlain?: boolean;
+  dragonScales?: number;
+  hasDragonEgg?: boolean;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {

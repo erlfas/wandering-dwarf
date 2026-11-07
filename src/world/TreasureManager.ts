@@ -418,6 +418,16 @@ export class TreasureManager {
   private toastContainer: HTMLElement | null;
   private popTimer: number | null = null;
 
+  // Caldera Summit Dragon's Hoard & Stealth Heist
+  public hasDragonEgg = false;
+  private dragonEggGroup: THREE.Group | null = null;
+  private dragonEggPos = new THREE.Vector3(VOLCANO_X - 12.0, 0, VOLCANO_Z + 18.0);
+  private stealthAlert = 0;
+  private stealthPillEl: HTMLElement | null = null;
+  private lastStealthText = '';
+  private stealthCheckTimer = 0;
+  public onDragonAwakenedByNoise?: () => void;
+
   constructor(
     private config: WorldConfig,
     private noise: TerrainNoise
@@ -429,6 +439,7 @@ export class TreasureManager {
     this.streakEl = document.getElementById('streak-badge');
     this.toastContainer = document.getElementById('pickup-toasts');
     this.buildGuidingFireflies();
+    this.initStealthPillDOM();
   }
 
   private buildGuidingFireflies(): void {
@@ -821,7 +832,10 @@ export class TreasureManager {
       }
     }
 
-    // 5. Update Diegetic Guiding Fireflies & Harmonic Proximity Hum
+    // 5. Update Dragon Hoard Stealth & Egg Pickup
+    this.updateDragonHoardStealth(dt, playerPos);
+
+    // 6. Update Diegetic Guiding Fireflies & Harmonic Proximity Hum
     this.updateGuidingFireflies(dt, elapsedTime, playerPos, hasLodestone);
   }
 
@@ -1518,10 +1532,177 @@ export class TreasureManager {
     this.chestsCollected = 0;
     this.streakCount = 0;
     this.streakTimer = 0;
+    this.hasDragonEgg = false;
+    if (this.dragonEggGroup) this.dragonEggGroup.visible = true;
     this.collectedIds.clear();
     this.collectedIdsDirty = true;
     this.syncHUDTotals();
     this.syncStreakHUD();
     this.rebuildAll();
+  }
+
+  private initStealthPillDOM(): void {
+    this.stealthPillEl = document.createElement('div');
+    this.stealthPillEl.id = 'dragon-stealth-pill';
+    this.stealthPillEl.style.position = 'fixed';
+    this.stealthPillEl.style.bottom = '82px';
+    this.stealthPillEl.style.left = '50%';
+    this.stealthPillEl.style.transform = 'translateX(-50%)';
+    this.stealthPillEl.style.background = 'rgba(20, 10, 10, 0.88)';
+    this.stealthPillEl.style.border = '1px solid #ff3300';
+    this.stealthPillEl.style.boxShadow = '0 0 16px rgba(255, 51, 0, 0.4)';
+    this.stealthPillEl.style.borderRadius = '18px';
+    this.stealthPillEl.style.padding = '5px 16px';
+    this.stealthPillEl.style.color = '#fff';
+    this.stealthPillEl.style.fontSize = '12px';
+    this.stealthPillEl.style.fontWeight = 'bold';
+    this.stealthPillEl.style.zIndex = '45';
+    this.stealthPillEl.style.display = 'none';
+    this.stealthPillEl.style.fontFamily = 'system-ui, sans-serif';
+    document.body.appendChild(this.stealthPillEl);
+  }
+
+  public initDragonHoardSummit(getSurfaceHeight: (x: number, z: number) => number): void {
+    if (this.dragonEggGroup) return;
+
+    const y = getSurfaceHeight(this.dragonEggPos.x, this.dragonEggPos.z);
+    this.dragonEggPos.y = y + 0.35;
+
+    this.dragonEggGroup = new THREE.Group();
+    this.dragonEggGroup.position.copy(this.dragonEggPos);
+
+    // Obsidian Nest base
+    const nestGeo = new THREE.DodecahedronGeometry(1.6, 1);
+    nestGeo.scale(1.4, 0.35, 1.4);
+    const nestMat = new THREE.MeshStandardMaterial({
+      color: 0x141018,
+      roughness: 0.9,
+      metalness: 0.2,
+    });
+    const nestMesh = new THREE.Mesh(nestGeo, nestMat);
+    nestMesh.castShadow = true;
+    this.dragonEggGroup.add(nestMesh);
+
+    // Scorched Dragon Gold Piles
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xffb703,
+      roughness: 0.3,
+      metalness: 0.85,
+      emissive: 0xff6600,
+      emissiveIntensity: 0.25,
+    });
+    for (let i = 0; i < 4; i++) {
+      const gGeo = new THREE.ConeGeometry(0.7, 0.45, 6);
+      const gMesh = new THREE.Mesh(gGeo, goldMat);
+      const angle = (i / 4) * Math.PI * 2;
+      gMesh.position.set(Math.cos(angle) * 1.1, 0.2, Math.sin(angle) * 1.1);
+      this.dragonEggGroup.add(gMesh);
+    }
+
+    // Ancient Pyre Dragon Egg
+    const eggGeo = new THREE.SphereGeometry(0.75, 16, 12);
+    eggGeo.scale(0.85, 1.35, 0.85);
+    eggGeo.translate(0, 0.85, 0);
+    const eggMat = new THREE.MeshStandardMaterial({
+      color: 0x800e00,
+      roughness: 0.25,
+      metalness: 0.75,
+      emissive: 0xff3c00,
+      emissiveIntensity: 0.8,
+    });
+    const eggMesh = new THREE.Mesh(eggGeo, eggMat);
+    eggMesh.castShadow = true;
+    this.dragonEggGroup.add(eggMesh);
+
+    // Glowing Aura Ring
+    const ringGeo = new THREE.RingGeometry(0.8, 1.8, 24);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xff3c00,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+    });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.position.y = 0.05;
+    this.dragonEggGroup.add(ringMesh);
+
+    this.group.add(this.dragonEggGroup);
+    if (this.hasDragonEgg) {
+      this.dragonEggGroup.visible = false;
+    }
+  }
+
+  public updateDragonHoardStealth(
+    dt: number,
+    playerPos: THREE.Vector3,
+    playerSpeed = 0,
+    isAirborneOrSurfing = false
+  ): void {
+    const dist = playerPos.distanceTo(this.dragonEggPos);
+
+    // Egg Pickup Check
+    if (!this.hasDragonEgg && dist <= 2.8) {
+      this.hasDragonEgg = true;
+      if (this.dragonEggGroup) {
+        this.dragonEggGroup.visible = false;
+      }
+      this.grantBonusGold(
+        1500,
+        '🥚 PLUNDERED ANCIENT PYRE DRAGON EGG! +1,500 Gold & Royal Draconic Heirloom!'
+      );
+      this.showToast('👑 Dragon Egg Secured! Deliver to Citadel or Forge!', true);
+    }
+
+    // Stealth Heist Zone Check (within 35m of hoard)
+    if (dist > 35.0 || this.hasDragonEgg) {
+      if (this.stealthPillEl && this.stealthPillEl.style.display !== 'none') {
+        this.stealthPillEl.style.display = 'none';
+      }
+      this.stealthAlert = Math.max(0, this.stealthAlert - dt * 25.0);
+      return;
+    }
+
+    if (this.stealthPillEl && this.stealthPillEl.style.display !== 'block') {
+      this.stealthPillEl.style.display = 'block';
+    }
+
+    // Acoustic noise accumulation
+    if (playerSpeed > 5.2 || isAirborneOrSurfing) {
+      this.stealthAlert = Math.min(100, this.stealthAlert + dt * 32.0);
+    } else if (playerSpeed <= 3.2) {
+      this.stealthAlert = Math.max(0, this.stealthAlert - dt * 18.0);
+    }
+
+    this.stealthCheckTimer += dt;
+    if (this.stealthCheckTimer >= 0.1) {
+      this.stealthCheckTimer = 0;
+      const barFilled = Math.round(this.stealthAlert / 10);
+      const barEmpty = 10 - barFilled;
+      const barStr = `🤫 HOARD STEALTH: [${'|'.repeat(barFilled)}${'.'.repeat(barEmpty)}] ${Math.round(this.stealthAlert)}%`;
+      if (barStr !== this.lastStealthText && this.stealthPillEl) {
+        this.lastStealthText = barStr;
+        this.stealthPillEl.textContent = barStr;
+        this.stealthPillEl.style.borderColor = this.stealthAlert > 65 ? '#ff0055' : '#ff3300';
+      }
+
+      if (this.stealthAlert >= 100) {
+        this.stealthAlert = 0;
+        this.showToast('⚠️ DRAGON AWAKENED! Clatter alerted Vermithrax!', true);
+        this.onDragonAwakenedByNoise?.();
+      }
+    }
+  }
+
+  public getHasDragonEgg(): boolean {
+    return this.hasDragonEgg;
+  }
+
+  public setHasDragonEgg(val: boolean): void {
+    this.hasDragonEgg = val;
+    if (this.dragonEggGroup) {
+      this.dragonEggGroup.visible = !val;
+    }
   }
 }

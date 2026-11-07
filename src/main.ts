@@ -140,6 +140,7 @@ scene.add(chunkManager.group);
 
 const treasureManager = new TreasureManager(config, noise);
 scene.add(treasureManager.group);
+treasureManager.initDragonHoardSummit((x, z) => chunkManager.getSurfaceHeight(x, z));
 
 // 6. Dwarf Proxy & Third-Person / Free-Fly Camera Controller
 const dwarf = new DwarfCharacter();
@@ -438,6 +439,17 @@ dynamicEventManager.onGrantBonusGold = (amt, msg) =>
   treasureManager.grantBonusGold(amt, msg);
 dynamicEventManager.onApplyPlayerDamage = (damage, source) =>
   castleAndQuarryManager.applyPlayerDamage(damage, source);
+
+treasureManager.onDragonAwakenedByNoise = () => {
+  const dragon = dynamicEventManager.getDragon();
+  if (dragon.active && (dragon.state === 'sky_patrol' || dragon.state === 'caldera_roost')) {
+    dragon.state = 'dive_bomb';
+    dragon.stateTimer = 5.5;
+    dragon.targetPos.copy(explorer.playerPos);
+    relicStore.playDragonRoarSound();
+    explorer.triggerCameraShake(0.65, 0.45);
+  }
+};
 
 const exteriorSceneGroups: THREE.Object3D[] = [
   chunkManager.group,
@@ -764,6 +776,8 @@ const assignmentManager = new AssignmentManager({
     reusableAssignmentSnapshot.automatonQuarriesCount =
       castleAndQuarryManager.getAutomatonQuarriesCount();
     reusableAssignmentSnapshot.windAndSlopeFeats = windAndSlopeFeats;
+    reusableAssignmentSnapshot.dragonSlain = dynamicEventManager.getDragonInfo().hp <= 0;
+    reusableAssignmentSnapshot.dragonEggPlundered = treasureManager.getHasDragonEgg();
     return reusableAssignmentSnapshot;
   },
   onGrantReward: (gold, food, message) => {
@@ -833,6 +847,9 @@ if (savedProgress) {
     savedProgress.chestsCollected,
     savedProgress.collectedIds
   );
+  if (savedProgress.hasDragonEgg) {
+    treasureManager.setHasDragonEgg(true);
+  }
   hutManager.restoreProgress(
     savedProgress.artefactsCollected,
     savedProgress.collectedArtefactIds
@@ -985,6 +1002,8 @@ function populateSaveState(): SavedProgress {
     Math.round(castleAndQuarryManager.unclaimedTributeGold * 10) / 10;
   reusableSaveState.mithrilVeinsMined = castleAndQuarryManager.mithrilVeinsMined;
   reusableSaveState.windAndSlopeFeats = windAndSlopeFeats;
+  reusableSaveState.dragonSlain = dynamicEventManager.getDragonInfo().hp <= 0;
+  reusableSaveState.hasDragonEgg = treasureManager.getHasDragonEgg();
   return reusableSaveState;
 }
 

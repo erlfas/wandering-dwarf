@@ -177,6 +177,8 @@ export interface AssignmentSnapshot {
   mithrilVeinsMined: number
   automatonQuarriesCount: number
   windAndSlopeFeats?: number
+  dragonSlain?: boolean
+  dragonEggPlundered?: boolean
 }
 
 export interface ChronicleAssignmentDef {
@@ -455,6 +457,22 @@ export const CHRONICLE_ASSIGNMENTS: ChronicleAssignmentDef[] = [
     rewardFood: 8,
     getProgress: (s) => ({
       current: Math.min(1, (s.bestCastleBlocks >= 30 ? 1 : 0) + (s.weaponTemperLevel >= 3 ? 1 : 0)),
+      target: 1,
+    }),
+  },
+  {
+    id: 'slay_or_heist_dragon',
+    chapter: 13,
+    title: 'The Ash-Peak Wyrm & Dragon-Slayer Regent',
+    icon: '🐉',
+    description:
+      'Slay Vermithrax the Smoldering OR plunder the Ancient Dragon Egg from the Caldera Summit Hoard.',
+    hint: 'Mount the wyrm with an airborne slam, pierce its weak spots with arrows, or harpoon it with Castle Ballistae!',
+    rewardGold: 1500,
+    rewardRenown: 1200,
+    rewardFood: 10,
+    getProgress: (s) => ({
+      current: Math.min(1, (s.dragonSlain ? 1 : 0) + (s.dragonEggPlundered ? 1 : 0)),
       target: 1,
     }),
   },
