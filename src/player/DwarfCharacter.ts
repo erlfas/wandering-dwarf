@@ -9,7 +9,8 @@ export type EquippedWeaponId =
   | 'oak_club'
   | 'battle_axe'
   | 'broadsword'
-  | 'runic_greatsword';
+  | 'runic_greatsword'
+  | 'dragon_greataxe';
 
 export type EquippedShieldId = 'none' | 'round_shield' | 'mithril_aegis';
 
@@ -723,6 +724,52 @@ export class DwarfCharacter {
       this.equippedWeaponGroup.add(g);
     }
 
+    // F) Twin Dragon-Slayer Greataxe ('dragon_greataxe')
+    {
+      const g = new THREE.Group();
+      g.visible = false;
+      const haftGeo = new THREE.CylinderGeometry(0.028, 0.032, 0.88, 8);
+      haftGeo.translate(0, 0.38, 0);
+      g.add(new THREE.Mesh(haftGeo, darkWoodMat));
+
+      const dragonMagmaMat = new THREE.MeshStandardMaterial({
+        color: 0xff3300,
+        roughness: 0.25,
+        metalness: 0.8,
+        emissive: 0xff4400,
+        emissiveIntensity: 1.1,
+      });
+
+      const pommelGeo = new THREE.OctahedronGeometry(0.052, 0);
+      pommelGeo.translate(0, -0.06, 0);
+      g.add(new THREE.Mesh(pommelGeo, dragonMagmaMat));
+
+      // Dual axe blades
+      const leftBladeGeo = new THREE.ConeGeometry(0.24, 0.44, 4);
+      leftBladeGeo.scale(0.22, 1.0, 1.0);
+      leftBladeGeo.rotateZ(Math.PI / 2);
+      leftBladeGeo.translate(-0.16, 0.72, 0);
+      const leftBlade = new THREE.Mesh(leftBladeGeo, mithrilMat);
+      leftBlade.castShadow = true;
+      g.add(leftBlade);
+
+      const rightBladeGeo = new THREE.ConeGeometry(0.24, 0.44, 4);
+      rightBladeGeo.scale(0.22, 1.0, 1.0);
+      rightBladeGeo.rotateZ(-Math.PI / 2);
+      rightBladeGeo.translate(0.16, 0.72, 0);
+      const rightBlade = new THREE.Mesh(rightBladeGeo, mithrilMat);
+      rightBlade.castShadow = true;
+      g.add(rightBlade);
+
+      // Central glowing dragon spike
+      const spikeGeo = new THREE.ConeGeometry(0.045, 0.22, 4);
+      spikeGeo.translate(0, 0.94, 0);
+      g.add(new THREE.Mesh(spikeGeo, dragonMagmaMat));
+
+      this.weaponMeshes.dragon_greataxe = g;
+      this.equippedWeaponGroup.add(g);
+    }
+
     // Glowing 3D Sword Slash Arc Trail that sweeps in front of the Dwarf during a melee swing
     const slashArcGeo = new THREE.RingGeometry(0.46, 0.96, 18, 1, -Math.PI * 0.42, Math.PI * 0.84);
     slashArcGeo.rotateX(-Math.PI * 0.38);
@@ -1016,7 +1063,8 @@ export class DwarfCharacter {
     const showPauldrons =
       this.progressionRank >= 3 ||
       this.equippedShieldId === 'mithril_aegis' ||
-      this.equippedWeaponId === 'runic_greatsword';
+      this.equippedWeaponId === 'runic_greatsword' ||
+      this.equippedWeaponId === 'dragon_greataxe';
     const showWarhorn =
       this.progressionRank >= 2 ||
       this.equippedShieldId !== 'none' ||
@@ -1726,7 +1774,9 @@ export class DwarfCharacter {
       const cleaveT = (swingProgress - 0.22) / 0.56;
       this.meleeSlashArcMesh.visible = true;
       this.meleeSlashArcMat.color.setHex(
-        this.equippedWeaponId === 'runic_greatsword'
+        this.equippedWeaponId === 'dragon_greataxe'
+          ? 0xff3300
+          : this.equippedWeaponId === 'runic_greatsword'
           ? 0xffd166
           : this.equippedWeaponId === 'broadsword' || this.equippedWeaponId === 'battle_axe'
             ? 0xe2f1ff

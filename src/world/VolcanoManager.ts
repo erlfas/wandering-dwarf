@@ -221,6 +221,7 @@ export class VolcanoManager {
   ) => { defeated: boolean; remainingEnergy: number; remainingHealth: number };
   public onPlayerDiedInVolcano?: (reason: 'bottom' | 'heat') => void;
   public onSpawnScorchBurst?: (x: number, y: number, z: number, count: number) => void;
+  public isHeatImmuneFn?: () => boolean;
 
   constructor(
     private config: WorldConfig,
@@ -1181,6 +1182,10 @@ export class VolcanoManager {
 
     // B) Check if the character is too close to the volcano (`dist < 132m`) -> Lose Strength, and if staying too long, quickly die
     if (dist < VOLCANO_HEAT_HAZARD_RADIUS) {
+      if (this.isHeatImmuneFn?.()) {
+        this.heatExposureTime = 0;
+        return;
+      }
       this.heatExposureTime += dt;
 
       const proximity = THREE.MathUtils.clamp(

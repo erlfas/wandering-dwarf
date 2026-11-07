@@ -330,6 +330,7 @@ function sanitizeSafePlayerPos(pos: { x: number; y: number; z: number }): void {
 // Wire Mount Doomforge Volcanic Heat Strength Drain, Rapid Heat Death & Immediate Crater Bottom Death
 volcanoManager.onApplyVolcanicHazard = (strengthDrain, healthDrain, instantDeath) =>
   castleAndQuarryManager.applyVolcanicHazard(strengthDrain, healthDrain, instantDeath);
+volcanoManager.isHeatImmuneFn = () => castleAndQuarryManager.hasWyrmCloak();
 volcanoManager.onSpawnScorchBurst = (x, y, z, count) => {
   dwarf.spawnBurst(x, y, z, count);
 };

@@ -84,8 +84,10 @@ export type CastleArmoryItemId =
   | 'battle_axe'
   | 'broadsword'
   | 'runic_greatsword'
+  | 'dragon_greataxe'
   | 'round_shield'
   | 'mithril_aegis'
+  | 'wyrm_cloak'
   | 'keep_stew'
   | 'roast_boar'
   | 'kings_feast';
@@ -149,6 +151,17 @@ export const CASTLE_ARMORY_CATALOG: readonly CastleArmoryItemDef[] = [
     weaponId: 'runic_greatsword',
   },
   {
+    id: 'dragon_greataxe',
+    category: 'weapon',
+    minTier: 3,
+    keyHint: '8',
+    name: 'Twin Dragon-Slayer Greataxe',
+    icon: '🪓',
+    cost: 850,
+    shortDesc: '85 DMG • Devastating dragon-forged cleave & Whirlwind Spin',
+    weaponId: 'dragon_greataxe',
+  },
+  {
     id: 'round_shield',
     category: 'shield',
     minTier: 1,
@@ -169,6 +182,16 @@ export const CASTLE_ARMORY_CATALOG: readonly CastleArmoryItemDef[] = [
     cost: 340,
     shortDesc: '+50 Max HP • Right-Click blocks 85% Troll damage & staggers',
     shieldId: 'mithril_aegis',
+  },
+  {
+    id: 'wyrm_cloak',
+    category: 'provision',
+    minTier: 2,
+    keyHint: '0',
+    name: 'Wyrm-Scale Thermal Cloak',
+    icon: '🔥',
+    cost: 450,
+    shortDesc: 'Complete immunity to Mount Doomforge Caldera heat drain damage',
   },
   {
     id: 'keep_stew',
@@ -251,6 +274,14 @@ export const WEAPON_COMBAT_SPECS: Record<
     damage: 55,
     energyCost: 10,
     cooldown: 0.48,
+    hasRunicShockwave: true,
+  },
+  dragon_greataxe: {
+    name: 'Twin Dragon-Slayer Greataxe',
+    icon: '🪓',
+    damage: 85,
+    energyCost: 14,
+    cooldown: 0.52,
     hasRunicShockwave: true,
   },
 };
@@ -6325,8 +6356,8 @@ export class CastleAndQuarryManager {
     let hiddenHigherTierCount = 0;
     for (let i = 0; i < this.armoryItemDomRefs.length; i++) {
       const { def, btn, costSpan } = this.armoryItemDomRefs[i];
-      const isProvision = def.category === 'provision';
-      const owned = !isProvision && this.unlockedArmory.has(def.id);
+      const isRepeatableProvision = def.category === 'provision' && def.id !== 'wyrm_cloak';
+      const owned = !isRepeatableProvision && this.unlockedArmory.has(def.id);
       const isEquipped =
         (def.weaponId && this.equippedWeaponId === def.weaponId) ||
         (def.shieldId && this.equippedShieldId === def.shieldId);
@@ -6352,7 +6383,7 @@ export class CastleAndQuarryManager {
 
       if (owned) {
         costSpan.className = 'relic-cost owned-badge';
-        costSpan.textContent = isEquipped ? 'EQUIPPED' : 'EQUIP';
+        costSpan.textContent = def.id === 'wyrm_cloak' ? 'ACTIVE' : isEquipped ? 'EQUIPPED' : 'EQUIP';
       } else if (tierLocked) {
         costSpan.className = 'relic-cost';
         costSpan.textContent = `🔒 T${def.minTier}`;
@@ -6388,8 +6419,12 @@ export class CastleAndQuarryManager {
     const visit = this.getActiveCastleVisitFn();
     const currentTier = visit?.tier ?? 1;
 
-    // Allow equipping an already-owned weapon or shield for free!
-    if (def.category !== 'provision' && this.unlockedArmory.has(id)) {
+    // Allow equipping an already-owned weapon or shield for free, or checking owned cloak
+    if (this.unlockedArmory.has(id)) {
+      if (id === 'wyrm_cloak') {
+        this.showToast('🔥 Wyrm-Scale Thermal Cloak is already active! Caldera heat immune.', true);
+        return true;
+      }
       if (def.weaponId) {
         this.equippedWeaponId = def.weaponId;
       }
@@ -6421,7 +6456,7 @@ export class CastleAndQuarryManager {
       return false;
     }
 
-    if (def.category === 'provision') {
+    if (def.category === 'provision' && id !== 'wyrm_cloak') {
       // Repeatable Tavern Food & Feast purchase!
       if (id === 'keep_stew') {
         this.foodCount += 2;
@@ -6454,19 +6489,27 @@ export class CastleAndQuarryManager {
       }
     } else {
       this.unlockedArmory.add(id);
-      if (def.weaponId) {
-        this.equippedWeaponId = def.weaponId;
+      if (id === 'wyrm_cloak') {
+        this.playMilestoneFanfare();
+        this.showToast(
+          `🔥 Donned Wyrm-Scale Thermal Cloak! Complete immunity to Mount Doomforge caldera heat damage!`,
+          true
+        );
+      } else {
+        if (def.weaponId) {
+          this.equippedWeaponId = def.weaponId;
+        }
+        if (def.shieldId) {
+          this.equippedShieldId = def.shieldId;
+          this.health = this.getMaxHealth();
+        }
+        this.dwarf.setEquippedCombatGear(this.equippedWeaponId, this.equippedShieldId);
+        this.playMilestoneFanfare();
+        this.showToast(
+          `${def.icon} Forged & Equipped ${def.name}! (${def.shortDesc})`,
+          true
+        );
       }
-      if (def.shieldId) {
-        this.equippedShieldId = def.shieldId;
-        this.health = this.getMaxHealth();
-      }
-      this.dwarf.setEquippedCombatGear(this.equippedWeaponId, this.equippedShieldId);
-      this.playMilestoneFanfare();
-      this.showToast(
-        `${def.icon} Forged & Equipped ${def.name}! (${def.shortDesc})`,
-        true
-      );
     }
 
     this.dwarf.spawnBurst(
@@ -6479,6 +6522,10 @@ export class CastleAndQuarryManager {
     this.syncEnergyAndFoodHUD();
     this.onStateChanged?.();
     return true;
+  }
+
+  public hasWyrmCloak(): boolean {
+    return this.unlockedArmory.has('wyrm_cloak') || this.unlockedArmory.has('dragon_greataxe');
   }
 
   // ============================================================================
@@ -6712,6 +6759,7 @@ export class CastleAndQuarryManager {
       'battle_axe',
       'broadsword',
       'runic_greatsword',
+      'dragon_greataxe',
     ];
     this.equippedWeaponId = validWeapons.includes(equippedWeapon as EquippedWeaponId)
       ? (equippedWeapon as EquippedWeaponId)
