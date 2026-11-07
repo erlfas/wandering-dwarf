@@ -664,8 +664,16 @@ huntingManager.onTryHitGoblinWithArrow = (arrowPos) =>
   livingWorldManager.tryHitGoblinWithArrow(arrowPos, 50);
 huntingManager.onTryHitTitanWithArrow = (arrowPos) =>
   dynamicEventManager.tryHitTitanWithArrow(arrowPos, 45);
+huntingManager.onTryHitDragonWithArrow = (arrowPos) =>
+  dynamicEventManager.tryHitDragonWithArrow(arrowPos, 55);
 huntingManager.isAirborneFn = () => explorer.isAirborne();
 huntingManager.onBulletTimeStateChange = (active) => explorer.setTargetFov(active ? 42 : 50);
+
+explorer.onMidAirSlamCheck = (pos) =>
+  dynamicEventManager.applyGroundSlamOnDragon(pos, 6.5, 95);
+explorer.onGroundSlamImpact = (pos) => {
+  dynamicEventManager.applyGroundSlamOnDragon(pos, 8.0, 80);
+};
 
 livingWorldManager.cameraShakeFn = (intensity, duration) =>
   explorer.triggerCameraShake(intensity, duration);

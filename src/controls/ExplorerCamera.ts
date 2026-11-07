@@ -76,6 +76,7 @@ export class ExplorerCamera {
   private livingWorldManager?: LivingWorldManager;
   private mountainTraversalManager?: MountainTraversalManager;
   public onGroundSlamImpact?: (pos: THREE.Vector3) => void;
+  public onMidAirSlamCheck?: (pos: THREE.Vector3) => boolean;
   public onSurfRamCollision?: (pos: THREE.Vector3, speed: number, heading: number) => void;
   public onCatchThermalUpdraft?: (pos: THREE.Vector3) => void;
   public lastAimForward = 0;
@@ -782,10 +783,17 @@ export class ExplorerCamera {
 
     if (this.heightAboveGround > 0 || this.velY > 0) {
       if (this.isGroundSlamming) {
-        // Accelerate rapid ground plunge
-        this.velY = Math.max(-38.0, this.velY - 36.0 * dt);
-        if (Math.random() < 0.45) {
-          this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.25, this.playerPos.z, 2);
+        if (this.onMidAirSlamCheck?.(this.playerPos)) {
+          this.isGroundSlamming = false;
+          this.velY = 14.0;
+          this.pitch = Math.min(Math.PI * 0.44, this.pitch + 0.045);
+          this.dwarf.triggerGroundSlamShockwave();
+        } else {
+          // Accelerate rapid ground plunge
+          this.velY = Math.max(-38.0, this.velY - 36.0 * dt);
+          if (Math.random() < 0.45) {
+            this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.25, this.playerPos.z, 2);
+          }
         }
       } else if (!this.isInThermalUpdraft) {
         const isBulletTime = this.huntingManager?.isBulletTimeActive() ?? false;

@@ -339,6 +339,7 @@ export class HuntingAndDeerManager {
   public onTryHitTrollWithArrow?: (arrowPos: THREE.Vector3) => boolean;
   public onTryHitGoblinWithArrow?: (arrowPos: THREE.Vector3) => boolean;
   public onTryHitTitanWithArrow?: (arrowPos: THREE.Vector3) => boolean;
+  public onTryHitDragonWithArrow?: (arrowPos: THREE.Vector3) => boolean;
   public isAirborneFn?: () => boolean;
   public onBulletTimeStateChange?: (active: boolean) => void;
   private isBulletTime = false;
@@ -1157,6 +1158,13 @@ export class HuntingAndDeerManager {
 
       // Check hit against Colossal Crag-Titan World Boss!
       if (this.onTryHitTitanWithArrow && this.onTryHitTitanWithArrow(arrow.pos)) {
+        arrow.active = false;
+        arrow.mesh.visible = false;
+        continue;
+      }
+
+      // Check hit against Colossal Ash-Peak Wyrm (Vermithrax)!
+      if (this.onTryHitDragonWithArrow && this.onTryHitDragonWithArrow(arrow.pos)) {
         arrow.active = false;
         arrow.mesh.visible = false;
         continue;

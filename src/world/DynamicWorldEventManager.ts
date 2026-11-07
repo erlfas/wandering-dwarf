@@ -857,6 +857,30 @@ export class DynamicWorldEventManager {
     return false;
   }
 
+  public tryHitDragonWithArrow(arrowPos: THREE.Vector3, damage = 55): boolean {
+    if (!this.dragon.active || this.dragon.hp <= 0) return false;
+
+    // Fast bounding sphere check before weak spot probes (zero-allocation)
+    const distSq = arrowPos.distanceToSquared(this.dragon.pos);
+    if (distSq > 18.0 * 18.0) return false;
+
+    // Check weak spots (crest, wing_left, wing_right)
+    for (const ws of this.dragon.weakSpots) {
+      ws.mesh.getWorldPosition(_scratchDragonPos);
+      if (arrowPos.distanceToSquared(_scratchDragonPos) <= ws.radius * ws.radius) {
+        this.damageDragon(damage, ws.location);
+        return true;
+      }
+    }
+
+    // Check main body
+    if (distSq <= 6.8 * 6.8) {
+      this.damageDragon(damage, 'body');
+      return true;
+    }
+    return false;
+  }
+
   public tryMineMeteorCore(playerPos: THREE.Vector3): boolean {
     if (!this.activeMeteor || this.activeMeteor.phase !== 'landed' || this.activeMeteor.harvested) {
       return false;
