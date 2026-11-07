@@ -955,6 +955,174 @@ export class RelicStore {
     clink.stop(now + 0.18);
   }
 
+  public playDragonRoarSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc1.type = 'sawtooth';
+    osc2.type = 'sawtooth';
+    filter.type = 'lowpass';
+
+    osc1.frequency.setValueAtTime(65, now);
+    osc1.frequency.exponentialRampToValueAtTime(140, now + 0.35);
+    osc1.frequency.exponentialRampToValueAtTime(45, now + 1.2);
+
+    osc2.frequency.setValueAtTime(68, now);
+    osc2.frequency.exponentialRampToValueAtTime(145, now + 0.35);
+    osc2.frequency.exponentialRampToValueAtTime(42, now + 1.2);
+
+    filter.frequency.setValueAtTime(250, now);
+    filter.frequency.exponentialRampToValueAtTime(1200, now + 0.3);
+    filter.frequency.exponentialRampToValueAtTime(220, now + 1.2);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.35, now + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.25);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc1.onended = () => {
+      osc1.disconnect();
+      osc2.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 1.3);
+    osc2.stop(now + 1.3);
+  }
+
+  public playDragonWingWhooshSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(40, now);
+    osc.frequency.linearRampToValueAtTime(85, now + 0.18);
+    osc.frequency.linearRampToValueAtTime(35, now + 0.45);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(180, now);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.15);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.onended = () => {
+      osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.5);
+  }
+
+  public playDragonFireBreathSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const bufferSize = Math.floor(ctx.sampleRate * 0.8);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(450, now);
+    filter.frequency.exponentialRampToValueAtTime(1200, now + 0.4);
+    filter.frequency.exponentialRampToValueAtTime(300, now + 0.8);
+    filter.Q.value = 1.8;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.28, now + 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    noise.onended = () => {
+      noise.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
+    noise.start(now);
+    noise.stop(now + 0.8);
+  }
+
+  public playDragonHarpoonImpaleSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(110, now + 0.12);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.3, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.28);
+  }
+
+  public playDragonDefeatedSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [196.0, 246.94, 293.66, 392.0, 493.88, 587.33, 783.99];
+    notes.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.11);
+
+      gain.gain.setValueAtTime(0.001, now + idx * 0.11);
+      gain.gain.exponentialRampToValueAtTime(0.24, now + idx * 0.11 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.11 + 0.75);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.onended = () => {
+        osc.disconnect();
+        gain.disconnect();
+      };
+      osc.start(now + idx * 0.11);
+      osc.stop(now + idx * 0.11 + 0.8);
+    });
+  }
+
   private playUnlockFanfare(): void {
     const ctx = this.ensureAudio();
     if (!ctx) return;
