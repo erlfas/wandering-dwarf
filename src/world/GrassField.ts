@@ -19,6 +19,8 @@ export interface BiomeSample {
   tallGrass: number;
 }
 
+export const LAYER_MICRO_FOLIAGE = 1;
+
 export interface ChunkSurfaceSampler {
   sampleHeightAndNormal(
     localX: number,
@@ -26,6 +28,13 @@ export interface ChunkSurfaceSampler {
     outNormal: THREE.Vector3,
     outColor?: THREE.Color
   ): number;
+  sampleSurfacePoint?(
+    localX: number,
+    localZ: number,
+    outNormal: THREE.Vector3,
+    outColor?: THREE.Color,
+    computeTrackWeight?: boolean
+  ): { height: number; trackWeight: number };
   sampleColor(localX: number, localZ: number, outColor: THREE.Color): void;
   sampleTrackWeight?(localX: number, localZ: number): number;
   sampleBiome?(
@@ -596,6 +605,7 @@ function buildPopulatedGrassInstancedMesh(
   mesh.receiveShadow = receiveShadow;
   mesh.boundingSphere = boundSphere;
   mesh.matrixAutoUpdate = false;
+  mesh.layers.set(LAYER_MICRO_FOLIAGE);
   (mesh.instanceMatrix.array as Float32Array).set(matBuf.subarray(0, count * 16));
   mesh.instanceMatrix.needsUpdate = true;
   const colArray = new Float32Array(count * 3);
@@ -704,24 +714,28 @@ export class ChunkGrass {
 
       // Fast O(1) height & normal lookup first (defer color interpolation until candidate is accepted)
       let wy: number;
-      if (sampler) {
+      let trackW = 0;
+      if (sampler?.sampleSurfacePoint) {
+        const pt = sampler.sampleSurfacePoint(lx, lz, sharedNormal, undefined, chunkNearTrack);
+        wy = pt.height;
+        trackW = chunkNearTrack ? pt.trackWeight : 0;
+      } else if (sampler) {
         wy = sampler.sampleHeightAndNormal(lx, lz, sharedNormal);
+        trackW = chunkNearTrack
+          ? sampler.sampleTrackWeight
+            ? sampler.sampleTrackWeight(lx, lz)
+            : noise.getTrackWeight(wx, wz, wy)
+          : 0;
       } else {
         wy = noise.getHeight(wx, wz);
         noise.getNormal(wx, wz, sharedNormal);
+        trackW = chunkNearTrack ? noise.getTrackWeight(wx, wz, wy) : 0;
       }
 
       // Skip very steep rocky slopes, underwater/shoreline, or barren volcano basalt before evaluating biome or colors
       if (sharedNormal.y < 0.72) continue;
       if (config.enableWater && wy < config.waterLevel + 0.52) continue;
       if (noise.isInsideVolcanoBarrenZone(wx, wz)) continue;
-
-      // Evaluate forest track weight: keep the worn dirt footpath clear while framing its verges
-      const trackW = chunkNearTrack
-        ? sampler?.sampleTrackWeight
-          ? sampler.sampleTrackWeight(lx, lz)
-          : noise.getTrackWeight(wx, wz, wy)
-        : 0;
       if (trackW > 0.44) continue;
       const isTrackVerge = trackW >= 0.06 && trackW <= 0.44;
 

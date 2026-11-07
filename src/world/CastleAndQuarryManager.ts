@@ -329,6 +329,7 @@ interface QuarryInstance {
   automatonModelGroup?: THREE.Group;
   automatonBones?: AutomatonBones;
   automatonSteamTimer?: number;
+  lastAutomatonCastShadow?: boolean;
 }
 
 type CastleMatKey = 'stone' | 'darkStone' | 'wood' | 'iron' | 'roof' | 'gold' | 'flame';
@@ -356,6 +357,8 @@ interface CastleBallistaTurret {
   ironMesh: THREE.Mesh;
   loadedBoltMesh: THREE.Mesh;
   cooldown: number;
+  targetScanTimer?: number;
+  cachedTarget?: { x: number; y: number; z: number } | null;
 }
 
 interface PooledBallistaBolt {
@@ -5247,11 +5250,14 @@ export class CastleAndQuarryManager {
       if (q.tier === 2) {
         if (q.automatonModelGroup && q.automatonModelGroup.visible) {
           const castShadow = dSq < 42 * 42;
-          q.automatonModelGroup.traverse((obj) => {
-            if (obj instanceof THREE.Mesh && obj.castShadow !== castShadow) {
-              obj.castShadow = castShadow;
-            }
-          });
+          if (q.lastAutomatonCastShadow !== castShadow) {
+            q.lastAutomatonCastShadow = castShadow;
+            q.automatonModelGroup.traverse((obj) => {
+              if (obj instanceof THREE.Mesh && obj.castShadow !== castShadow) {
+                obj.castShadow = castShadow;
+              }
+            });
+          }
 
           if (dSq < 45 * 45 && q.automatonBones) {
             const b = q.automatonBones;
@@ -5369,7 +5375,12 @@ export class CastleAndQuarryManager {
           const twy = c.y + turret.localY + 0.68;
           const twz = c.z - turret.localX * sin + turret.localZ * cos;
 
-          const targetTroll = this.findNearestActiveTrollFn?.(twx, twz, 36.0) ?? null;
+          turret.targetScanTimer = (turret.targetScanTimer ?? 0) + dt;
+          if (turret.targetScanTimer >= 0.2 || turret.cachedTarget === undefined) {
+            turret.targetScanTimer = 0;
+            turret.cachedTarget = this.findNearestActiveTrollFn?.(twx, twz, 36.0) ?? null;
+          }
+          const targetTroll = turret.cachedTarget;
           if (targetTroll) {
             const worldAimYaw = Math.atan2(targetTroll.x - twx, targetTroll.z - twz);
             const localAimYaw = worldAimYaw - c.rotationY;

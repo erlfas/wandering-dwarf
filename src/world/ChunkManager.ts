@@ -347,15 +347,17 @@ export class ChunkManager {
     }
 
     const segments = chunk.segments;
-    const step = size / segments;
+    const invStep = segments / size;
     const half = size * 0.5;
     const localX = worldX - cx * size + half;
     const localZ = worldZ - cz * size + half;
 
-    const gx = THREE.MathUtils.clamp(Math.floor(localX / step), 0, segments - 1);
-    const gz = THREE.MathUtils.clamp(Math.floor(localZ / step), 0, segments - 1);
-    const fx = THREE.MathUtils.clamp((localX - gx * step) / step, 0, 1);
-    const fz = THREE.MathUtils.clamp((localZ - gz * step) / step, 0, 1);
+    const u = THREE.MathUtils.clamp(localX * invStep, 0, segments - 0.0001);
+    const v = THREE.MathUtils.clamp(localZ * invStep, 0, segments - 0.0001);
+    const gx = u | 0;
+    const gz = v | 0;
+    const fx = u - gx;
+    const fz = v - gz;
 
     const stride = segments + 1;
     const posArr = (chunk.mesh.geometry.attributes.position as THREE.BufferAttribute)

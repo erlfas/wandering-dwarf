@@ -404,6 +404,7 @@ function getSharedLivingAssets(): SharedLivingAssets {
 export class LivingWorldManager {
   public readonly group = new THREE.Group();
   private activeChunks = new Map<number, ChunkLivingEntities>();
+  private activeGoblins: GoblinHazardInstance[] = [];
   private desiredKeys = new Set<number>();
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -774,10 +775,10 @@ export class LivingWorldManager {
           sr.mesh.matrixWorld.multiplyMatrices(this.group.matrixWorld, sr.mesh.matrix);
         }
       }
+    }
 
-      // D) Mischievous Goblin Cutpurses & Bombardiers
-      const chunkGoblins = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGoblins) {
+    // 4. Mischievous Goblin Cutpurses & Bombardiers (Direct flat iteration, zero allocations)
+    for (const g of this.activeGoblins) {
         if (!g.mesh.visible) continue;
         if (!g.defeated) {
           const cdx = playerPos.x - g.centerPos.x;
@@ -924,9 +925,8 @@ export class LivingWorldManager {
           }
         }
       }
-    }
 
-    // 4. Update Flying & Bouncing Explosive Goblin Bombs
+    // 5. Update Flying & Bouncing Explosive Goblin Bombs
     for (const bomb of this.bombPool) {
       if (!bomb.active) continue;
       bomb.fuseTimer -= dt;
@@ -1023,15 +1023,12 @@ export class LivingWorldManager {
     }
 
     // Damage any other nearby goblins in blast radius
-    for (const ent of this.activeChunks.values()) {
-      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGobs) {
-        if (!g.defeated && g.mesh.visible) {
-          const gdx = g.pos.x - bomb.pos.x;
-          const gdz = g.pos.z - bomb.pos.z;
-          if (gdx * gdx + gdz * gdz <= 4.2 * 4.2) {
-            this.defeatGoblin(g, '💥 Friendly-Fire: Goblin Blown Up by Bomb! +125 Gold');
-          }
+    for (const g of this.activeGoblins) {
+      if (!g.defeated && g.mesh.visible) {
+        const gdx = g.pos.x - bomb.pos.x;
+        const gdz = g.pos.z - bomb.pos.z;
+        if (gdx * gdx + gdz * gdz <= 4.2 * 4.2) {
+          this.defeatGoblin(g, '💥 Friendly-Fire: Goblin Blown Up by Bomb! +125 Gold');
         }
       }
     }
@@ -1060,20 +1057,17 @@ export class LivingWorldManager {
       }
     }
 
-    for (const ent of this.activeChunks.values()) {
-      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGobs) {
-        if (!g.defeated && g.mesh.visible) {
-          const dx = arrowPos.x - g.pos.x;
-          const dz = arrowPos.z - g.pos.z;
-          const dy = arrowPos.y - (g.pos.y + 0.55);
-          if (dx * dx + dz * dz <= 1.35 * 1.35 && Math.abs(dy) <= 1.2) {
-            this.defeatGoblin(
-              g,
-              `🏹 Marksman Bow Shot Defeated Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
-            );
-            return true;
-          }
+    for (const g of this.activeGoblins) {
+      if (!g.defeated && g.mesh.visible) {
+        const dx = arrowPos.x - g.pos.x;
+        const dz = arrowPos.z - g.pos.z;
+        const dy = arrowPos.y - (g.pos.y + 0.55);
+        if (dx * dx + dz * dz <= 1.35 * 1.35 && Math.abs(dy) <= 1.2) {
+          this.defeatGoblin(
+            g,
+            `🏹 Marksman Bow Shot Defeated Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
+          );
+          return true;
         }
       }
     }
@@ -1081,25 +1075,22 @@ export class LivingWorldManager {
   }
 
   public tryHitGoblinWithMelee(playerPos: THREE.Vector3, heading: number, _damage = 40): boolean {
-    for (const ent of this.activeChunks.values()) {
-      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGobs) {
-        if (!g.defeated && g.mesh.visible) {
-          const dx = g.pos.x - playerPos.x;
-          const dz = g.pos.z - playerPos.z;
-          const d = Math.hypot(dx, dz);
-          if (d <= 3.4) {
-            const angleToGoblin = Math.atan2(dx, dz);
-            const angleDiff = Math.abs(
-              THREE.MathUtils.euclideanModulo(angleToGoblin - heading + Math.PI, Math.PI * 2) - Math.PI
+    for (const g of this.activeGoblins) {
+      if (!g.defeated && g.mesh.visible) {
+        const dx = g.pos.x - playerPos.x;
+        const dz = g.pos.z - playerPos.z;
+        const d = Math.hypot(dx, dz);
+        if (d <= 3.4) {
+          const angleToGoblin = Math.atan2(dx, dz);
+          const angleDiff = Math.abs(
+            THREE.MathUtils.euclideanModulo(angleToGoblin - heading + Math.PI, Math.PI * 2) - Math.PI
+          );
+          if (angleDiff <= Math.PI * 0.58) {
+            this.defeatGoblin(
+              g,
+              `⚔️ Melee Strike Crushed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
             );
-            if (angleDiff <= Math.PI * 0.58) {
-              this.defeatGoblin(
-                g,
-                `⚔️ Melee Strike Crushed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
-              );
-              return true;
-            }
+            return true;
           }
         }
       }
@@ -1113,16 +1104,13 @@ export class LivingWorldManager {
   public defeatGoblinsInRadius(playerPos: THREE.Vector3, radius = 6.5): number {
     let count = 0;
     const rSq = radius * radius;
-    for (const ent of this.activeChunks.values()) {
-      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGobs) {
-        if (g.mesh.visible && !g.defeated) {
-          const dx = playerPos.x - g.pos.x;
-          const dz = playerPos.z - g.pos.z;
-          if (dx * dx + dz * dz <= rSq) {
-            this.defeatGoblin(g, '💥 Ground-Slam Smashed Goblin Raider! +125 Gold & +1 Food Ration');
-            count++;
-          }
+    for (const g of this.activeGoblins) {
+      if (g.mesh.visible && !g.defeated) {
+        const dx = playerPos.x - g.pos.x;
+        const dz = playerPos.z - g.pos.z;
+        if (dx * dx + dz * dz <= rSq) {
+          this.defeatGoblin(g, '💥 Ground-Slam Smashed Goblin Raider! +125 Gold & +1 Food Ration');
+          count++;
         }
       }
     }
@@ -1134,16 +1122,13 @@ export class LivingWorldManager {
    */
   public checkSurfRamGoblin(playerPos: THREE.Vector3, radius = 2.4): boolean {
     const rSq = radius * radius;
-    for (const ent of this.activeChunks.values()) {
-      const chunkGobs = ent.goblins ?? (ent.goblin ? [ent.goblin] : []);
-      for (const g of chunkGobs) {
-        if (g.mesh.visible && !g.defeated) {
-          const dx = playerPos.x - g.pos.x;
-          const dz = playerPos.z - g.pos.z;
-          if (dx * dx + dz * dz <= rSq) {
-            this.defeatGoblin(g, '🛡️ Surf-Ram Smashed Goblin Raider! +125 Gold & +1 Food Ration');
-            return true;
-          }
+    for (const g of this.activeGoblins) {
+      if (g.mesh.visible && !g.defeated) {
+        const dx = playerPos.x - g.pos.x;
+        const dz = playerPos.z - g.pos.z;
+        if (dx * dx + dz * dz <= rSq) {
+          this.defeatGoblin(g, '🛡️ Surf-Ram Smashed Goblin Raider! +125 Gold & +1 Food Ration');
+          return true;
         }
       }
     }
@@ -1361,6 +1346,7 @@ export class LivingWorldManager {
         ) {
           const goblinInst = this.createGoblinHazard(wx, wy, wz, role, rng);
           ent.goblins.push(goblinInst);
+          this.activeGoblins.push(goblinInst);
           if (i === 0) {
             ent.goblin = goblinInst; // Keep backwards compatibility
           }
@@ -1462,9 +1448,13 @@ export class LivingWorldManager {
     if (ent.goblins) {
       for (const g of ent.goblins) {
         this.group.remove(g.mesh);
+        const idx = this.activeGoblins.indexOf(g);
+        if (idx !== -1) this.activeGoblins.splice(idx, 1);
       }
     } else if (ent.goblin) {
       this.group.remove(ent.goblin.mesh);
+      const idx = this.activeGoblins.indexOf(ent.goblin);
+      if (idx !== -1) this.activeGoblins.splice(idx, 1);
     }
   }
 
@@ -1534,6 +1524,7 @@ export class LivingWorldManager {
       this.removeChunkEntities(ent);
     }
     this.activeChunks.clear();
+    this.activeGoblins.length = 0;
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
   }

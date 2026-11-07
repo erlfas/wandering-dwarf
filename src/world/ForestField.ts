@@ -5,7 +5,7 @@ import oakModelUrl from '../../3dmodels/oak tree 3d model.glb?url';
 import pineModelUrl from '../../3dmodels/pine tree 3d model.glb?url';
 import hutModelUrl from '../../3dmodels/simple dwarven hut 3d model.glb?url';
 import { WorldConfig } from './Config';
-import { ChunkSurfaceSampler, GrassUniforms } from './GrassField';
+import { ChunkSurfaceSampler, GrassUniforms, LAYER_MICRO_FOLIAGE } from './GrassField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
 
 /**
@@ -1602,6 +1602,7 @@ export class ChunkForest {
       this.cobbleInstanced.visible = true;
       this.cobbleInstanced.boundingSphere = this.chunkBoundSphere;
       this.cobbleInstanced.matrixAutoUpdate = false;
+      this.cobbleInstanced.layers.set(LAYER_MICRO_FOLIAGE);
       populateInstancedMesh(this.cobbleInstanced, cobbleMatBuf, cobbleColBuf, cobbleCount);
       this.group.add(this.cobbleInstanced);
     }
@@ -1617,6 +1618,7 @@ export class ChunkForest {
       this.rootsInstanced.visible = true;
       this.rootsInstanced.boundingSphere = this.chunkBoundSphere;
       this.rootsInstanced.matrixAutoUpdate = false;
+      this.rootsInstanced.layers.set(LAYER_MICRO_FOLIAGE);
       populateInstancedMesh(this.rootsInstanced, rootsMatBuf, rootsColBuf, rootsCount);
       this.group.add(this.rootsInstanced);
     }
@@ -1632,6 +1634,7 @@ export class ChunkForest {
       this.fernInstanced.visible = true;
       this.fernInstanced.boundingSphere = this.chunkBoundSphere;
       this.fernInstanced.matrixAutoUpdate = false;
+      this.fernInstanced.layers.set(LAYER_MICRO_FOLIAGE);
       populateInstancedMesh(this.fernInstanced, fernMatBuf, fernColBuf, fernCount);
       this.group.add(this.fernInstanced);
     }

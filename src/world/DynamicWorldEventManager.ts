@@ -55,6 +55,37 @@ export interface CragTitanBoss {
   fissureRingMesh: THREE.Mesh;
 }
 
+let sharedShardGeo: THREE.BufferGeometry | null = null;
+let sharedShardMat: THREE.MeshStandardMaterial | null = null;
+let sharedBoulderGeo: THREE.BufferGeometry | null = null;
+let sharedBoulderMat: THREE.MeshStandardMaterial | null = null;
+const _scratchBoulderDir = new THREE.Vector3();
+
+function getSharedShardAssets(): { geo: THREE.BufferGeometry; mat: THREE.MeshStandardMaterial } {
+  if (!sharedShardGeo || !sharedShardMat) {
+    sharedShardGeo = new THREE.OctahedronGeometry(0.35, 0);
+    sharedShardMat = new THREE.MeshStandardMaterial({
+      color: 0x111118,
+      roughness: 0.15,
+      metalness: 0.9,
+      emissive: 0xff3300,
+      emissiveIntensity: 0.35,
+    });
+  }
+  return { geo: sharedShardGeo, mat: sharedShardMat };
+}
+
+function getSharedBoulderAssets(): { geo: THREE.BufferGeometry; mat: THREE.MeshStandardMaterial } {
+  if (!sharedBoulderGeo || !sharedBoulderMat) {
+    sharedBoulderGeo = new THREE.DodecahedronGeometry(1.6, 1);
+    sharedBoulderMat = new THREE.MeshStandardMaterial({
+      color: 0x48423f,
+      roughness: 0.85,
+    });
+  }
+  return { geo: sharedBoulderGeo, mat: sharedBoulderMat };
+}
+
 export class DynamicWorldEventManager {
   public readonly group = new THREE.Group();
 
@@ -76,6 +107,10 @@ export class DynamicWorldEventManager {
   private titanHpBarFill: HTMLElement | null = null;
   private titanPhaseBadge: HTMLElement | null = null;
   private titanDistLabel: HTMLElement | null = null;
+  private titanHudAccum = 0;
+  private lastTitanHpText = '';
+  private lastTitanPhaseText = '';
+  private lastTitanDistText = '';
 
   // Rolling Boulders from Titan Throw
   private activeBoulders: Array<{
@@ -564,16 +599,9 @@ export class DynamicWorldEventManager {
         this.onCameraShake?.(0.35, 0.22);
         this.dwarf.spawnBurst(bomb.pos.x, groundY + 0.5, bomb.pos.z, 22);
 
-        // Spawn harvestable Obsidian Shard (+75 Gold)
-        const shardGeo = new THREE.OctahedronGeometry(0.35, 0);
-        const shardMat = new THREE.MeshStandardMaterial({
-          color: 0x111118,
-          roughness: 0.15,
-          metalness: 0.9,
-          emissive: 0xff3300,
-          emissiveIntensity: 0.35,
-        });
-        const shardMesh = new THREE.Mesh(shardGeo, shardMat);
+        // Spawn harvestable Obsidian Shard (+75 Gold) using shared static assets
+        const shardAssets = getSharedShardAssets();
+        const shardMesh = new THREE.Mesh(shardAssets.geo, shardAssets.mat);
         shardMesh.position.set(bomb.pos.x, groundY + 0.35, bomb.pos.z);
         this.group.add(shardMesh);
         this.obsidianShards.push({
@@ -603,7 +631,6 @@ export class DynamicWorldEventManager {
       if (!s.collected && playerPos.distanceTo(s.pos) <= 2.2) {
         s.collected = true;
         this.group.remove(s.mesh);
-        s.mesh.geometry.dispose();
         this.obsidianShards.splice(i, 1);
         this.relicStore.playSpeedGateChimeSound(3);
         this.dwarf.spawnBurst(s.pos.x, s.pos.y, s.pos.z, 12);
@@ -626,22 +653,36 @@ export class DynamicWorldEventManager {
     }
 
     if (this.titan.awakened && this.titan.hp > 0) {
-      // Show & Update Boss Bar
-      if (this.titanHudEl) {
+      // Show & Update Boss Bar (throttled to 10 Hz)
+      this.titanHudAccum += dt;
+      if (this.titanHudEl && this.titanHudAccum >= 0.1) {
+        this.titanHudAccum = 0;
         this.titanHudEl.style.display = 'block';
         if (this.titanHpBarFill) {
-          this.titanHpBarFill.style.width = `${Math.max(0, (this.titan.hp / this.titan.maxHp) * 100)}%`;
+          const hpRatioStr = `${Math.max(0, Math.round((this.titan.hp / this.titan.maxHp) * 100))}%`;
+          if (hpRatioStr !== this.lastTitanHpText) {
+            this.lastTitanHpText = hpRatioStr;
+            this.titanHpBarFill.style.width = hpRatioStr;
+          }
         }
         if (this.titanPhaseBadge) {
-          this.titanPhaseBadge.textContent =
+          const phaseStr =
             this.titan.phase === 3
               ? 'PHASE 3: MOLTEN OVERLOAD'
               : this.titan.phase === 2
               ? 'PHASE 2: MAGMA QUAKE'
               : 'PHASE 1: STONE STOMP';
+          if (phaseStr !== this.lastTitanPhaseText) {
+            this.lastTitanPhaseText = phaseStr;
+            this.titanPhaseBadge.textContent = phaseStr;
+          }
         }
         if (this.titanDistLabel) {
-          this.titanDistLabel.textContent = `Distance: ${Math.round(dist)}m • HP: ${this.titan.hp}/${this.titan.maxHp}`;
+          const distStr = `Distance: ${Math.round(dist)}m • HP: ${this.titan.hp}/${this.titan.maxHp}`;
+          if (distStr !== this.lastTitanDistText) {
+            this.lastTitanDistText = distStr;
+            this.titanDistLabel.textContent = distStr;
+          }
         }
       }
 
@@ -697,20 +738,16 @@ export class DynamicWorldEventManager {
   }
 
   private spawnRollingBoulder(playerPos: THREE.Vector3): void {
-    const bGeo = new THREE.DodecahedronGeometry(1.6, 1);
-    const bMat = new THREE.MeshStandardMaterial({
-      color: 0x48423f,
-      roughness: 0.85,
-    });
-    const mesh = new THREE.Mesh(bGeo, bMat);
+    const bAssets = getSharedBoulderAssets();
+    const mesh = new THREE.Mesh(bAssets.geo, bAssets.mat);
     mesh.position.set(this.titan.pos.x, this.titan.pos.y + 6.2, this.titan.pos.z);
     mesh.castShadow = true;
     this.group.add(mesh);
 
-    const toPlayer = new THREE.Vector3().subVectors(playerPos, this.titan.pos).normalize();
+    _scratchBoulderDir.subVectors(playerPos, this.titan.pos).normalize();
     this.activeBoulders.push({
       pos: mesh.position.clone(),
-      vel: toPlayer.multiplyScalar(18.0),
+      vel: _scratchBoulderDir.clone().multiplyScalar(18.0),
       mesh,
       life: 5.5,
     });
@@ -740,7 +777,6 @@ export class DynamicWorldEventManager {
 
       if (b.life <= 0) {
         this.group.remove(b.mesh);
-        b.mesh.geometry.dispose();
         this.activeBoulders.splice(i, 1);
       }
     }
@@ -749,5 +785,13 @@ export class DynamicWorldEventManager {
   public dispose(): void {
     this.titanHudEl?.remove();
     this.meteorStreakGeo.dispose();
+    sharedShardGeo?.dispose();
+    sharedShardMat?.dispose();
+    sharedBoulderGeo?.dispose();
+    sharedBoulderMat?.dispose();
+    sharedShardGeo = null;
+    sharedShardMat = null;
+    sharedBoulderGeo = null;
+    sharedBoulderMat = null;
   }
 }

@@ -32,6 +32,11 @@ export interface ZiplineStation {
   cableMesh: THREE.Line;
 }
 
+const _scratchCamDir = new THREE.Vector3();
+const _scratchNorm = new THREE.Vector3();
+const _scratchDwarfHand = new THREE.Vector3();
+const _scratchToAnchor = new THREE.Vector3();
+
 export class MountainTraversalManager {
   public readonly group = new THREE.Group();
 
@@ -47,9 +52,21 @@ export class MountainTraversalManager {
   private tetherPositions = new Float32Array(6); // 2 vertices x 3 (start -> end)
   private hookMesh!: THREE.Mesh;
 
-  // Best Locked Anchor
+  // Best Locked Anchor & Targeting Cache
   private lockedAnchor: GrappleAnchor | null = null;
+  private cachedAnchorPos = new THREE.Vector3();
+  private cachedAnchorNorm = new THREE.Vector3();
+  private cachedAnchor: GrappleAnchor = {
+    pos: this.cachedAnchorPos,
+    normal: this.cachedAnchorNorm,
+    type: 'cliff',
+    dist: 0,
+  };
   private reticleEl: HTMLElement | null = null;
+  private grappleLabelEl: HTMLElement | null = null;
+  private lastGrappleLabelText = '';
+  private lastReticleVisible = false;
+  private targetingAccum = 0;
   private slalomHudEl: HTMLElement | null = null;
 
   // Slalom Speed-Gates
@@ -154,6 +171,7 @@ export class MountainTraversalManager {
       <div style="font-size:12px;font-weight:bold;letter-spacing:1px;background:rgba(0,0,0,0.65);padding:2px 8px;border-radius:4px;border:1px solid #ffd166;" id="grapple-label">[G] GRAPPLE</div>
     `;
     document.body.appendChild(this.reticleEl);
+    this.grappleLabelEl = this.reticleEl.querySelector('#grapple-label');
 
     // Create Slalom Combo Status Banner
     this.slalomHudEl = document.createElement('div');
@@ -382,10 +400,10 @@ export class MountainTraversalManager {
     }
 
     const playerPos = this.dwarf.root.position;
-    const toAnchor = new THREE.Vector3().subVectors(this.grappleAnchor, playerPos);
-    const horizDist = Math.hypot(toAnchor.x, toAnchor.z) || 1;
-    const boostDirX = toAnchor.x / horizDist;
-    const boostDirZ = toAnchor.z / horizDist;
+    _scratchToAnchor.subVectors(this.grappleAnchor, playerPos);
+    const horizDist = Math.hypot(_scratchToAnchor.x, _scratchToAnchor.z) || 1;
+    const boostDirX = _scratchToAnchor.x / horizDist;
+    const boostDirZ = _scratchToAnchor.z / horizDist;
 
     // Apply "Mach-Fling!" impulse: +17 m/s horizontal, +14.5 m/s upward
     this.onGrappleBoost?.(boostDirX * 17.0, 14.5, boostDirZ * 17.0);
@@ -447,8 +465,12 @@ export class MountainTraversalManager {
       return;
     }
 
-    // 1. Scan for valid Grapple Anchors ahead of dwarf / camera
-    this.updateGrappleTargeting(playerPos, camera);
+    // 1. Scan for valid Grapple Anchors ahead of dwarf / camera (throttled to 20 Hz)
+    this.targetingAccum += dt;
+    if (this.targetingAccum >= 0.05 || !this.lockedAnchor) {
+      this.targetingAccum = 0;
+      this.updateGrappleTargeting(playerPos, camera);
+    }
 
     // 2. Update Active Grapple Tether & Physics
     if (this.isGrappling && this.grappleAnchor) {
@@ -465,50 +487,53 @@ export class MountainTraversalManager {
   }
 
   private updateGrappleTargeting(playerPos: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
-    const camDir = new THREE.Vector3();
-    camera.getWorldDirection(camDir);
+    camera.getWorldDirection(_scratchCamDir);
 
-    let bestAnchor: GrappleAnchor | null = null;
+    let foundAnchor = false;
     let bestScore = -Infinity;
 
     // Raycast / step forward along view cone up to 28m
     for (let dist = 5.0; dist <= 28.0; dist += 2.2) {
-      const testX = playerPos.x + camDir.x * dist;
-      const testZ = playerPos.z + camDir.z * dist;
+      const testX = playerPos.x + _scratchCamDir.x * dist;
+      const testZ = playerPos.z + _scratchCamDir.z * dist;
       const groundY = this.chunkManager.getSurfaceHeight(testX, testZ);
 
       // Check for steep cliff face (terrain elevation at least 2.2m above dwarf)
       if (groundY >= playerPos.y + 2.2) {
-        const norm = new THREE.Vector3();
-        this.chunkManager.getSurfaceNormal(testX, testZ, norm);
-        // Valid cliff if surface slope normal.y <= 0.72 (steep cliff)
-        if (norm.y <= 0.78) {
+        this.chunkManager.getSurfaceNormal(testX, testZ, _scratchNorm);
+        // Valid cliff if surface slope normal.y <= 0.78 (steep cliff)
+        if (_scratchNorm.y <= 0.78) {
           const score = 100 - dist;
           if (score > bestScore) {
             bestScore = score;
-            bestAnchor = {
-              pos: new THREE.Vector3(testX, groundY + 0.5, testZ),
-              normal: norm,
-              type: 'cliff',
-              dist,
-            };
+            this.cachedAnchorPos.set(testX, groundY + 0.5, testZ);
+            this.cachedAnchorNorm.copy(_scratchNorm);
+            this.cachedAnchor.dist = dist;
+            foundAnchor = true;
           }
           break;
         }
       }
     }
 
-    this.lockedAnchor = bestAnchor;
+    this.lockedAnchor = foundAnchor ? this.cachedAnchor : null;
 
-    // Update HUD Reticle
+    // Update HUD Reticle with cached DOM reference and string check
     if (this.reticleEl) {
-      if (bestAnchor && !this.isGrappling) {
-        this.reticleEl.style.display = 'block';
-        const labelEl = document.getElementById('grapple-label');
-        if (labelEl) {
-          labelEl.textContent = `[G] GRAPPLE (${Math.round(bestAnchor.dist)}m)`;
+      if (foundAnchor && !this.isGrappling) {
+        if (!this.lastReticleVisible) {
+          this.lastReticleVisible = true;
+          this.reticleEl.style.display = 'block';
         }
-      } else {
+        const text = `[G] GRAPPLE (${Math.round(this.cachedAnchor.dist)}m)`;
+        if (text !== this.lastGrappleLabelText) {
+          this.lastGrappleLabelText = text;
+          if (this.grappleLabelEl) {
+            this.grappleLabelEl.textContent = text;
+          }
+        }
+      } else if (this.lastReticleVisible) {
+        this.lastReticleVisible = false;
         this.reticleEl.style.display = 'none';
       }
     }
@@ -517,8 +542,8 @@ export class MountainTraversalManager {
   private updateGrapplePhysics(dt: number, playerPos: THREE.Vector3): void {
     if (!this.grappleAnchor) return;
 
-    const dwarfHand = playerPos.clone();
-    dwarfHand.y += 0.85;
+    _scratchDwarfHand.copy(playerPos);
+    _scratchDwarfHand.y += 0.85;
 
     if (this.grapplePhase === 'firing') {
       this.grappleFlightProgress += dt * 7.5; // Fast projectile to anchor
@@ -529,13 +554,13 @@ export class MountainTraversalManager {
         this.onCameraShake?.(0.24, 0.16);
         this.dwarf.spawnBurst(this.grappleAnchor.x, this.grappleAnchor.y, this.grappleAnchor.z, 14);
       }
-      this.grappleCurrentTip.lerpVectors(dwarfHand, this.grappleAnchor, this.grappleFlightProgress);
+      this.grappleCurrentTip.lerpVectors(_scratchDwarfHand, this.grappleAnchor, this.grappleFlightProgress);
     } else if (this.grapplePhase === 'pulling') {
       this.grappleCurrentTip.copy(this.grappleAnchor);
 
-      // Pull physics: Accelerate dwarf toward anchor
-      const toAnchor = new THREE.Vector3().subVectors(this.grappleAnchor, playerPos);
-      const dist = toAnchor.length();
+      // Pull physics: Accelerate dwarf toward anchor (zero heap allocations)
+      _scratchToAnchor.subVectors(this.grappleAnchor, playerPos);
+      const dist = _scratchToAnchor.length();
 
       if (dist <= 2.8) {
         // Reached anchor -> Mach-Fling boost!
@@ -543,24 +568,27 @@ export class MountainTraversalManager {
         return;
       }
 
-      const pullDir = toAnchor.clone().normalize();
+      const invDist = 1 / (dist || 1);
+      const pullDirX = _scratchToAnchor.x * invDist;
+      const pullDirY = _scratchToAnchor.y * invDist;
+      const pullDirZ = _scratchToAnchor.z * invDist;
       const pullSpeed = Math.min(26.0, 16.0 + (28.0 - dist) * 0.5);
       const step = pullSpeed * dt;
 
-      playerPos.x += pullDir.x * step;
-      playerPos.y += pullDir.y * step;
-      playerPos.z += pullDir.z * step;
+      playerPos.x += pullDirX * step;
+      playerPos.y += pullDirY * step;
+      playerPos.z += pullDirZ * step;
 
       // Reel gear tick sound
       if (Math.random() < 0.28) {
-        this.dwarf.spawnBurst(dwarfHand.x, dwarfHand.y, dwarfHand.z, 2);
+        this.dwarf.spawnBurst(_scratchDwarfHand.x, _scratchDwarfHand.y, _scratchDwarfHand.z, 2);
       }
     }
 
     // Update 3D tether line positions
-    this.tetherPositions[0] = dwarfHand.x;
-    this.tetherPositions[1] = dwarfHand.y;
-    this.tetherPositions[2] = dwarfHand.z;
+    this.tetherPositions[0] = _scratchDwarfHand.x;
+    this.tetherPositions[1] = _scratchDwarfHand.y;
+    this.tetherPositions[2] = _scratchDwarfHand.z;
     this.tetherPositions[3] = this.grappleCurrentTip.x;
     this.tetherPositions[4] = this.grappleCurrentTip.y;
     this.tetherPositions[5] = this.grappleCurrentTip.z;

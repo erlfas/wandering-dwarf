@@ -1077,7 +1077,10 @@ export class DwarfCharacter {
     this.rodBendTarget = THREE.MathUtils.clamp(bend, 0, 1.2);
   }
 
-  public getRodTipWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
+  private static readonly _fallbackRodTip = new THREE.Vector3();
+  private static readonly _fallbackBowLaunch = new THREE.Vector3();
+
+  public getRodTipWorldPosition(out: THREE.Vector3 = DwarfCharacter._fallbackRodTip): THREE.Vector3 {
     this.rodTipNode.updateWorldMatrix(true, false);
     return out.setFromMatrixPosition(this.rodTipNode.matrixWorld);
   }
@@ -1104,7 +1107,7 @@ export class DwarfCharacter {
     this.bowDrawCurrent = 0;
   }
 
-  public getBowLaunchWorldPosition(out = new THREE.Vector3()): THREE.Vector3 {
+  public getBowLaunchWorldPosition(out: THREE.Vector3 = DwarfCharacter._fallbackBowLaunch): THREE.Vector3 {
     this.bowLaunchNode.updateWorldMatrix(true, false);
     return out.setFromMatrixPosition(this.bowLaunchNode.matrixWorld);
   }

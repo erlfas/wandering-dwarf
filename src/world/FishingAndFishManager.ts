@@ -69,6 +69,9 @@ interface FishInstance {
   nibbleCount: number;
   nibbleTimer: number;
   fleeTimer: number;
+  aiTickAccum?: number;
+  aheadClear?: boolean;
+  bestFleeAngle?: number;
 }
 
 /**
@@ -920,27 +923,32 @@ export class FishingAndFishManager {
         }
 
         if (f.fleeTimer > 0) {
-          // Swim rapidly away from the dwarf, steering around shallow banks so fish stay in deep water
-          const awayAngle = Math.atan2(-dxP, -dzP);
-          let bestAngle = awayAngle;
-          let deepestGround = Infinity;
-          for (let i = 0; i < FISH_CANDIDATE_OFFSETS.length; i++) {
-            const testAng = awayAngle + FISH_CANDIDATE_OFFSETS[i];
-            const probeX = f.pos.x + Math.sin(testAng) * 1.35;
-            const probeZ = f.pos.z + Math.cos(testAng) * 1.35;
-            const gY = this.sampleGroundHeight(probeX, probeZ);
-            if (gY < waterY - 0.28) {
-              bestAngle = testAng;
-              deepestGround = gY;
-              break;
+          // Swim rapidly away from the dwarf, steering around shallow banks (throttled to 10 Hz)
+          f.aiTickAccum = (f.aiTickAccum ?? 0) + dt;
+          if (f.bestFleeAngle === undefined || f.aiTickAccum >= 0.1) {
+            f.aiTickAccum = 0;
+            const awayAngle = Math.atan2(-dxP, -dzP);
+            let bestAngle = awayAngle;
+            let deepestGround = Infinity;
+            for (let i = 0; i < FISH_CANDIDATE_OFFSETS.length; i++) {
+              const testAng = awayAngle + FISH_CANDIDATE_OFFSETS[i];
+              const probeX = f.pos.x + Math.sin(testAng) * 1.35;
+              const probeZ = f.pos.z + Math.cos(testAng) * 1.35;
+              const gY = this.sampleGroundHeight(probeX, probeZ);
+              if (gY < waterY - 0.28) {
+                bestAngle = testAng;
+                deepestGround = gY;
+                break;
+              }
+              if (gY < deepestGround) {
+                deepestGround = gY;
+                bestAngle = testAng;
+              }
             }
-            if (gY < deepestGround) {
-              deepestGround = gY;
-              bestAngle = testAng;
-            }
+            f.bestFleeAngle = bestAngle;
           }
 
-          let diff = bestAngle - f.heading;
+          let diff = (f.bestFleeAngle ?? Math.atan2(-dxP, -dzP)) - f.heading;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
           f.heading += diff * Math.min(1, dt * 11.0);
@@ -1025,20 +1033,26 @@ export class FishingAndFishManager {
             f.heading += f.targetYawOffset * dt;
           }
 
-          // Look ahead 0.9m to ensure the fish stays in water deeper than 0.28m
+          // Look ahead 0.9m to ensure the fish stays in water deeper than 0.28m (throttled to 10 Hz)
           const nextX = f.pos.x + Math.sin(f.heading) * f.speed * dt;
           const nextZ = f.pos.z + Math.cos(f.heading) * f.speed * dt;
-          const aheadX = f.pos.x + Math.sin(f.heading) * 0.95;
-          const aheadZ = f.pos.z + Math.cos(f.heading) * 0.95;
-          const aheadGround = this.sampleGroundHeight(aheadX, aheadZ);
 
-          if (aheadGround < waterY - 0.26) {
+          f.aiTickAccum = (f.aiTickAccum ?? 0) + dt;
+          if (f.aheadClear === undefined || f.aiTickAccum >= 0.1) {
+            f.aiTickAccum = 0;
+            const aheadX = f.pos.x + Math.sin(f.heading) * 0.95;
+            const aheadZ = f.pos.z + Math.cos(f.heading) * 0.95;
+            const aheadGround = this.sampleGroundHeight(aheadX, aheadZ);
+            f.aheadClear = aheadGround < waterY - 0.26;
+            if (!f.aheadClear) {
+              f.heading += Math.PI * 0.75;
+              f.turnTimer = 1.2;
+            }
+          }
+
+          if (f.aheadClear) {
             f.pos.x = nextX;
             f.pos.z = nextZ;
-          } else {
-            // Smoothly turn back toward deep water
-            f.heading += Math.PI * 0.75;
-            f.turnTimer = 1.2;
           }
 
           f.swimPhase += dt * (7.5 + f.speed * 2.5);

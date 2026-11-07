@@ -91,6 +91,11 @@ export class ExplorerCamera {
   private shakeIntensity = 0;
   private targetFov = 50;
 
+  // Cached camera terrain collision height
+  private lastCamGroundSampleX = NaN;
+  private lastCamGroundSampleZ = NaN;
+  private cachedCamGroundY = 0;
+
   constructor(
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
@@ -947,10 +952,21 @@ export class ExplorerCamera {
       }
     }
 
-    // Prevent camera from clipping below terrain surface or hut/castle floor
-    const camGroundY = insideInterior
-      ? floorY + 0.65
-      : this.chunkManager.getSurfaceHeight(desiredCamX, desiredCamZ) + 1.2;
+    // Prevent camera from clipping below terrain surface or hut/castle floor (cache when camera is stationary)
+    let camGroundY: number;
+    if (insideInterior) {
+      camGroundY = floorY + 0.65;
+    } else {
+      const movedSq =
+        (desiredCamX - this.lastCamGroundSampleX) * (desiredCamX - this.lastCamGroundSampleX) +
+        (desiredCamZ - this.lastCamGroundSampleZ) * (desiredCamZ - this.lastCamGroundSampleZ);
+      if (movedSq > 0.0025 || Number.isNaN(this.lastCamGroundSampleX)) {
+        this.lastCamGroundSampleX = desiredCamX;
+        this.lastCamGroundSampleZ = desiredCamZ;
+        this.cachedCamGroundY = this.chunkManager.getSurfaceHeight(desiredCamX, desiredCamZ) + 1.2;
+      }
+      camGroundY = this.cachedCamGroundY;
+    }
     if (desiredCamY < camGroundY) {
       desiredCamY = camGroundY;
     }

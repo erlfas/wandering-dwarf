@@ -62,9 +62,13 @@ export class DwarvenUndergroundManager {
   private vaultPlinthMesh!: THREE.Mesh;
   private vaultClaimed = false;
   private elevatorRingMesh!: THREE.Mesh;
+  private static readonly PLINTH_POS = new THREE.Vector3(-7.5, 0, 10.5);
+  private static readonly ELEVATOR_POS = new THREE.Vector3(0, 0, 12.0);
 
-  // DOM Prompt
+  // DOM Prompt & Caching
   private promptEl: HTMLElement | null = null;
+  private lastPromptText = '';
+  private lastPromptVisible = false;
 
   // Callbacks
   public onCameraShake?: (intensity: number, duration: number) => void;
@@ -688,11 +692,14 @@ export class DwarvenUndergroundManager {
 
   public update(dt: number, _elapsedTime: number, playerPos: THREE.Vector3): void {
     if (!this.isInsideCavern) {
-      // Find nearest outdoor entrance
+      // Find nearest outdoor entrance (zero allocations via Math.hypot)
       let nearest: MineEntrance | null = null;
       let minDist = Infinity;
       for (const ent of this.entrances) {
-        const d = playerPos.distanceTo(new THREE.Vector3(ent.x, ent.y, ent.z));
+        const dx = playerPos.x - ent.x;
+        const dy = playerPos.y - ent.y;
+        const dz = playerPos.z - ent.z;
+        const d = Math.hypot(dx, dy, dz);
         if (d < minDist) {
           minDist = d;
           nearest = ent;
@@ -702,10 +709,18 @@ export class DwarvenUndergroundManager {
       this.nearestEntranceDist = minDist;
 
       if (this.promptEl) {
-        if (nearest && minDist <= 3.4) {
-          this.promptEl.style.display = 'block';
-          this.promptEl.textContent = `[E] Enter ${nearest.name}`;
-        } else {
+        const promptText = (nearest && minDist <= 3.4) ? `[E] Enter ${nearest.name}` : '';
+        if (promptText) {
+          if (!this.lastPromptVisible) {
+            this.lastPromptVisible = true;
+            this.promptEl.style.display = 'block';
+          }
+          if (promptText !== this.lastPromptText) {
+            this.lastPromptText = promptText;
+            this.promptEl.textContent = promptText;
+          }
+        } else if (this.lastPromptVisible) {
+          this.lastPromptVisible = false;
           this.promptEl.style.display = 'none';
         }
       }
@@ -726,22 +741,27 @@ export class DwarvenUndergroundManager {
           }
         }
         if (!promptText && this.puzzleSolved && !this.vaultClaimed) {
-          const plinthPos = new THREE.Vector3(-7.5, 0, 10.5);
-          if (playerPos.distanceTo(plinthPos) <= 3.0) {
+          if (playerPos.distanceTo(DwarvenUndergroundManager.PLINTH_POS) <= 3.0) {
             promptText = '[E] Claim Ancestral Vault Hoard';
           }
         }
         if (!promptText) {
-          const elevPos = new THREE.Vector3(0, 0, 12.0);
-          if (playerPos.distanceTo(elevPos) <= 2.8) {
+          if (playerPos.distanceTo(DwarvenUndergroundManager.ELEVATOR_POS) <= 2.8) {
             promptText = '[E] Take Elevator to Surface';
           }
         }
 
         if (promptText) {
-          this.promptEl.style.display = 'block';
-          this.promptEl.textContent = promptText;
-        } else {
+          if (!this.lastPromptVisible) {
+            this.lastPromptVisible = true;
+            this.promptEl.style.display = 'block';
+          }
+          if (promptText !== this.lastPromptText) {
+            this.lastPromptText = promptText;
+            this.promptEl.textContent = promptText;
+          }
+        } else if (this.lastPromptVisible) {
+          this.lastPromptVisible = false;
           this.promptEl.style.display = 'none';
         }
       }
@@ -752,5 +772,25 @@ export class DwarvenUndergroundManager {
     this.promptEl?.remove();
     this.beamGeo.dispose();
     this.beamMat.dispose();
+    this.cavernGroup.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry?.dispose();
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach((m) => m.dispose());
+        } else {
+          obj.material?.dispose();
+        }
+      }
+    });
+    this.group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.geometry?.dispose();
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach((m) => m.dispose());
+        } else {
+          obj.material?.dispose();
+        }
+      }
+    });
   }
 }

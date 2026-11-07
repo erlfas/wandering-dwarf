@@ -28,6 +28,7 @@ import {
   playWarhornBlastSound,
 } from './world/AssignmentManager';
 import { WaterReflectionController } from './world/WaterMesh';
+import { LAYER_MICRO_FOLIAGE } from './world/GrassField';
 import {
   clearProgress,
   loadProgress,
@@ -93,6 +94,7 @@ const camera = new THREE.PerspectiveCamera(
   0.5,
   3500
 );
+camera.layers.enable(LAYER_MICRO_FOLIAGE);
 
 // 4. Lighting (Warm morning/afternoon sunlight + soft sky/ground hemisphere bounce)
 const hemiLight = new THREE.HemisphereLight(0xeaf4ff, 0x6b7f4e, 0.82);
@@ -105,6 +107,7 @@ const sunOffset = new THREE.Vector3(85, 110, 65);
 const dirLight = new THREE.DirectionalLight(0xfff5e4, 1.85);
 dirLight.position.copy(sunOffset);
 dirLight.castShadow = true;
+dirLight.shadow.camera.layers.enable(LAYER_MICRO_FOLIAGE);
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.near = 40;
 dirLight.shadow.camera.far = 220;
@@ -1653,8 +1656,9 @@ function animate(): void {
     }
   }
 
-  // Keep directional sun shadow frustum centered on player in discrete grid steps
+  // Keep directional sun shadow frustum centered on player in discrete grid steps (skip when indoors/underground)
   if (
+    !insideInterior &&
     dirLight.castShadow &&
     (config as { enableShadows?: boolean }).enableShadows !== false
   ) {

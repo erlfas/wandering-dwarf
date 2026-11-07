@@ -54,6 +54,20 @@ const sharedBorderMaterial = new THREE.LineBasicMaterial({
 });
 
 const geometryPool = new Map<number, THREE.BufferGeometry[]>();
+const MAX_GEOMETRY_POOL_PER_TIER = 12;
+
+function recycleTerrainGeometry(segments: number, geometry: THREE.BufferGeometry): void {
+  let pool = geometryPool.get(segments);
+  if (!pool) {
+    pool = [];
+    geometryPool.set(segments, pool);
+  }
+  if (pool.length < MAX_GEOMETRY_POOL_PER_TIER) {
+    pool.push(geometry);
+  } else {
+    geometry.dispose();
+  }
+}
 
 // Reusable module-level buffers & temporaries for zero-allocation chunk building
 let paddedHeights = new Float32Array(67 * 67);
@@ -290,12 +304,7 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     waterMaterial?: THREE.Material
   ): void {
     if (this.segments === newSegments) return;
-    let pool = geometryPool.get(this.segments);
-    if (!pool) {
-      pool = [];
-      geometryPool.set(this.segments, pool);
-    }
-    pool.push(this.mesh.geometry);
+    recycleTerrainGeometry(this.segments, this.mesh.geometry);
 
     this.segments = newSegments;
     this.mesh.geometry = this.buildGeometry(noise, config.blankClayMode, config.waterLevel);
@@ -421,8 +430,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
     const u = THREE.MathUtils.clamp((localX + half) * invStep, 0, segments - 0.0001);
     const v = THREE.MathUtils.clamp((localZ + half) * invStep, 0, segments - 0.0001);
-    const ix = Math.floor(u);
-    const iz = Math.floor(v);
+    const ix = u | 0;
+    const iz = v | 0;
     const fx = u - ix;
     const fz = v - iz;
 
@@ -485,6 +494,96 @@ export class TerrainChunk implements ChunkSurfaceSampler {
     return wy;
   }
 
+  public sampleSurfacePoint(
+    localX: number,
+    localZ: number,
+    outNormal: THREE.Vector3,
+    outColor?: THREE.Color,
+    computeTrackWeight = false
+  ): { height: number; trackWeight: number } {
+    const segments = this.segments;
+    const stride = segments + 1;
+    const half = this.size * 0.5;
+    const invStep = segments / this.size;
+
+    const u = THREE.MathUtils.clamp((localX + half) * invStep, 0, segments - 0.0001);
+    const v = THREE.MathUtils.clamp((localZ + half) * invStep, 0, segments - 0.0001);
+    const ix = u | 0;
+    const iz = v | 0;
+    const fx = u - ix;
+    const fz = v - iz;
+
+    const i00 = (iz * stride + ix) * 3;
+    const i10 = i00 + 3;
+    const i01 = i00 + stride * 3;
+    const i11 = i01 + 3;
+
+    const w00 = (1 - fx) * (1 - fz);
+    const w10 = fx * (1 - fz);
+    const w01 = (1 - fx) * fz;
+    const w11 = fx * fz;
+
+    const geo = this.mesh.geometry;
+    const posArr = (geo.attributes.position as THREE.BufferAttribute).array as Float32Array;
+    const normArr = (geo.attributes.normal as THREE.BufferAttribute).array as Float32Array;
+
+    const h00 = posArr[i00 + 1];
+    const h10 = posArr[i10 + 1];
+    const h01 = posArr[i01 + 1];
+    const h11 = posArr[i11 + 1];
+
+    const wy =
+      fx + fz <= 1.0
+        ? h00 + fx * (h10 - h00) + fz * (h01 - h00)
+        : h11 + (1.0 - fx) * (h01 - h11) + (1.0 - fz) * (h10 - h11);
+
+    const nx =
+      normArr[i00] * w00 + normArr[i10] * w10 + normArr[i01] * w01 + normArr[i11] * w11;
+    const ny =
+      normArr[i00 + 1] * w00 +
+      normArr[i10 + 1] * w10 +
+      normArr[i01 + 1] * w01 +
+      normArr[i11 + 1] * w11;
+    const nz =
+      normArr[i00 + 2] * w00 +
+      normArr[i10 + 2] * w10 +
+      normArr[i01 + 2] * w01 +
+      normArr[i11 + 2] * w11;
+    outNormal.set(nx, ny, nz).normalize();
+
+    if (outColor) {
+      const colArr = (geo.attributes.color as THREE.BufferAttribute).array as Float32Array;
+      const r =
+        colArr[i00] * w00 + colArr[i10] * w10 + colArr[i01] * w01 + colArr[i11] * w11;
+      const g =
+        colArr[i00 + 1] * w00 +
+        colArr[i10 + 1] * w10 +
+        colArr[i01 + 1] * w01 +
+        colArr[i11 + 1] * w11;
+      const b =
+        colArr[i00 + 2] * w00 +
+        colArr[i10 + 2] * w10 +
+        colArr[i01 + 2] * w01 +
+        colArr[i11 + 2] * w11;
+      outColor.setRGB(r, g, b);
+    }
+
+    let tw = 0;
+    if (computeTrackWeight && this.maxTrackWeight > 0.001) {
+      const trackWeights = geo.userData.trackWeights as Float32Array | undefined;
+      if (trackWeights) {
+        const t00 = iz * stride + ix;
+        tw =
+          trackWeights[t00] * w00 +
+          trackWeights[t00 + 1] * w10 +
+          trackWeights[t00 + stride] * w01 +
+          trackWeights[t00 + stride + 1] * w11;
+      }
+    }
+
+    return { height: wy, trackWeight: tw };
+  }
+
   public sampleTrackWeight(localX: number, localZ: number): number {
     if (this.maxTrackWeight <= 0.001) return 0;
     const trackWeights = this.mesh.geometry.userData.trackWeights as
@@ -499,8 +598,8 @@ export class TerrainChunk implements ChunkSurfaceSampler {
 
     const u = THREE.MathUtils.clamp((localX + half) * invStep, 0, segments - 0.0001);
     const v = THREE.MathUtils.clamp((localZ + half) * invStep, 0, segments - 0.0001);
-    const ix = Math.floor(u);
-    const iz = Math.floor(v);
+    const ix = u | 0;
+    const iz = v | 0;
     const fx = u - ix;
     const fz = v - iz;
 
@@ -794,16 +893,25 @@ export class TerrainChunk implements ChunkSurfaceSampler {
   public dispose(): void {
     this.biomeGridPopulated = false;
     this.tallGrassPopulated = false;
-    this.chunkGrass?.dispose();
-    this.chunkForest?.dispose();
+    if (this.chunkGrass) {
+      this.mesh.remove(this.chunkGrass.group);
+      this.chunkGrass.dispose();
+      this.chunkGrass = undefined;
+    }
+    if (this.chunkForest) {
+      this.mesh.remove(this.chunkForest.group);
+      this.chunkForest.dispose();
+      this.chunkForest = undefined;
+    }
+    if (this.waterMesh) {
+      this.mesh.remove(this.waterMesh);
+      this.waterMesh = undefined;
+    }
     if (this.borderLine) {
+      this.mesh.remove(this.borderLine);
       this.borderLine.geometry.dispose();
+      this.borderLine = undefined;
     }
-    let pool = geometryPool.get(this.segments);
-    if (!pool) {
-      pool = [];
-      geometryPool.set(this.segments, pool);
-    }
-    pool.push(this.mesh.geometry);
+    recycleTerrainGeometry(this.segments, this.mesh.geometry);
   }
 }
