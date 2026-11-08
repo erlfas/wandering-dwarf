@@ -4,6 +4,8 @@
 
 An endless, deterministic 3D procedural world adventure built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, winding forest footpaths, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a traveling dwarf—complete with expressive traversal (jumping, valley wind-gliding, downhill shield-surfing), **Backpack Fishing & 3D River Fish**, **Backpack Bow & Arrow Deer Hunting**, diegetic firefly treasure tracking, rune-sealed mythic chests, ancient stone circles & fast-travel watchtower beacons, and a **Dwarven Relic Forge**.
 
+📖 **Complete Gameplay Guide:** For a deep dive into every mechanic, boss encounter (Vermithrax the Smoldering, Crag-Titan), castle masonry system, weapon catalog, and dwarven rank progression, see the [Complete Gameplay & Systems Guide](docs/complete-gameplay-guide.md).
+
 ---
 
 ## How to Run
