@@ -20,6 +20,80 @@ import {
   VOLCANO_Z,
 } from './TerrainNoise';
 
+export type TrollTier = 1 | 2 | 3;
+
+export interface FrontierTierDef {
+  ring: TrollTier;
+  name: string;
+  badge: string;
+  chunkDist: number;
+}
+
+export function getFrontierTier(wx: number, wz: number, chunkSize = 48): FrontierTierDef {
+  const cx = wx / chunkSize;
+  const cz = wz / chunkSize;
+  const chunkDist = Math.hypot(cx, cz);
+  if (chunkDist <= 3.5) {
+    return { ring: 1, name: 'The Hearthlands', badge: '🏞️ Hearthlands (Ring I)', chunkDist };
+  } else if (chunkDist <= 7.5) {
+    return { ring: 2, name: 'Ironwood Highlands', badge: '🌲 Ironwood Highlands (Ring II)', chunkDist };
+  } else {
+    return { ring: 3, name: 'The Shattered Peaks', badge: '🏔️ Shattered Peaks (Ring III)', chunkDist };
+  }
+}
+
+export interface TrollTierStats {
+  maxHp: number;
+  baseDamage: number;
+  walkSpeed: number;
+  runSpeed: number;
+  scale: number;
+  ringColor: number;
+  fallbackColor: number;
+  titlePrefix: string;
+  bountyGold: number;
+  droppedRations: number;
+}
+
+export const TROLL_TIER_CONFIGS: Record<TrollTier, TrollTierStats> = {
+  1: {
+    maxHp: 320,
+    baseDamage: 24,
+    walkSpeed: 2.6,
+    runSpeed: 4.3,
+    scale: 1.0,
+    ringColor: 0xef233c,
+    fallbackColor: 0x5c5346,
+    titlePrefix: 'Hearthland',
+    bountyGold: 60,
+    droppedRations: 2,
+  },
+  2: {
+    maxHp: 540,
+    baseDamage: 36,
+    walkSpeed: 2.9,
+    runSpeed: 4.9,
+    scale: 1.15,
+    ringColor: 0x38bdf8,
+    fallbackColor: 0x3d5a80,
+    titlePrefix: 'Armored Frost',
+    bountyGold: 140,
+    droppedRations: 4,
+  },
+  3: {
+    maxHp: 880,
+    baseDamage: 52,
+    walkSpeed: 3.2,
+    runSpeed: 5.2,
+    scale: 1.35,
+    ringColor: 0xff5722,
+    fallbackColor: 0x2b2d42,
+    titlePrefix: 'Ancient Elder Crag',
+    bountyGold: 280,
+    droppedRations: 6,
+  },
+};
+
 export const TROLL_MAX_HP = 320;
 export const TROLL_WALK_SPEED = 2.6; // Slower than Dwarf walk (6.0 m/s)
 export const TROLL_RUN_SPEED = 4.3;  // Slower than Dwarf walk (6.0 m/s) & run (10.5+ m/s) so Dwarf can always escape!
@@ -29,6 +103,7 @@ type TrollAnimState = 'walk' | 'run' | 'attack';
 interface TrollInstance {
   id: string;
   title: string;
+  tier: TrollTier;
   active: boolean;
   hp: number;
   maxHp: number;
@@ -44,6 +119,11 @@ interface TrollInstance {
   hitFlashTimer: number;
   dyingTimer: number;
   roarCooldown: number;
+  isEnraged: boolean;
+  specialAttackCooldown: number;
+  stompTimer: number;
+  stompShockwaveMesh: THREE.Mesh;
+  stompShockwaveMat: THREE.MeshBasicMaterial;
   isNearLOD: boolean;
   castShadowEnabled: boolean;
   mixerAccum: number;
@@ -316,6 +396,50 @@ export class TrollCombatManager {
     foodReward: number
   ) => void;
 
+  private onPlayerKnockbackFn?: (
+    dirX: number,
+    dirZ: number,
+    impulse?: number,
+    lift?: number,
+    stagger?: number
+  ) => void;
+  private onPlayerChillFn?: (duration?: number) => void;
+  private onGuardBreakFn?: () => void;
+  private isPlayerGuardBrokenFn: () => boolean = () => false;
+
+  public setPlayerKnockbackFn(
+    fn: (dirX: number, dirZ: number, impulse?: number, lift?: number, stagger?: number) => void
+  ): void {
+    this.onPlayerKnockbackFn = fn;
+  }
+
+  public setPlayerChillFn(fn: (duration?: number) => void): void {
+    this.onPlayerChillFn = fn;
+  }
+
+  public setGuardBreakCallbacks(onBreak: () => void, isBroken: () => boolean): void {
+    this.onGuardBreakFn = onBreak;
+    this.isPlayerGuardBrokenFn = isBroken;
+  }
+
+  public configureTrollTier(t: TrollInstance, tier: TrollTier): void {
+    t.tier = tier;
+    const stats = TROLL_TIER_CONFIGS[tier];
+    t.maxHp = stats.maxHp;
+    t.hp = stats.maxHp;
+    t.isEnraged = false;
+    t.stompTimer = 0;
+    t.specialAttackCooldown = tier === 3 ? 4.5 : 999;
+    const trollIdx = parseInt(t.id.replace('troll_', ''), 10) || 0;
+    t.title = `${stats.titlePrefix} ${TROLL_TITLES[trollIdx % TROLL_TITLES.length]}`;
+    t.root.scale.setScalar(stats.scale);
+    t.hpFillMat.color.setHex(stats.ringColor);
+    (t.targetRingMesh.material as THREE.MeshBasicMaterial).color.setHex(stats.ringColor);
+    (t.fallbackMesh.material as THREE.MeshStandardMaterial).color.setHex(stats.fallbackColor);
+    t.stompShockwaveMesh.visible = false;
+    t.stompShockwaveMat.opacity = 0;
+  }
+
   private initTrollPool(): void {
     const assets = getSharedTrollFallbackAssets();
     const ringGeo = new THREE.RingGeometry(0.95, 1.25, 24);
@@ -337,6 +461,9 @@ export class TrollCombatManager {
     const hpFillGeo = new THREE.PlaneGeometry(1.76, 0.16);
     hpFillGeo.translate(0.88, 0, 0.01); // Left-anchored so scale.x = hpRatio
 
+    const shockwaveGeo = new THREE.RingGeometry(0.8, 1.25, 24);
+    shockwaveGeo.rotateX(-Math.PI / 2);
+
     for (let i = 0; i < this.maxPooledTrolls; i++) {
       const root = new THREE.Group();
       root.visible = false;
@@ -353,6 +480,19 @@ export class TrollCombatManager {
       const targetRingMesh = new THREE.Mesh(ringGeo, ringMat);
       targetRingMesh.position.y = 0.08;
       root.add(targetRingMesh);
+
+      // Expanding Earth-Quake Shockwave Mesh for Elder Crag-Trolls
+      const stompShockwaveMat = new THREE.MeshBasicMaterial({
+        color: 0xff5722,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const stompShockwaveMesh = new THREE.Mesh(shockwaveGeo, stompShockwaveMat);
+      stompShockwaveMesh.position.y = 0.12;
+      stompShockwaveMesh.visible = false;
+      root.add(stompShockwaveMesh);
 
       // 3D Floating Overhead Troll Health Bar (`y = 2.65m`)
       const hpBarGroup = new THREE.Group();
@@ -374,6 +514,7 @@ export class TrollCombatManager {
       this.trollPool.push({
         id: `troll_${i}`,
         title: TROLL_TITLES[i % TROLL_TITLES.length],
+        tier: 1,
         active: false,
         hp: TROLL_MAX_HP,
         maxHp: TROLL_MAX_HP,
@@ -389,6 +530,11 @@ export class TrollCombatManager {
         hitFlashTimer: 0,
         dyingTimer: 0,
         roarCooldown: 0,
+        isEnraged: false,
+        specialAttackCooldown: 0,
+        stompTimer: 0,
+        stompShockwaveMesh,
+        stompShockwaveMat,
         isNearLOD: true,
         castShadowEnabled: true,
         mixerAccum: 0,
@@ -705,9 +851,10 @@ export class TrollCombatManager {
       const sz = castleZ + 6.5 + Math.cos(ang) * dist;
       const sy = Math.max(minLandY, this.sampleGroundHeight(sx, sz));
 
+      const tier: TrollTier = i === 0 ? 3 : 2;
+      this.configureTrollTier(t, tier);
+
       t.active = true;
-      t.hp = TROLL_MAX_HP;
-      t.maxHp = TROLL_MAX_HP;
       t.pos.set(sx, sy, sz);
       t.homePos.set(castleX, sy, castleZ + 7.5);
       t.heading = Math.atan2(castleX - sx, castleZ + 6.5 - sz);
@@ -720,11 +867,9 @@ export class TrollCombatManager {
       t.roarCooldown = 1.2;
       t.root.position.copy(t.pos);
       t.root.rotation.set(0, t.heading, 0);
-      t.root.scale.setScalar(1.0);
       t.root.visible = true;
       t.hpBarGroup.visible = true;
       t.hpFillMesh.scale.x = 1.0;
-      t.hpFillMat.color.setHex(0xef233c);
       this.transitionTrollAnim(t, 'walk');
       spawned++;
     }
@@ -734,7 +879,7 @@ export class TrollCombatManager {
     this.bannerUpdateAccum = 999;
     this.playOneShotPool(this.roarAudioPool, 0.85, () => this.playFallbackRoarSynth());
     this.showToast(
-      `📯 BLOOD-MOON CASTLE SIEGE! 3 Troll-Beasts march on ${castleName}! Roof Ballistae are firing — slay the wave for +450g, +5 🍖 & +250 Renown!`,
+      `📯 BLOOD-MOON CASTLE SIEGE! Ancient Elder Siege Captain & Frost-Trolls march on ${castleName}! Defend the gate!`,
       true
     );
     return true;
@@ -769,6 +914,7 @@ export class TrollCombatManager {
   public spawnNightTrollsAroundPlayer(playerPos: THREE.Vector3, announce = false): void {
     this.loadTrollGlbModel();
     const minLandY = this.config.enableWater ? this.config.waterLevel + 0.45 : -999;
+    const frontier = getFrontierTier(playerPos.x, playerPos.z, this.config.chunkSize);
     let spawnedAny = false;
 
     for (let i = 0; i < this.trollPool.length; i++) {
@@ -794,9 +940,15 @@ export class TrollCombatManager {
         sy = this.sampleGroundHeight(sx, sz);
       }
 
+      let tier: TrollTier = frontier.ring;
+      if (frontier.ring === 3 && i > 0) {
+        tier = 2;
+      } else if (frontier.ring === 2 && i > 1) {
+        tier = 1;
+      }
+      this.configureTrollTier(t, tier);
+
       t.active = true;
-      t.hp = TROLL_MAX_HP;
-      t.maxHp = TROLL_MAX_HP;
       t.pos.set(sx, Math.max(sy, minLandY), sz);
       t.homePos.copy(t.pos);
       t.heading = Math.atan2(playerPos.x - sx, playerPos.z - sz);
@@ -809,11 +961,9 @@ export class TrollCombatManager {
       t.roarCooldown = 1.5;
       t.root.position.copy(t.pos);
       t.root.rotation.set(0, t.heading, 0);
-      t.root.scale.setScalar(1.0);
       t.root.visible = true;
       t.hpBarGroup.visible = true;
       t.hpFillMesh.scale.x = 1.0;
-      t.hpFillMat.color.setHex(0xef233c);
       this.transitionTrollAnim(t, 'walk');
       spawnedAny = true;
     }
@@ -821,7 +971,7 @@ export class TrollCombatManager {
     if (spawnedAny && announce) {
       this.playOneShotPool(this.roarAudioPool, 0.72, () => this.playFallbackRoarSynth());
       this.showToast(
-        '👹 Nightfall! Towering Troll-Beasts prowl the dark! Eat Food (G) for Strength or seek shelter inside a Castle (E)!',
+        `👹 Nightfall in ${frontier.badge}! Dangerous beasts prowl the dark! Eat Food (G) for Strength!`,
         true
       );
     }
@@ -981,8 +1131,9 @@ export class TrollCombatManager {
       this.playOneShotElement(this.defeatedAudio, 0.9, () => this.playFallbackDefeatSynth());
       this.dwarf.spawnBurst(troll.pos.x, troll.pos.y + 1.1, troll.pos.z, 26);
 
-      const bountyGold = 300;
-      const droppedRations = 3;
+      const tierConfig = TROLL_TIER_CONFIGS[troll.tier] ?? TROLL_TIER_CONFIGS[1];
+      const bountyGold = tierConfig.bountyGold;
+      const droppedRations = tierConfig.droppedRations;
       this.onTrollDefeatedReward(bountyGold, droppedRations, this.trollsSlain, troll.title, source);
 
       if (this.activeSiegeRemaining > 0) {
@@ -1267,6 +1418,16 @@ export class TrollCombatManager {
 
       if (t.roarCooldown > 0) t.roarCooldown = Math.max(0, t.roarCooldown - dt);
       if (t.attackCooldown > 0) t.attackCooldown = Math.max(0, t.attackCooldown - dt);
+      if (t.specialAttackCooldown > 0) t.specialAttackCooldown = Math.max(0, t.specialAttackCooldown - dt);
+
+      // Enrage check for Tier 3 Ancient Elder Crag-Troll
+      if (t.tier === 3 && !t.isEnraged && t.hp <= t.maxHp * 0.35 && t.hp > 0) {
+        t.isEnraged = true;
+        this.playOneShotPool(this.roarAudioPool, 0.95, () => this.playFallbackRoarSynth());
+        this.cameraShakeFn?.(0.45, 0.35);
+        (t.targetRingMesh.material as THREE.MeshBasicMaterial).color.setHex(0xd90429);
+        this.showToast(`🔥 ${t.title} ENRAGED! Bloodlust frenzy (+35% Speed & Relentless Strikes)!`, true);
+      }
 
       if (insideSanctuary) {
         // While the Dwarf is safely inside a Castle or Hut (and troll group is hidden), skip visual lookAt/material work
@@ -1287,7 +1448,7 @@ export class TrollCombatManager {
         t.hpFillMat.color.setHex(0xffffff);
       } else {
         const hpRatio = t.hp / t.maxHp;
-        t.hpFillMat.color.setHex(hpRatio > 0.5 ? 0xef233c : hpRatio > 0.25 ? 0xff9f1c : 0xffd166);
+        t.hpFillMat.color.setHex(hpRatio > 0.5 ? (t.isEnraged ? 0xd90429 : 0xef233c) : hpRatio > 0.25 ? 0xff9f1c : 0xffd166);
       }
       t.hpFillMesh.scale.x = THREE.MathUtils.clamp(t.hp / t.maxHp, 0.001, 1.0);
 
@@ -1295,7 +1456,7 @@ export class TrollCombatManager {
       t.hpBarGroup.lookAt(cameraPos.x, t.pos.y + 2.65, cameraPos.z);
 
       // Pulse red danger ring at troll's feet
-      const ringPulse = 0.94 + Math.sin(elapsedTime * 5.0) * 0.08;
+      const ringPulse = 0.94 + Math.sin(elapsedTime * (t.isEnraged ? 8.5 : 5.0)) * 0.08;
       t.targetRingMesh.scale.setScalar(ringPulse);
 
       // Reposition troll if the player walked > 68m away at night so night danger stays engaging (68^2 = 4624)
@@ -1311,34 +1472,83 @@ export class TrollCombatManager {
         t.staggerTimer = Math.max(0, t.staggerTimer - dt);
       } else if (t.state === 'attack') {
         t.attackTimer -= dt;
-        // Deal club smash impact midway through the `box_01.001` swing
-        if (!t.damageDealtInSwing && t.attackTimer <= 0.42) {
-          t.damageDealtInSwing = true;
-          this.playOneShotPool(this.smashAudioPool, 0.82, () => this.playFallbackSmashSynth());
-          if (distSq <= 144.0) {
-            this.cameraShakeFn?.(distSq <= 16.0 ? 0.38 : 0.18, 0.22);
+        if (t.stompTimer > 0) {
+          t.stompTimer -= dt;
+          if (!t.damageDealtInSwing && t.stompTimer <= 0.45) {
+            t.damageDealtInSwing = true;
+            this.playFallbackQuakeSynth();
+            if (distSq <= 144.0) {
+              this.cameraShakeFn?.(distSq <= 16.0 ? 0.48 : 0.26, 0.32);
+            }
+            t.stompShockwaveMesh.visible = true;
+
+            // Check hit on dwarf
+            if (distSq <= 72.25) {
+              const dwarfGroundY = this.sampleGroundHeight(playerPos.x, playerPos.z);
+              const isAirborne = (playerPos.y - dwarfGroundY) > 0.45;
+              if (isAirborne) {
+                this.showToast('⚡ JUMPED OVER GROUND QUAKE! Tactical evasion!', true);
+              } else {
+                const dirX = Math.sin(t.heading);
+                const dirZ = Math.cos(t.heading);
+                this.onPlayerKnockbackFn?.(dirX, dirZ, 12.0, 4.2, 0.65);
+                this.onApplyPlayerDamage(35, `${t.title} Ground Quake`);
+                this.showToast(`💥 ${t.title}'s EARTH-QUAKE SHOCKWAVE hit you (-35 ❤️)! Jump (Space) to evade!`, false);
+              }
+            }
           }
-          if (distSq <= 9.9225) {
-            this.resolveTrollStrikeOnDwarf(t);
+
+          if (t.stompShockwaveMesh.visible) {
+            const expandProgress = Math.max(0, Math.min(1, 1 - (t.stompTimer / 0.45)));
+            const shockScale = THREE.MathUtils.lerp(0.5, 8.5, expandProgress);
+            t.stompShockwaveMesh.scale.setScalar(shockScale);
+            t.stompShockwaveMat.opacity = Math.max(0, 0.85 * (1 - expandProgress));
+          }
+
+          if (t.attackTimer <= 0) {
+            t.state = 'chase';
+            t.attackCooldown = t.isEnraged ? 0.75 : 1.25;
+            t.stompShockwaveMesh.visible = false;
+          }
+        } else {
+          // Deal club smash impact midway through the swing
+          if (!t.damageDealtInSwing && t.attackTimer <= 0.42) {
+            t.damageDealtInSwing = true;
+            this.playOneShotPool(this.smashAudioPool, 0.82, () => this.playFallbackSmashSynth());
+            if (distSq <= 144.0) {
+              this.cameraShakeFn?.(distSq <= 16.0 ? 0.38 : 0.18, 0.22);
+            }
+            if (distSq <= 9.9225) {
+              this.resolveTrollStrikeOnDwarf(t);
+            }
+          }
+          if (t.attackTimer <= 0) {
+            t.state = 'chase';
+            t.attackCooldown = t.isEnraged ? 0.75 : 1.25;
           }
         }
-        if (t.attackTimer <= 0) {
-          t.state = 'chase';
-          t.attackCooldown = 1.25;
-        }
+      } else if (t.tier === 3 && distSq <= 64.0 && distSq > 6.5025 && t.specialAttackCooldown <= 0) {
+        // Trigger Ground Quake Stomp for Ancient Elder Crag-Troll
+        t.state = 'attack';
+        t.stompTimer = 0.9;
+        t.attackTimer = 0.9;
+        t.damageDealtInSwing = false;
+        t.specialAttackCooldown = 7.5;
+        t.heading = Math.atan2(dx, dz);
+        this.transitionTrollAnim(t, 'attack');
       } else if (distSq <= 6.5025 && t.attackCooldown <= 0) {
         // Enter Heavy Club Smash (`box_01.001`) (2.55m => 6.5025)
         t.state = 'attack';
+        t.stompTimer = 0;
         t.attackTimer = 0.82;
         t.damageDealtInSwing = false;
         t.heading = Math.atan2(dx, dz);
         this.transitionTrollAnim(t, 'attack');
       } else if (distSq <= 1296.0) {
-        // Aggro Chase (`run.001` at 4.3 m/s — 36m => 1296)
+        // Aggro Chase (`run.001`)
         if (t.state !== 'chase' && t.roarCooldown <= 0) {
           t.roarCooldown = 9.0;
           this.playOneShotPool(this.roarAudioPool, 0.78, () => this.playFallbackRoarSynth());
-          // If the dwarf is trying to fish at night when a troll charges within 14m (196), interrupt fishing!
           if (distSq <= 196.0) {
             this.onInterruptFishingNight?.();
           }
@@ -1352,11 +1562,13 @@ export class TrollCombatManager {
         while (diff < -Math.PI) diff += Math.PI * 2;
         t.heading += diff * Math.min(1, dt * 6.5);
 
-        const step = TROLL_RUN_SPEED * dt;
+        const tierStats = TROLL_TIER_CONFIGS[t.tier] ?? TROLL_TIER_CONFIGS[1];
+        const runSpeed = t.isEnraged ? tierStats.runSpeed * 1.35 : tierStats.runSpeed;
+        const step = runSpeed * dt;
         t.pos.x += Math.sin(t.heading) * step;
         t.pos.z += Math.cos(t.heading) * step;
       } else {
-        // Patrol Walk (`Make the character walk.001` at 2.6 m/s)
+        // Patrol Walk
         t.state = 'patrol';
         this.transitionTrollAnim(t, 'walk');
         t.patrolAngle += dt * 0.45;
@@ -1367,8 +1579,9 @@ export class TrollCombatManager {
         const pLen = Math.hypot(pdx, pdz);
         if (pLen > 0.2) {
           t.heading = Math.atan2(pdx, pdz);
-          t.pos.x += (pdx / pLen) * TROLL_WALK_SPEED * dt;
-          t.pos.z += (pdz / pLen) * TROLL_WALK_SPEED * dt;
+          const tierStats = TROLL_TIER_CONFIGS[t.tier] ?? TROLL_TIER_CONFIGS[1];
+          t.pos.x += (pdx / pLen) * tierStats.walkSpeed * dt;
+          t.pos.z += (pdz / pLen) * tierStats.walkSpeed * dt;
         }
       }
 
@@ -1446,12 +1659,24 @@ export class TrollCombatManager {
     const isActivelyBlocking = this.dwarf.isShieldBlocking();
     const hasIronAegis = this.hasIronAegisFn();
 
-    // Check if the Dwarf has enough Strength (⚡) from eating food to brace against the Troll's blow!
-    const blockEnergyCost = stats.shieldId === 'mithril_aegis' ? 5 : 8;
-    const hasStrength = stats.energy >= 15;
+    // Base damage scaled with Troll Tier and Enrage mode
+    const tierConfig = TROLL_TIER_CONFIGS[troll.tier] ?? TROLL_TIER_CONFIGS[1];
+    let baseDamage = troll.isEnraged ? Math.round(tierConfig.baseDamage * 1.35) : tierConfig.baseDamage;
 
-    // Check for ⚡ PERFECT SHIELD PARRY (raising shield within 0.42s, or 0.55s with Iron Aegis, of the smash impact!)
+    // Check if player is currently Guard-Broken
+    if (this.isPlayerGuardBrokenFn()) {
+      const brokenDmg = Math.round(baseDamage * 1.35);
+      this.cameraShakeFn?.(0.45, 0.25);
+      this.onPlayerKnockbackFn?.(-Math.sin(troll.heading), -Math.cos(troll.heading), 9.0, 3.2, 0.5);
+      this.onApplyPlayerDamage(brokenDmg, troll.title);
+      this.showToast(`💥 CRITICAL SMASH while Guard-Broken (-${brokenDmg} ❤️)!`, false);
+      return;
+    }
+
+    const hasStrength = stats.energy >= 15;
     const parryWindow = hasIronAegis ? 0.55 : 0.42;
+
+    // Check for ⚡ PERFECT SHIELD PARRY
     if (
       hasStrength &&
       isShieldEquipped &&
@@ -1461,8 +1686,8 @@ export class TrollCombatManager {
       this.dwarf.triggerBlockImpact();
       this.playOneShotPool(this.blockAudioPool, 0.95, () => this.playFallbackShieldSynth());
       this.onPerfectParryReward?.();
-      const reflectDmg = stats.shieldId === 'mithril_aegis' ? 36 : 25;
-      troll.staggerTimer = 1.65;
+      const reflectDmg = stats.shieldId === 'mithril_aegis' ? 48 : 32;
+      troll.staggerTimer = 1.85;
       troll.attackCooldown = 2.4;
       this.counterBashWindowTimer = 1.1;
       this.counterBashTargetTroll = troll;
@@ -1475,49 +1700,76 @@ export class TrollCombatManager {
       return;
     }
 
-    let incomingDamage = 24; // Base Troll club smash damage
+    // Required block stamina
+    const requiredEnergy =
+      troll.tier === 3
+        ? stats.shieldId === 'mithril_aegis' ? 14 : 24
+        : troll.tier === 2
+          ? stats.shieldId === 'mithril_aegis' ? 8 : 16
+          : stats.shieldId === 'mithril_aegis' ? 5 : 9;
 
-    if (!hasStrength) {
-      // WITHOUT ENOUGH STRENGTH (< 15⚡): Dwarf is easily defeated (2.5x crushing damage = 58 HP!)
-      incomingDamage = 58;
-      if (hasIronAegis) {
-        incomingDamage = Math.max(1, Math.round(incomingDamage * 0.8));
-      }
+    let incomingDamage = baseDamage;
+
+    if (isShieldEquipped && isActivelyBlocking && stats.energy < requiredEnergy) {
+      // 💥 GUARD BREAK!
+      this.onConsumeCombatEnergy(stats.energy);
+      this.onGuardBreakFn?.();
+      this.dwarf.setShieldBlocking(false);
+      this.playFallbackGuardBreakSynth();
+      this.cameraShakeFn?.(0.52, 0.35);
+      this.onPlayerKnockbackFn?.(-Math.sin(troll.heading), -Math.cos(troll.heading), 10.5, 4.0, 1.25);
+      incomingDamage = Math.round(baseDamage * 1.25);
       this.showToast(
-        `💥 CRUSHING BLOW (-${incomingDamage} ❤️)! You have NO STRENGTH (${Math.round(stats.energy)}⚡) — Eat Food (G) or Escape to a Castle!`,
+        `💥 GUARD BROKEN! You lacked strength to block ${troll.title}'s crushing blow (-${incomingDamage} ❤️)! Shield knocked aside!`,
         false
       );
-    } else if (isShieldEquipped) {
-      this.onConsumeCombatEnergy(blockEnergyCost);
+    } else if (isShieldEquipped && isActivelyBlocking) {
+      this.onConsumeCombatEnergy(requiredEnergy);
       this.dwarf.triggerBlockImpact();
       this.playOneShotPool(this.blockAudioPool, 0.85, () => this.playFallbackShieldSynth());
 
       if (stats.shieldId === 'mithril_aegis') {
-        incomingDamage = isActivelyBlocking ? 1 : 3;
-        // Mithril Aegis reflects 12 runic damage back onto the attacking Troll!
-        this.applyDamageToTroll(troll, 12, this.dwarf.root.position, false);
+        incomingDamage = troll.tier === 3 ? 8 : troll.tier === 2 ? 4 : 1;
+        this.applyDamageToTroll(troll, 14, this.dwarf.root.position, false);
         this.showToast(
-          `🔰 Mithril Aegis Parried ${troll.title}! (Only -${incomingDamage} ❤️ & Reflected 12 DMG!)`,
+          `🔰 Mithril Aegis Parried ${troll.title}! (-${incomingDamage} ❤️ & Reflected 14 DMG!)`,
           true
         );
       } else {
-        incomingDamage = isActivelyBlocking ? 3 : 6;
+        incomingDamage = troll.tier === 3 ? 16 : troll.tier === 2 ? 8 : 4;
         if (hasIronAegis) {
           incomingDamage = Math.max(1, Math.round(incomingDamage * 0.8));
         }
         this.showToast(
-          `🛡️ Iron-Boss Shield Blocked ${troll.title}'s Club! (-${incomingDamage} ❤️, -${blockEnergyCost}⚡ Strength)`,
+          `🛡️ Shield Blocked ${troll.title}'s smash! (-${incomingDamage} ❤️, -${requiredEnergy}⚡ Strength)`,
           false
         );
       }
     } else {
-      // Has Strength, but no Shield yet
+      // Unblocked or no shield
       this.onConsumeCombatEnergy(5);
-      incomingDamage = hasIronAegis ? 17 : 22;
-      this.showToast(
-        `👹 ${troll.title} smashed you (-${incomingDamage} ❤️)! Buy a Round Shield (Key 9) inside a Castle!`,
-        false
-      );
+      incomingDamage = Math.round(baseDamage * (hasIronAegis ? 0.8 : 1.0));
+      if (!hasStrength) {
+        incomingDamage = Math.round(incomingDamage * 1.5);
+        this.showToast(
+          `💥 CRUSHING BLOW (-${incomingDamage} ❤️)! You have NO STRENGTH (${Math.round(stats.energy)}⚡) — Eat Food (G)!`,
+          false
+        );
+      } else {
+        this.showToast(
+          `👹 ${troll.title} smashed you (-${incomingDamage} ❤️)!`,
+          false
+        );
+      }
+
+      // Tier 2: Inflict Frost Chill
+      if (troll.tier === 2) {
+        this.onPlayerChillFn?.(3.0);
+      }
+      // Tier 3: Devastating Knockback
+      if (troll.tier === 3) {
+        this.onPlayerKnockbackFn?.(-Math.sin(troll.heading), -Math.cos(troll.heading), 11.0, 4.0, 0.65);
+      }
     }
 
     const result = this.onApplyPlayerDamage(incomingDamage, troll.title);
@@ -1868,5 +2120,49 @@ export class TrollCombatManager {
       osc.start(t);
       osc.stop(t + 0.36);
     });
+  }
+
+  private playFallbackQuakeSynth(): void {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.exponentialRampToValueAtTime(25, now + 0.35);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.35, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.4);
+  }
+
+  private playFallbackGuardBreakSynth(): void {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(440, now);
+    osc.frequency.exponentialRampToValueAtTime(110, now + 0.28);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.3, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+    };
+    osc.start(now);
+    osc.stop(now + 0.32);
   }
 }

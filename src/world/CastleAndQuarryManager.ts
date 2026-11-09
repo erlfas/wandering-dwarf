@@ -2781,6 +2781,16 @@ export class CastleAndQuarryManager {
   public unclaimedTributeGold = 0;
   public kingsValorTimer = 0;
   public warhornRallyTimer = 0;
+  public guardBreakTimer = 0;
+
+  public triggerGuardBreak(duration = 1.25): void {
+    this.guardBreakTimer = Math.max(this.guardBreakTimer, duration);
+    this.dwarf.setShieldBlocking(false);
+  }
+
+  public isGuardBroken(): boolean {
+    return this.guardBreakTimer > 0;
+  }
   public trollsSlainBonusCount = 0;
   public blocksChiseledTotal = 0;
   public mithrilVeinsMined = 0;
@@ -4863,6 +4873,9 @@ export class CastleAndQuarryManager {
       if (this.warhornRallyTimer === 0) {
         this.syncEnergyAndFoodHUD();
       }
+    }
+    if (this.guardBreakTimer > 0) {
+      this.guardBreakTimer = Math.max(0, this.guardBreakTimer - dt);
     }
 
     // Passive Heartstone of the Deep & Rank V High King regeneration

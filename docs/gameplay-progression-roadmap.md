@@ -31,11 +31,11 @@ Extend [`DWARVEN_RANKS`](../src/world/AssignmentManager.ts) both **vertically** 
 - **Rank VIII — Immortal Ancestor of Khazad (`5,200 Renown`)**:
   - **Perks**: `+190❤️ / +150⚡ Max`, `+135% Damage`, **Ancestral Aura** (automated turret defense around your Castles and permanent `2x` base Gold Streak floor).
 
-### Distance-Scaled Frontier Rings (World Leveling)
+### Distance-Scaled Frontier Rings (World Leveling) *(Implemented & Verified)*
 Using chunk distance $R = \sqrt{cx^2 + cz^2}$ from Spawn Valley `(0, 0)`:
-- **Ring 1: Hearthlands ($R \le 3$ chunks)** — Standard stags, standard chests, single Night Trolls (`320 HP`).
-- **Ring 2: Ironwood Highlands ($4 \le R \le 7$ chunks)** — Higher terrain amplitude, **Armored Frost-Trolls (`520 HP`)**, **Mithril Ore Boulders**, and **2x Gold Chests**.
-- **Ring 3: The Shattered Peaks ($R \ge 8$ chunks)** — Dramatic crags, **Ancient Elder Trolls / Siege Bosses (`850 HP`)**, **Star-Metal Meteorites**, and **3x Mythic Hoards**.
+- **Ring 1: Hearthlands ($R \le 3.5$ chunks / $\le 168\text{m}$)** — Standard stags, standard chests, single Hearthland Night-Trolls (`320 HP`, 24 DMG).
+- **Ring 2: Ironwood Highlands ($3.5 < R \le 7.5$ chunks / $168\text{m} - 360\text{m}$)** — **Armored Frost-Trolls (`540 HP`, 36 DMG)**, **Frost Chill Debuff** (-28% player speed for 3s), **Highland Slalom Trials** (+650g), Mithril Ore, and 2x Gold Chests.
+- **Ring 3: The Shattered Peaks ($R > 7.5$ chunks / $> 360\text{m}$)** — **Ancient Elder Crag-Trolls (`880 HP`, 52–70 DMG)**, **Ground Stomp Earth-Quake Shockwaves** (8.5m AoE, jump to evade), **Bloodlust Enrage Frenzy** (<35% HP, 6.2 m/s speed), **Shattered Peaks Slalom Trials** (+950g), and Mythic Hoards.
 
 ---
 

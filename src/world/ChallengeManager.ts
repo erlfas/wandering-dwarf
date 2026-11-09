@@ -5,6 +5,7 @@ import { WorldConfig } from './Config';
 import { ChunkManager } from './ChunkManager';
 import { TerrainNoise, createSeededRandom } from './TerrainNoise';
 import { TreasureManager } from './TreasureManager';
+import { getFrontierTier } from './TrollCombatManager';
 
 interface TrailCoinInstance {
   id: string;
@@ -552,7 +553,17 @@ export class ChallengeManager {
 
     this.playChallengeStartFanfare();
     this.onChallengeStateChange?.(true);
-    this.showToast('⏱️ Hillside Ring Sprint! Pass 5 Rings in 20s!', true);
+
+    const frontier = getFrontierTier(arch.worldPos.x, arch.worldPos.z, this.config.chunkSize);
+    const trialSeconds = frontier.ring === 3 ? 16.0 : frontier.ring === 2 ? 18.0 : 20.0;
+    this.trialTimer = trialSeconds;
+    const toastMsg =
+      frontier.ring === 3
+        ? '🏔️ Shattered Peaks Precision Slalom! Pass 5 Rings in 16s!'
+        : frontier.ring === 2
+          ? '🌲 Highland Slalom Trial! Pass 5 Steep Rings in 18s!'
+          : '⏱️ Hearthlands Ring Sprint! Pass 5 Rings in 20s!';
+    this.showToast(toastMsg, true);
     this.syncChallengeBanner();
   }
 
@@ -644,10 +655,18 @@ export class ChallengeManager {
           arch.portalRingMesh.material = assets.matPortalCompleted;
 
           this.playChallengeVictoryFanfare();
+          const frontier = getFrontierTier(arch.worldPos.x, arch.worldPos.z, this.config.chunkSize);
+          const rewardGold = frontier.ring === 3 ? 950 : frontier.ring === 2 ? 650 : 400;
+          const rewardTitle =
+            frontier.ring === 3
+              ? '🏆 Shattered Peaks Champion Chest (+950g)!'
+              : frontier.ring === 2
+                ? '🏆 Highland Slalom Champion Chest (+650g)!'
+                : '🏆 Ring Sprint Champion Chest (+400g)!';
           this.treasureManager.grantChallengeReward(
-            400,
+            rewardGold,
             hasLodestone,
-            '🏆 Ring Sprint Champion Chest!',
+            rewardTitle,
             true,
             true
           );

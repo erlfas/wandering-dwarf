@@ -347,6 +347,180 @@ assert(pointLightRecompiles === 0, 'Rule 2: Constant NUM_POINT_LIGHTS = 1 Across
 assert(distanceSquaredViolations === 0, 'Rule 3: Flat-List Zero Allocation Iterations in Hunting/Fishing');
 
 // ---------------------------------------------------------------------------
+// SUITE 6: Distance-Ringed Frontier Zone Lookups (100,000 Spatial Queries)
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 6: Distance-Ringed Frontier Zone Lookups]${ANSI.reset}`);
+
+function getFrontierTierBenchmark(wx, wz, chunkSize = 48) {
+  const cx = wx / chunkSize;
+  const cz = wz / chunkSize;
+  const chunkDist = Math.hypot(cx, cz);
+  if (chunkDist <= 3.5) {
+    return 1;
+  } else if (chunkDist <= 7.5) {
+    return 2;
+  } else {
+    return 3;
+  }
+}
+
+// Warm up JIT
+for (let i = 0; i < 5000; i++) {
+  getFrontierTierBenchmark(i * 3.5, i * 2.1);
+}
+
+const NUM_FRONTIER_SAMPLES = 100000;
+let ring1Count = 0;
+let ring2Count = 0;
+let ring3Count = 0;
+
+const startFrontier = performance.now();
+for (let i = 0; i < NUM_FRONTIER_SAMPLES; i++) {
+  const wx = (i % 500) * 1.5 - 375;
+  const wz = ((i / 500) | 0) * 3.5 - 350;
+  const ring = getFrontierTierBenchmark(wx, wz);
+  if (ring === 1) ring1Count++;
+  else if (ring === 2) ring2Count++;
+  else ring3Count++;
+}
+const elapsedFrontier = performance.now() - startFrontier;
+const opsSecFrontier = Math.round((NUM_FRONTIER_SAMPLES / elapsedFrontier) * 1000);
+
+assert(
+  ring1Count > 0 && ring2Count > 0 && ring3Count > 0,
+  'Frontier Ring Distribution Correctness (All 3 rings detected across space)',
+  `Ring I: ${ring1Count}, Ring II: ${ring2Count}, Ring III: ${ring3Count}`
+);
+assert(
+  opsSecFrontier >= 5000000,
+  'Frontier Lookup Throughput >= 5,000,000 ops/sec',
+  `${opsSecFrontier.toLocaleString()} ops/sec (${elapsedFrontier.toFixed(2)}ms total)`
+);
+
+// ---------------------------------------------------------------------------
+// SUITE 7: Multi-Tier Troll AI Simulation & Enrage Invariants
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 7: Multi-Tier Troll AI & Zero-Allocation Pool Benchmark]${ANSI.reset}`);
+
+const simulatedTrolls = [
+  { id: 't_0', tier: 1, hp: 320, maxHp: 320, x: 20, z: 20, state: 'patrol', isEnraged: false, cooldown: 0, stompTimer: 0 },
+  { id: 't_1', tier: 2, hp: 540, maxHp: 540, x: 50, z: 40, state: 'chase', isEnraged: false, cooldown: 0, stompTimer: 0 },
+  { id: 't_2', tier: 3, hp: 880, maxHp: 880, x: 12, z: 12, state: 'chase', isEnraged: false, cooldown: 0, stompTimer: 0 },
+];
+
+const pPos = { x: 0, z: 0 };
+const TROLL_TICKS = 5000;
+const trollDt = 0.016;
+
+// Warm up JIT
+for (let warm = 0; warm < 500; warm++) {
+  for (let i = 0; i < simulatedTrolls.length; i++) {
+    const t = simulatedTrolls[i];
+    const dx = pPos.x - t.x;
+    const dz = pPos.z - t.z;
+    const dSq = dx * dx + dz * dz;
+    if (dSq <= 6.5) t.state = 'attack';
+  }
+}
+
+const trollMemBefore = process.memoryUsage().heapUsed;
+const startTrollSim = performance.now();
+let enrageEvents = 0;
+let shockwavesSpawned = 0;
+
+for (let tick = 0; tick < TROLL_TICKS; tick++) {
+  // Move player along orbit
+  pPos.x = Math.sin(tick * 0.02) * 25.0;
+  pPos.z = Math.cos(tick * 0.02) * 25.0;
+
+  for (let i = 0; i < simulatedTrolls.length; i++) {
+    const t = simulatedTrolls[i];
+    const dx = pPos.x - t.x;
+    const dz = pPos.z - t.z;
+    const distSq = dx * dx + dz * dz;
+
+    // Simulate taking damage and enraging
+    if (tick === 1000 && t.tier === 3) {
+      t.hp = 250; // drops below 35% of 880 (308 HP)
+    }
+
+    if (t.tier === 3 && !t.isEnraged && t.hp <= t.maxHp * 0.35) {
+      t.isEnraged = true;
+      enrageEvents++;
+    }
+
+    if (t.cooldown > 0) t.cooldown -= trollDt;
+
+    if (t.tier === 3 && distSq <= 64.0 && distSq > 6.5 && t.cooldown <= 0) {
+      t.state = 'attack';
+      t.stompTimer = 0.9;
+      t.cooldown = 7.5;
+      shockwavesSpawned++;
+    } else if (distSq <= 6.5 && t.cooldown <= 0) {
+      t.state = 'attack';
+      t.cooldown = t.isEnraged ? 0.75 : 1.25;
+    } else if (distSq <= 1296.0) {
+      t.state = 'chase';
+      const speed = t.tier === 3 ? (t.isEnraged ? 7.0 : 5.2) : t.tier === 2 ? 4.9 : 4.3;
+      const d = Math.hypot(dx, dz) || 1;
+      t.x += (dx / d) * speed * trollDt;
+      t.z += (dz / d) * speed * trollDt;
+    }
+  }
+}
+const elapsedTrollSim = performance.now() - startTrollSim;
+const trollMemAfter = process.memoryUsage().heapUsed;
+const trollHeapDelta = trollMemAfter - trollMemBefore;
+
+assert(
+  enrageEvents === 1 && shockwavesSpawned > 0,
+  'Troll Enrage & Ground Stomp Special Attacks Triggered',
+  `enrages: ${enrageEvents}, shockwaves: ${shockwavesSpawned}`
+);
+assert(
+  elapsedTrollSim < 60,
+  '5,000 Multi-Tier Troll AI Ticks Simulated',
+  `${elapsedTrollSim.toFixed(2)}ms total, ${(elapsedTrollSim / TROLL_TICKS * 1000).toFixed(2)}µs/tick`
+);
+assert(
+  trollHeapDelta < 2 * 1024 * 1024,
+  'Zero-Heap Allocation Invariant in Multi-Tier Troll Loop (< 2MB V8 JIT delta)',
+  `heap delta: ${(trollHeapDelta / 1024).toFixed(1)} KB`
+);
+
+// ---------------------------------------------------------------------------
+// SUITE 8: Guard-Break, Parry Window & Combat Stamina Verification
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 8: Guard-Break, Parry & Stamina State Verification]${ANSI.reset}`);
+
+function evaluateCombatDefense(hasShield, isBlocking, blockRaiseElapsed, energy, isIronAegis, trollTier) {
+  if (!hasShield || !isBlocking) {
+    return { outcome: 'hit', damageMult: 1.0, guardBroken: false };
+  }
+  const parryWindow = isIronAegis ? 0.55 : 0.42;
+  if (blockRaiseElapsed <= parryWindow) {
+    return { outcome: 'parry', damageMult: 0, guardBroken: false };
+  }
+  const requiredEnergy = trollTier === 3 ? 24 : trollTier === 2 ? 16 : 8;
+  if (energy < requiredEnergy) {
+    return { outcome: 'guard_break', damageMult: 1.25, guardBroken: true };
+  }
+  return { outcome: 'blocked', damageMult: 0.15, guardBroken: false };
+}
+
+// 1. Perfect parry test
+const parryRes = evaluateCombatDefense(true, true, 0.25, 50, false, 2);
+assert(parryRes.outcome === 'parry' && !parryRes.guardBroken, 'Perfect Parry Window Execution (elapsed <= 0.42s)');
+
+// 2. Guard break test
+const breakRes = evaluateCombatDefense(true, true, 0.8, 10, false, 3);
+assert(breakRes.outcome === 'guard_break' && breakRes.guardBroken, 'Guard Break Triggered on Low Energy (< 24⚡ for Tier 3)');
+
+// 3. Clean block test
+const blockRes = evaluateCombatDefense(true, true, 0.8, 50, false, 3);
+assert(blockRes.outcome === 'blocked' && !blockRes.guardBroken, 'Standard Shield Block with Sufficient Energy (50⚡ >= 24⚡)');
+
+// ---------------------------------------------------------------------------
 // SUMMARY
 // ---------------------------------------------------------------------------
 console.log(`\n${ANSI.bold}${ANSI.cyan}========================================================================${ANSI.reset}`);

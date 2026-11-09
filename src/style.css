@@ -1397,6 +1397,22 @@ kbd {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
+.frontier-zone-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  background: rgba(30, 41, 59, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+  color: #f1f5f9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
 .top-food-pill {
   pointer-events: auto;
   cursor: pointer;

@@ -86,6 +86,10 @@ export class ExplorerCamera {
   private impulseX = 0;
   private impulseZ = 0;
 
+  // Combat status effects & impact physics
+  private chillTimer = 0;
+  private staggerTimer = 0;
+
   // Screen shake and dynamic FOV zoom
   private shakeTimer = 0;
   private shakeDuration = 0;
@@ -196,9 +200,40 @@ export class ExplorerCamera {
     this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y, this.playerPos.z, 10);
   }
 
+  public applyKnockback(
+    dirX: number,
+    dirZ: number,
+    impulse = 11.5,
+    lift = 4.2,
+    staggerDuration = 0.55
+  ): void {
+    this.impulseX = dirX * impulse;
+    this.impulseZ = dirZ * impulse;
+    this.velY = Math.max(this.velY, lift);
+    this.staggerTimer = Math.max(this.staggerTimer, staggerDuration);
+    this.heightAboveGround = Math.max(this.heightAboveGround, 0.08);
+    this.dwarf.spawnBurst(this.playerPos.x, this.playerPos.y + 0.6, this.playerPos.z, 12);
+  }
+
+  public applyChillDebuff(duration = 3.0): void {
+    this.chillTimer = Math.max(this.chillTimer, duration);
+  }
+
+  public isChilled(): boolean {
+    return this.chillTimer > 0;
+  }
+
+  public isStaggered(): boolean {
+    return this.staggerTimer > 0;
+  }
+
   public getMovementStatus(): string {
     if (this.castleInteriorManager?.isInsideCastle() || this.hutManager?.isInsideHut()) {
       return '';
+    }
+    if (this.staggerTimer > 0) return '💫 Staggered!';
+    if (this.chillTimer > 0) {
+      return `❄️ Chilled (${Math.ceil(this.chillTimer)}s • -28% Spd)`;
     }
     if (this.mountainTraversalManager?.isGrappleActive()) return '🪝 Grapple Reel!';
     if (this.mountainTraversalManager?.isZiplineRiding()) return '🚠 Zipline!';
@@ -443,6 +478,13 @@ export class ExplorerCamera {
 
     this.lastAimForward = forward;
     this.lastAimRight = right;
+
+    if (this.staggerTimer > 0) {
+      this.staggerTimer = Math.max(0, this.staggerTimer - dt);
+      forward = 0;
+      right = 0;
+    }
+
     const isFishing = this.fishingManager?.isFishingActive() ?? false;
     if (isFishing) {
       // While in Fishing Mode, W/S/A/D aims the fishing cast rather than walking away from the shore
@@ -502,6 +544,10 @@ export class ExplorerCamera {
     }
     if (this.castleManager) {
       baseSpeed *= this.castleManager.getCarrySpeedMultiplier();
+    }
+    if (this.chillTimer > 0) {
+      this.chillTimer = Math.max(0, this.chillTimer - dt);
+      baseSpeed *= 0.72;
     }
 
     if (this.mouseOverrideTimer > 0 && !this.isDragging) {

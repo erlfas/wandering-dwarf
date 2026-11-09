@@ -17,7 +17,7 @@ import { HuntingAndDeerManager } from './world/HuntingAndDeerManager';
 import { HutManager } from './world/HutManager';
 import { CastleAndQuarryManager } from './world/CastleAndQuarryManager';
 import { CastleInteriorManager } from './world/CastleInteriorManager';
-import { TrollCombatManager } from './world/TrollCombatManager';
+import { TrollCombatManager, getFrontierTier } from './world/TrollCombatManager';
 import { MountainTraversalManager } from './world/MountainTraversalManager';
 import { DynamicWorldEventManager } from './world/DynamicWorldEventManager';
 import { DwarvenUndergroundManager } from './world/DwarvenUndergroundManager';
@@ -49,6 +49,8 @@ const compassNeedle = document.getElementById('compass-needle')!;
 const compassChestPointer = document.getElementById('compass-chest-pointer')!;
 const nearestChestHint = document.getElementById('nearest-chest-hint')!;
 const movementStatusPill = document.getElementById('movement-status-pill')!;
+const frontierZonePill = document.getElementById('frontier-zone-pill');
+let lastFrontierBadge = '';
 
 function toggleControlsHelpPopover(forceState?: boolean): void {
   if (!controlsHelpPopoverEl) return;
@@ -682,6 +684,16 @@ trollCombatManager.onPerfectParryReward = () => {
 trollCombatManager.cameraShakeFn = (intensity, duration) =>
   explorer.triggerCameraShake(intensity, duration);
 trollCombatManager.onShieldBashSound = () => relicStore.playShieldBashSound();
+trollCombatManager.setPlayerKnockbackFn((dirX, dirZ, impulse, lift, stagger) => {
+  explorer.applyKnockback(dirX, dirZ, impulse, lift, stagger);
+});
+trollCombatManager.setPlayerChillFn((duration) => {
+  explorer.applyChillDebuff(duration);
+});
+trollCombatManager.setGuardBreakCallbacks(
+  () => castleAndQuarryManager.triggerGuardBreak(1.25),
+  () => castleAndQuarryManager.isGuardBroken()
+);
 trollCombatManager.tryHitGoblinFallback = (pos, heading) => {
   const hitGob = livingWorldManager.tryHitGoblinWithMelee(pos, heading, 40);
   if (hitGob) return true;
@@ -1824,6 +1836,14 @@ function animate(): void {
       if (nextCoords !== lastCoordsText) {
         lastCoordsText = nextCoords;
         coordsReadout.textContent = nextCoords;
+      }
+
+      const frontierTier = getFrontierTier(px, pz, config.chunkSize);
+      if (frontierTier.badge !== lastFrontierBadge) {
+        lastFrontierBadge = frontierTier.badge;
+        if (frontierZonePill) {
+          frontierZonePill.textContent = frontierTier.badge;
+        }
       }
     }
   }

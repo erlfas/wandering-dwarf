@@ -5,7 +5,8 @@
 An endless, deterministic 3D procedural world adventure built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, winding forest footpaths, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a traveling dwarf—complete with expressive traversal (jumping, valley wind-gliding, downhill shield-surfing), **Backpack Fishing & 3D River Fish**, **Backpack Bow & Arrow Deer Hunting**, diegetic firefly treasure tracking, rune-sealed mythic chests, ancient stone circles & fast-travel watchtower beacons, and a **Dwarven Relic Forge**.
 
 📖 **Complete Gameplay Guide:** For a deep dive into every mechanic, boss encounter (Vermithrax the Smoldering, Crag-Titan), castle masonry system, weapon catalog, and dwarven rank progression, see the [Complete Gameplay & Systems Guide](docs/complete-gameplay-guide.md).  
-⚡ **Gameplay Improvements & Performance Benchmarks:** For detailed proposals on 5 major endgame gameplay packages, our V8 garbage collection audit, and automated CI benchmark metrics, see the [Gameplay Improvements & Benchmarks Report](docs/gameplay-improvements-and-benchmarks.md).
+⚡ **Gameplay Improvements & Performance Benchmarks:** For detailed proposals on 5 major endgame gameplay packages, our V8 garbage collection audit, and automated CI benchmark metrics, see the [Gameplay Improvements & Benchmarks Report](docs/gameplay-improvements-and-benchmarks.md).  
+🔍 **Gameplay Challenge & Performance Audit Report:** For our comprehensive analysis of gameplay challenge, radial frontier leveling, multi-tier troll AI, guard-break physics, and automated benchmark verification (Suites 1–8), see the [Gameplay Challenge & Performance Audit Report](docs/gameplay-challenge-and-performance-audit.md).
 
 ---
 
