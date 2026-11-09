@@ -142,11 +142,25 @@ Expanding [`CastleAndQuarryManager.ts`](../src/world/CastleAndQuarryManager.ts),
   2. `3dmodels/runic anvil 3d model.glb` (`18,510` tris) — Heavy dark-iron Dwarven forging anvil on a carved granite pedestal inside the Castle Great Hall.
   3. `3dmodels/treasure chest 3d model.glb` (`18,763` tris) — Ornate iron-and-gold Dwarven royal treasury vault chest positioned beside the Runic Anvil.
 
-### Package 2: Ranks VII–VIII, Chapters 15–18, Mithril Prospecting & Automated Quarries (Next)
-- Extend [`AssignmentManager.ts`](../src/world/AssignmentManager.ts) with Ranks VII–VIII and Chapters 15–18.
-- Add glowing blue **Mithril Ore Boulders** in high mountain crags worth 3x blocks/gold.
-- Add **Tier II Automated Quarries** that double capacity and auto-transfer blocks to nearby staked Castles.
+### Package 2: Ranks VII–VIII, Chapters 15–18, Mithril Prospecting & Automated Quarries (✅ Implemented)
+- Extended [`AssignmentManager.ts`](../src/world/AssignmentManager.ts) with Ranks VII–VIII and Act II Chapters.
+- Added glowing blue **Mithril Ore Veins** in high mountain crags and deep underground caverns.
+- Added **Tier II Automated Automaton Quarries** (`U` key, 300g) doubling capacity and dispatching automated block haulers.
 
-### Package 3: Glider Thermal Launchpads & New Combat Moves (Next)
-- Make lit Watchtower Beacon sky-beams launch the Wind-Glider `35m` into the air.
-- Add **Mid-Air Ground-Slam (`C` in air)**, **Shield-Bash Counter**, and **Downhill Surf-Ram** against Trolls and Goblins.
+### Package 3: Glider Thermal Launchpads, Slalom Trials & Advanced Combat (✅ Implemented)
+- Lit Watchtower Beacon sky-beams and volcano fumaroles launch the Wind-Glider `+24m/s` into the air via thermal updrafts.
+- Added **Mid-Air Ground-Slam (`C` in air)**, **Shield-Bash Counter**, **Downhill Surf-Ramming**, and **Mountain Slalom Trials**.
+
+### Package 4: Zero-Allocation Simulation Engine & CI Benchmark Suite (✅ Implemented)
+- **Contiguous Flat Arrays**: Replaced `MapIterator` allocations in 60 Hz loops with `flatActiveDeer`, `flatActiveFish`, and `flatActiveChests` (+36.1% faster entity traversal).
+- **Distance-Squared Collision Caching**: All spatial proximity queries across trolls, projectiles, and hazards use pre-squared constants.
+- **Pre-Allocated Projectile Pools**: Titan boulders and traversal anchors use fixed ring pools (`BOULDER_POOL_SIZE = 8`).
+- **Automated CI Benchmarking**: `scripts/benchmark-and-verify.mjs` verifies simplex noise (>4.2M ops/s), surface sampling (>16M ops/s), boss physics (>1.3M ticks/s), and enforces `NUM_POINT_LIGHTS = 1` and raw `GLTFLoader` prohibitions.
+
+### Package 5: Five Next-Gen Gameplay Expansions (Roadmap)
+Detailed design specifications are documented in [`docs/gameplay-improvements-and-benchmarks.md`](gameplay-improvements-and-benchmarks.md):
+1. **Ancestral Runic Gem-Socketing & Weapon Enchantment**: Deepening weapon customization with elemental gems (Ember Pyrite, Glacial Quartz, Star-Metal, Lodestone Amber).
+2. **Aerial Glider Dogfighting vs Vermithrax**: Mid-air hand-crossbow bullet time and harpoon grappling onto the dragon's back.
+3. **Biome Frontier Rings & Raider Ambush Caravans**: Radial difficulty scaling ($R \ge 8$ chunks) with procedural merchant caravan escort events.
+4. **Subterranean Minecart Delves & Dynamic Cave Collapses**: Rail-riding mechanics, acoustic pickaxe mining, and seismic cave-in evasion.
+5. **Castle Siege Defense & Golem Automation**: Rampart ballistae, boiling oil defense, and factory-like automaton transport networks.

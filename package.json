@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node scripts/benchmark-and-verify.mjs",
+    "benchmark": "node scripts/benchmark-and-verify.mjs",
     "verify:3d": "node .agents/skills/integrate-3d-model/scripts/verify-3d-integrations.mjs",
-    "build": "tsc && node .agents/skills/integrate-3d-model/scripts/verify-3d-integrations.mjs && vite build",
+    "build": "tsc && node scripts/benchmark-and-verify.mjs && node .agents/skills/integrate-3d-model/scripts/verify-3d-integrations.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

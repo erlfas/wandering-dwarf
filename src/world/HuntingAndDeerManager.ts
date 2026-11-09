@@ -271,6 +271,7 @@ export class HuntingAndDeerManager {
   public deerHuntedCount = 0;
 
   private activeChunkDeer = new Map<number, DeerInstance[]>();
+  private flatActiveDeer: DeerInstance[] = [];
   private desiredKeys = new Set<number>();
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -633,16 +634,15 @@ export class HuntingAndDeerManager {
   private findNearestDeer(wx: number, wz: number, maxRadius: number): DeerInstance | null {
     let best: DeerInstance | null = null;
     let bestDistSq = maxRadius * maxRadius;
-    for (const deerList of this.activeChunkDeer.values()) {
-      for (const d of deerList) {
-        if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
-        const dx = d.pos.x - wx;
-        const dz = d.pos.z - wz;
-        const dSq = dx * dx + dz * dz;
-        if (dSq < bestDistSq) {
-          bestDistSq = dSq;
-          best = d;
-        }
+    for (let i = 0; i < this.flatActiveDeer.length; i++) {
+      const d = this.flatActiveDeer[i];
+      if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
+      const dx = d.pos.x - wx;
+      const dz = d.pos.z - wz;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        best = d;
       }
     }
     return best;
@@ -805,6 +805,8 @@ export class HuntingAndDeerManager {
             if (d === this.lockedDeer) this.lockedDeer = null;
             activeNearDeer.delete(d);
             this.group.remove(d.root);
+            const idx = this.flatActiveDeer.indexOf(d);
+            if (idx !== -1) this.flatActiveDeer.splice(idx, 1);
           }
           this.activeChunkDeer.delete(key);
         }
@@ -851,6 +853,9 @@ export class HuntingAndDeerManager {
     }
 
     this.activeChunkDeer.set(chunkKey, deerList);
+    for (let i = 0; i < deerList.length; i++) {
+      this.flatActiveDeer.push(deerList[i]);
+    }
   }
 
   private createDeerInstance(
@@ -901,9 +906,8 @@ export class HuntingAndDeerManager {
     const shadowDistSq = 48.0 * 48.0;
     const maxSimDistSq = 85.0 * 85.0;
     const minLandY = this.config.enableWater ? this.config.waterLevel + 0.35 : -999;
-
-    for (const deerList of this.activeChunkDeer.values()) {
-      for (const d of deerList) {
+    for (let i = 0; i < this.flatActiveDeer.length; i++) {
+      const d = this.flatActiveDeer[i];
         // Handle respawn timer after a deer has been harvested
         if (d.respawnTimer > 0) {
           d.respawnTimer -= dt;
@@ -1098,7 +1102,6 @@ export class HuntingAndDeerManager {
         }
       }
     }
-  }
 
   private updateArrows(dt: number, playerPos: THREE.Vector3): void {
     for (const arrow of this.arrowPool) {
@@ -1170,20 +1173,18 @@ export class HuntingAndDeerManager {
         continue;
       }
 
-      // Check hit against all active deer
+      // Check hit against all active deer (flat array, zero allocations)
       let hitDeer: DeerInstance | null = null;
-      for (const deerList of this.activeChunkDeer.values()) {
-        for (const d of deerList) {
-          if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
-          const dx = arrow.pos.x - d.pos.x;
-          const dz = arrow.pos.z - d.pos.z;
-          const dy = arrow.pos.y - (d.pos.y + 0.82);
-          if (dx * dx + dz * dz <= 1.25 * 1.25 && Math.abs(dy) <= 1.15) {
-            hitDeer = d;
-            break;
-          }
+      for (let i = 0; i < this.flatActiveDeer.length; i++) {
+        const d = this.flatActiveDeer[i];
+        if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
+        const dx = arrow.pos.x - d.pos.x;
+        const dz = arrow.pos.z - d.pos.z;
+        const dy = arrow.pos.y - (d.pos.y + 0.82);
+        if (dx * dx + dz * dz <= 1.25 * 1.25 && Math.abs(dy) <= 1.15) {
+          hitDeer = d;
+          break;
         }
-        if (hitDeer) break;
       }
 
       if (hitDeer) {
@@ -1217,15 +1218,14 @@ export class HuntingAndDeerManager {
         arrow.age = 0;
 
         // Spook any deer within 6.5m of the arrow impact!
-        for (const deerList of this.activeChunkDeer.values()) {
-          for (const d of deerList) {
-            if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
-            const dx = arrow.pos.x - d.pos.x;
-            const dz = arrow.pos.z - d.pos.z;
-            if (dx * dx + dz * dz < 6.5 * 6.5) {
-              d.fleeTimer = 3.2;
-              d.grazeTimer = 0;
-            }
+        for (let i = 0; i < this.flatActiveDeer.length; i++) {
+          const d = this.flatActiveDeer[i];
+          if (d.respawnTimer > 0 || d.hitAnimTimer > 0) continue;
+          const dx = arrow.pos.x - d.pos.x;
+          const dz = arrow.pos.z - d.pos.z;
+          if (dx * dx + dz * dz < 6.5 * 6.5) {
+            d.fleeTimer = 3.2;
+            d.grazeTimer = 0;
           }
         }
       }
@@ -1317,13 +1317,13 @@ export class HuntingAndDeerManager {
 
   public rebuildAll(): void {
     this.lockedDeer = null;
-    for (const deerList of this.activeChunkDeer.values()) {
-      for (const d of deerList) {
-        activeNearDeer.delete(d);
-        this.group.remove(d.root);
-      }
+    for (let i = 0; i < this.flatActiveDeer.length; i++) {
+      const d = this.flatActiveDeer[i];
+      activeNearDeer.delete(d);
+      this.group.remove(d.root);
     }
     this.activeChunkDeer.clear();
+    this.flatActiveDeer.length = 0;
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
   }

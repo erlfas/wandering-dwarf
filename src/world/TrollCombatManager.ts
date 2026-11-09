@@ -1219,7 +1219,7 @@ export class TrollCombatManager {
     }
     const castles =
       this.isNightActive || hasActiveTroll ? this.getCompletedCastlePositions() : null;
-    let nearestLivingDist = Infinity;
+    let nearestLivingDistSq = Infinity;
     let nearestTroll: TrollInstance | null = null;
 
     for (const t of this.trollPool) {
@@ -1242,10 +1242,9 @@ export class TrollCombatManager {
       const dx = playerPos.x - t.pos.x;
       const dz = playerPos.z - t.pos.z;
       const distSq = dx * dx + dz * dz;
-      const dist = Math.sqrt(distSq);
 
-      if (dist < nearestLivingDist) {
-        nearestLivingDist = dist;
+      if (distSq < nearestLivingDistSq) {
+        nearestLivingDistSq = distSq;
         nearestTroll = t;
       }
 
@@ -1299,8 +1298,8 @@ export class TrollCombatManager {
       const ringPulse = 0.94 + Math.sin(elapsedTime * 5.0) * 0.08;
       t.targetRingMesh.scale.setScalar(ringPulse);
 
-      // Reposition troll if the player walked > 68m away at night so night danger stays engaging
-      if (dist > 68.0) {
+      // Reposition troll if the player walked > 68m away at night so night danger stays engaging (68^2 = 4624)
+      if (distSq > 4624.0) {
         const ang = Math.random() * Math.PI * 2;
         t.pos.x = playerPos.x + Math.cos(ang) * 32.0;
         t.pos.z = playerPos.z + Math.sin(ang) * 32.0;
@@ -1316,10 +1315,10 @@ export class TrollCombatManager {
         if (!t.damageDealtInSwing && t.attackTimer <= 0.42) {
           t.damageDealtInSwing = true;
           this.playOneShotPool(this.smashAudioPool, 0.82, () => this.playFallbackSmashSynth());
-          if (dist <= 12.0) {
-            this.cameraShakeFn?.(dist <= 4.0 ? 0.38 : 0.18, 0.22);
+          if (distSq <= 144.0) {
+            this.cameraShakeFn?.(distSq <= 16.0 ? 0.38 : 0.18, 0.22);
           }
-          if (dist <= 3.15) {
+          if (distSq <= 9.9225) {
             this.resolveTrollStrikeOnDwarf(t);
           }
         }
@@ -1327,20 +1326,20 @@ export class TrollCombatManager {
           t.state = 'chase';
           t.attackCooldown = 1.25;
         }
-      } else if (dist <= 2.55 && t.attackCooldown <= 0) {
-        // Enter Heavy Club Smash (`box_01.001`)
+      } else if (distSq <= 6.5025 && t.attackCooldown <= 0) {
+        // Enter Heavy Club Smash (`box_01.001`) (2.55m => 6.5025)
         t.state = 'attack';
         t.attackTimer = 0.82;
         t.damageDealtInSwing = false;
         t.heading = Math.atan2(dx, dz);
         this.transitionTrollAnim(t, 'attack');
-      } else if (dist <= 36.0) {
-        // Aggro Chase (`run.001` at 4.3 m/s — slower than Dwarf walk 6.0 m/s & run 10.5+ m/s!)
+      } else if (distSq <= 1296.0) {
+        // Aggro Chase (`run.001` at 4.3 m/s — 36m => 1296)
         if (t.state !== 'chase' && t.roarCooldown <= 0) {
           t.roarCooldown = 9.0;
           this.playOneShotPool(this.roarAudioPool, 0.78, () => this.playFallbackRoarSynth());
-          // If the dwarf is trying to fish at night when a troll charges within 14m, interrupt fishing!
-          if (dist <= 14.0) {
+          // If the dwarf is trying to fish at night when a troll charges within 14m (196), interrupt fishing!
+          if (distSq <= 196.0) {
             this.onInterruptFishingNight?.();
           }
         }
@@ -1418,6 +1417,9 @@ export class TrollCombatManager {
         }
       }
     }
+
+    const nearestLivingDist =
+      nearestLivingDistSq < Infinity ? Math.sqrt(nearestLivingDistSq) : Infinity;
 
     // Engage combat stance on the Dwarf when a Troll is within 20m
     this.dwarf.setCombatReady(!insideSanctuary && nearestLivingDist <= 20.0);

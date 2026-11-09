@@ -151,6 +151,7 @@ export class FishingAndFishManager {
   public fishCaughtCount = 0;
 
   private activeChunkFish = new Map<number, FishInstance[]>();
+  private flatActiveFish: FishInstance[] = [];
   private desiredKeys = new Set<number>();
   private lastCenterCx = Number.NaN;
   private lastCenterCz = Number.NaN;
@@ -777,6 +778,8 @@ export class FishingAndFishManager {
             if (f === this.attractingFish) this.attractingFish = null;
             if (f === this.hookedFish) this.hookedFish = null;
             this.group.remove(f.mesh);
+            const idx = this.flatActiveFish.indexOf(f);
+            if (idx !== -1) this.flatActiveFish.splice(idx, 1);
           }
           this.activeChunkFish.delete(key);
         }
@@ -826,6 +829,9 @@ export class FishingAndFishManager {
     }
 
     this.activeChunkFish.set(chunkKey, fishList);
+    for (let i = 0; i < fishList.length; i++) {
+      this.flatActiveFish.push(fishList[i]);
+    }
   }
 
   private createFishInstance(
@@ -883,9 +889,9 @@ export class FishingAndFishManager {
     const scareRadius = 8.2;
     const scareRadiusSq = scareRadius * scareRadius;
 
-    for (const fishList of this.activeChunkFish.values()) {
-      for (const f of fishList) {
-        // If this fish is currently hooked and being reeled in, its position follows the bobber
+    for (let i = 0; i < this.flatActiveFish.length; i++) {
+      const f = this.flatActiveFish[i];
+      // If this fish is currently hooked and being reeled in, its position follows the bobber
         if (f === this.hookedFish && this.state === 'reeling') {
           f.pos.copy(this.bobberPos);
           f.pos.y -= 0.15;
@@ -1066,7 +1072,6 @@ export class FishingAndFishManager {
         f.tailMesh.rotation.y = -wag * 0.42;
       }
     }
-  }
 
   private updateFishingState(
     dt: number,
@@ -1297,15 +1302,14 @@ export class FishingAndFishManager {
     let bestFish: FishInstance | null = null;
     let bestDistSq = 16.0 * 16.0;
 
-    for (const fishList of this.activeChunkFish.values()) {
-      for (const f of fishList) {
-        const dx = f.pos.x - this.bobberPos.x;
-        const dz = f.pos.z - this.bobberPos.z;
-        const dSq = dx * dx + dz * dz;
-        if (dSq < bestDistSq) {
-          bestDistSq = dSq;
-          bestFish = f;
-        }
+    for (let i = 0; i < this.flatActiveFish.length; i++) {
+      const f = this.flatActiveFish[i];
+      const dx = f.pos.x - this.bobberPos.x;
+      const dz = f.pos.z - this.bobberPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestFish = f;
       }
     }
 
@@ -1327,6 +1331,7 @@ export class FishingAndFishManager {
       }
       bestFish = this.createFishInstance(fx, fz, speciesIdx, rng);
       list.push(bestFish);
+      this.flatActiveFish.push(bestFish);
     }
 
     if (bestFish) {
@@ -1355,12 +1360,11 @@ export class FishingAndFishManager {
 
   public rebuildAll(): void {
     this.releaseAttractedFish();
-    for (const fishList of this.activeChunkFish.values()) {
-      for (const f of fishList) {
-        this.group.remove(f.mesh);
-      }
+    for (let i = 0; i < this.flatActiveFish.length; i++) {
+      this.group.remove(this.flatActiveFish[i].mesh);
     }
     this.activeChunkFish.clear();
+    this.flatActiveFish.length = 0;
     this.lastCenterCx = Number.NaN;
     this.lastCenterCz = Number.NaN;
   }

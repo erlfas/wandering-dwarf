@@ -389,6 +389,7 @@ export class TreasureManager {
   private lastStreakMult = -1;
 
   private activeChests = new Map<number, ChestInstance[]>();
+  private flatActiveChests: ChestInstance[] = [];
   private desiredKeys = new Set<number>();
   private collectedIds = new Set<string>();
   private cachedCollectedIds: string[] = [];
@@ -665,6 +666,8 @@ export class TreasureManager {
             for (const rs of c.runestones) {
               this.group.remove(rs.mesh);
             }
+            const idx = this.flatActiveChests.indexOf(c);
+            if (idx !== -1) this.flatActiveChests.splice(idx, 1);
           }
           this.activeChests.delete(key);
         }
@@ -697,9 +700,9 @@ export class TreasureManager {
     const glowAnimRadiusSq = 48 * 48;
     const maxVisibleRadiusSq = 125 * 125;
 
-    for (const list of this.activeChests.values()) {
-      for (const chest of list) {
-        if (chest.state !== 'idle') continue;
+    for (let i = 0; i < this.flatActiveChests.length; i++) {
+      const chest = this.flatActiveChests[i];
+      if (chest.state !== 'idle') continue;
 
         const dx = playerPos.x - chest.worldPos.x;
         const dz = playerPos.z - chest.worldPos.z;
@@ -789,7 +792,6 @@ export class TreasureManager {
           }
         }
       }
-    }
 
     // 4. Animate opening chests
     for (let i = this.openingChests.length - 1; i >= 0; i--) {
@@ -1043,6 +1045,9 @@ export class TreasureManager {
     }
 
     this.activeChests.set(chunkKey, list);
+    for (let i = 0; i < list.length; i++) {
+      this.flatActiveChests.push(list[i]);
+    }
   }
 
   private collectChest(chest: ChestInstance, hasLodestone = false): void {
@@ -1397,17 +1402,16 @@ export class TreasureManager {
     let bestPos: THREE.Vector3 | null = null;
     let bestChest: ChestInstance | null = null;
 
-    for (const list of this.activeChests.values()) {
-      for (const c of list) {
-        if (c.state !== 'idle') continue;
-        const dx = c.worldPos.x - playerPos.x;
-        const dz = c.worldPos.z - playerPos.z;
-        const dSq = dx * dx + dz * dz;
-        if (dSq < bestDistSq) {
-          bestDistSq = dSq;
-          bestPos = c.worldPos;
-          bestChest = c;
-        }
+    for (let i = 0; i < this.flatActiveChests.length; i++) {
+      const c = this.flatActiveChests[i];
+      if (c.state !== 'idle') continue;
+      const dx = c.worldPos.x - playerPos.x;
+      const dz = c.worldPos.z - playerPos.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        bestPos = c.worldPos;
+        bestChest = c;
       }
     }
 
@@ -1479,15 +1483,15 @@ export class TreasureManager {
     }
     this.openingChests.length = 0;
 
-    for (const list of this.activeChests.values()) {
-      for (const c of list) {
-        this.group.remove(c.root);
-        for (const rs of c.runestones) {
-          this.group.remove(rs.mesh);
-        }
+    for (let i = 0; i < this.flatActiveChests.length; i++) {
+      const c = this.flatActiveChests[i];
+      this.group.remove(c.root);
+      for (const rs of c.runestones) {
+        this.group.remove(rs.mesh);
       }
     }
     this.activeChests.clear();
+    this.flatActiveChests.length = 0;
     if (this.activeDigSite) {
       this.group.remove(this.activeDigSite.root);
       this.activeDigSite = null;

@@ -658,7 +658,7 @@ export class DwarvenUndergroundManager {
     if (!this.isInsideCavern) return false;
 
     for (const ore of this.oreVeins) {
-      if (!ore.mined && playerPos.distanceTo(ore.pos) <= 3.2) {
+      if (!ore.mined && playerPos.distanceToSquared(ore.pos) <= 10.24) {
         ore.mined = true;
         ore.mesh.scale.setScalar(0.35);
 
@@ -731,22 +731,22 @@ export class DwarvenUndergroundManager {
         this.vaultGateMesh.position.y = 3.75 + this.vaultGateY;
       }
 
-      // Cavern Prompts
+      // Cavern Prompts (distance squared evaluations)
       if (this.promptEl) {
         let promptText = '';
         for (const m of this.mirrors) {
-          if (playerPos.distanceTo(m.pos) <= 2.6) {
+          if (playerPos.distanceToSquared(m.pos) <= 6.76) {
             promptText = `[E] Rotate Mirror (${m.angleIndex * 45}°)`;
             break;
           }
         }
         if (!promptText && this.puzzleSolved && !this.vaultClaimed) {
-          if (playerPos.distanceTo(DwarvenUndergroundManager.PLINTH_POS) <= 3.0) {
+          if (playerPos.distanceToSquared(DwarvenUndergroundManager.PLINTH_POS) <= 9.0) {
             promptText = '[E] Claim Ancestral Vault Hoard';
           }
         }
         if (!promptText) {
-          if (playerPos.distanceTo(DwarvenUndergroundManager.ELEVATOR_POS) <= 2.8) {
+          if (playerPos.distanceToSquared(DwarvenUndergroundManager.ELEVATOR_POS) <= 7.84) {
             promptText = '[E] Take Elevator to Surface';
           }
         }

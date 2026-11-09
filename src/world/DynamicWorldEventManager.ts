@@ -181,12 +181,13 @@ export class DynamicWorldEventManager {
   private lastTitanPhaseText = '';
   private lastTitanDistText = '';
 
-  // Rolling Boulders from Titan Throw
-  private activeBoulders: Array<{
+  // Rolling Boulders Pool from Titan Throw (zero per-frame heap allocations)
+  private boulderPool: Array<{
     pos: THREE.Vector3;
     vel: THREE.Vector3;
     mesh: THREE.Mesh;
     life: number;
+    active: boolean;
   }> = [];
 
   // Colossal Ash-Peak Wyrm (Vermithrax the Smoldering)
@@ -354,6 +355,22 @@ export class DynamicWorldEventManager {
       magmaCoreMesh,
       fissureRingMesh,
     };
+
+    // Pre-allocate boulder pool to avoid per-throw allocations
+    const bAssets = getSharedBoulderAssets();
+    for (let i = 0; i < 8; i++) {
+      const mesh = new THREE.Mesh(bAssets.geo, bAssets.mat);
+      mesh.castShadow = true;
+      mesh.visible = false;
+      this.group.add(mesh);
+      this.boulderPool.push({
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        mesh,
+        life: 0,
+        active: false,
+      });
+    }
   }
 
   private initBossHUD(): void {
@@ -1059,9 +1076,8 @@ export class DynamicWorldEventManager {
           collected: false,
         });
 
-        // Player hit check
-        const d = playerPos.distanceTo(bomb.pos);
-        if (d <= 4.8) {
+        // Player hit check (distance squared <= 4.8^2 = 23.04)
+        if (playerPos.distanceToSquared(bomb.pos) <= 23.04) {
           if (this.dwarf.isShieldBlocking()) {
             this.dwarf.triggerBlockImpact();
             this.relicStore.playShieldBashSound();
@@ -1073,11 +1089,11 @@ export class DynamicWorldEventManager {
       }
     }
 
-    // Collect Obsidian Shards
+    // Collect Obsidian Shards (distance squared <= 2.2^2 = 4.84)
     for (let i = this.obsidianShards.length - 1; i >= 0; i--) {
       const s = this.obsidianShards[i];
       s.mesh.rotation.y += dt * 2.2;
-      if (!s.collected && playerPos.distanceTo(s.pos) <= 2.2) {
+      if (!s.collected && playerPos.distanceToSquared(s.pos) <= 4.84) {
         s.collected = true;
         this.group.remove(s.mesh);
         this.obsidianShards.splice(i, 1);
@@ -1091,10 +1107,12 @@ export class DynamicWorldEventManager {
   private updateCragTitan(dt: number, elapsedTime: number, playerPos: THREE.Vector3): void {
     if (!this.titan.active) return;
 
-    const dist = playerPos.distanceTo(this.titan.pos);
+    const tdx = playerPos.x - this.titan.pos.x;
+    const tdz = playerPos.z - this.titan.pos.z;
+    const distSq = tdx * tdx + tdz * tdz;
 
-    // Awakening check (within 45m of altar)
-    if (!this.titan.awakened && dist <= 45.0) {
+    // Awakening check (within 45m of altar => 45^2 = 2025)
+    if (!this.titan.awakened && distSq <= 2025.0) {
       this.titan.awakened = true;
       this.relicStore.playTitanRoarSound();
       this.onCameraShake?.(0.58, 0.45);
@@ -1127,7 +1145,7 @@ export class DynamicWorldEventManager {
           }
         }
         if (this.titanDistLabel) {
-          const distStr = `Distance: ${Math.round(dist)}m • HP: ${this.titan.hp}/${this.titan.maxHp}`;
+          const distStr = `Distance: ${Math.round(Math.sqrt(distSq))}m • HP: ${this.titan.hp}/${this.titan.maxHp}`;
           if (distStr !== this.lastTitanDistText) {
             this.lastTitanDistText = distStr;
             this.titanDistLabel.textContent = distStr;
@@ -1136,9 +1154,7 @@ export class DynamicWorldEventManager {
       }
 
       // Rotate Titan towards player
-      const dx = playerPos.x - this.titan.pos.x;
-      const dz = playerPos.z - this.titan.pos.z;
-      const targetHeading = Math.atan2(dx, dz);
+      const targetHeading = Math.atan2(tdx, tdz);
       this.titan.heading = targetHeading;
       this.titan.group.rotation.y = targetHeading;
 
@@ -1150,7 +1166,7 @@ export class DynamicWorldEventManager {
       this.titan.attackCooldown -= dt;
       if (this.titan.attackCooldown <= 0) {
         this.titan.attackCooldown = this.titan.phase === 3 ? 2.8 : 4.5;
-        this.performTitanAttack(playerPos, dist);
+        this.performTitanAttack(playerPos, Math.sqrt(distSq));
       }
     } else if (this.titan.state === 'dying') {
       this.titan.stateTimer -= dt;
@@ -1187,24 +1203,24 @@ export class DynamicWorldEventManager {
   }
 
   private spawnRollingBoulder(playerPos: THREE.Vector3): void {
-    const bAssets = getSharedBoulderAssets();
-    const mesh = new THREE.Mesh(bAssets.geo, bAssets.mat);
-    mesh.position.set(this.titan.pos.x, this.titan.pos.y + 6.2, this.titan.pos.z);
-    mesh.castShadow = true;
-    this.group.add(mesh);
+    let boulder = this.boulderPool.find((b) => !b.active);
+    if (!boulder) {
+      boulder = this.boulderPool.reduce((oldest, b) => (b.life < oldest.life ? b : oldest), this.boulderPool[0]);
+    }
+    boulder.active = true;
+    boulder.life = 5.5;
+    boulder.pos.set(this.titan.pos.x, this.titan.pos.y + 6.2, this.titan.pos.z);
+    boulder.mesh.position.copy(boulder.pos);
+    boulder.mesh.visible = true;
 
     _scratchBoulderDir.subVectors(playerPos, this.titan.pos).normalize();
-    this.activeBoulders.push({
-      pos: mesh.position.clone(),
-      vel: _scratchBoulderDir.clone().multiplyScalar(18.0),
-      mesh,
-      life: 5.5,
-    });
+    boulder.vel.copy(_scratchBoulderDir).multiplyScalar(18.0);
   }
 
   private updateRollingBoulders(dt: number, playerPos: THREE.Vector3): void {
-    for (let i = this.activeBoulders.length - 1; i >= 0; i--) {
-      const b = this.activeBoulders[i];
+    for (let i = 0; i < this.boulderPool.length; i++) {
+      const b = this.boulderPool[i];
+      if (!b.active) continue;
       b.life -= dt;
       b.pos.x += b.vel.x * dt;
       b.pos.z += b.vel.z * dt;
@@ -1212,8 +1228,8 @@ export class DynamicWorldEventManager {
       b.mesh.position.copy(b.pos);
       b.mesh.rotation.x += dt * 6.0;
 
-      // Hit player check
-      if (playerPos.distanceTo(b.pos) <= 2.8) {
+      // Hit player check (distance squared <= 2.8^2 = 7.84)
+      if (playerPos.distanceToSquared(b.pos) <= 7.84) {
         if (this.dwarf.isShieldBlocking()) {
           this.dwarf.triggerBlockImpact();
           this.relicStore.playShieldBashSound();
@@ -1225,8 +1241,8 @@ export class DynamicWorldEventManager {
       }
 
       if (b.life <= 0) {
-        this.group.remove(b.mesh);
-        this.activeBoulders.splice(i, 1);
+        b.active = false;
+        b.mesh.visible = false;
       }
     }
   }

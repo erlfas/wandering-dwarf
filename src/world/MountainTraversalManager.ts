@@ -43,6 +43,7 @@ export class MountainTraversalManager {
   // Active Grapple Hook State
   private isGrappling = false;
   private grapplePhase: 'none' | 'firing' | 'pulling' = 'none';
+  private grappleAnchorPos = new THREE.Vector3();
   private grappleAnchor: THREE.Vector3 | null = null;
   private grappleFlightProgress = 0;
   private grappleCurrentTip = new THREE.Vector3();
@@ -68,6 +69,7 @@ export class MountainTraversalManager {
   private lastReticleVisible = false;
   private targetingAccum = 0;
   private slalomHudEl: HTMLElement | null = null;
+  private lastSlalomHudText = '';
 
   // Slalom Speed-Gates
   private speedGates: SpeedGateInstance[] = [];
@@ -90,6 +92,8 @@ export class MountainTraversalManager {
 
   private sharedGateGeo?: THREE.BufferGeometry;
   private sharedGateMat?: THREE.MeshStandardMaterial;
+  private sharedPostGeo?: THREE.BufferGeometry;
+  private sharedPostMat?: THREE.MeshStandardMaterial;
 
   constructor(
     private config: WorldConfig,
@@ -148,6 +152,12 @@ export class MountainTraversalManager {
       metalness: 0.88,
       emissive: 0x00bbf9,
       emissiveIntensity: 0.85,
+    });
+    this.sharedPostGeo = new THREE.CylinderGeometry(0.16, 0.22, 2.8, 6);
+    this.sharedPostMat = new THREE.MeshStandardMaterial({
+      color: 0x4a5568,
+      roughness: 0.8,
+      metalness: 0.2,
     });
   }
 
@@ -225,9 +235,8 @@ export class MountainTraversalManager {
       gateGroup.position.set(gc.x, groundY, gc.z);
 
       // Orient gate perpendicular to downhill slope
-      const norm = new THREE.Vector3();
-      this.chunkManager.getSurfaceNormal(gc.x, gc.z, norm);
-      const downhillAng = Math.atan2(norm.x, norm.z);
+      this.chunkManager.getSurfaceNormal(gc.x, gc.z, _scratchNorm);
+      const downhillAng = Math.atan2(_scratchNorm.x, _scratchNorm.z);
       gateGroup.rotation.y = downhillAng;
 
       const archMesh = new THREE.Mesh(this.sharedGateGeo, this.sharedGateMat);
@@ -235,17 +244,12 @@ export class MountainTraversalManager {
       archMesh.castShadow = true;
       gateGroup.add(archMesh);
 
-      // Support Posts
-      const postMat = new THREE.MeshStandardMaterial({
-        color: 0x4a5568,
-        roughness: 0.8,
-        metalness: 0.2,
-      });
-      const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 2.8, 6), postMat);
+      // Support Posts (shared geometry & material)
+      const postL = new THREE.Mesh(this.sharedPostGeo, this.sharedPostMat);
       postL.position.set(-3.2, 1.4, 0);
       gateGroup.add(postL);
 
-      const postR = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 2.8, 6), postMat);
+      const postR = new THREE.Mesh(this.sharedPostGeo, this.sharedPostMat);
       postR.position.set(3.2, 1.4, 0);
       gateGroup.add(postR);
 
@@ -253,7 +257,7 @@ export class MountainTraversalManager {
       this.speedGates.push({
         id: `gate_${i}`,
         pos: new THREE.Vector3(gc.x, groundY, gc.z),
-        normal: norm,
+        normal: _scratchNorm.clone(),
         group: gateGroup,
         archMesh,
         passed: false,
@@ -374,10 +378,11 @@ export class MountainTraversalManager {
 
     if (!this.lockedAnchor) return false;
 
-    // Fire Grappling Hook towards locked anchor
+    // Fire Grappling Hook towards locked anchor (zero heap allocations)
     this.isGrappling = true;
     this.grapplePhase = 'firing';
-    this.grappleAnchor = this.lockedAnchor.pos.clone();
+    this.grappleAnchorPos.copy(this.lockedAnchor.pos);
+    this.grappleAnchor = this.grappleAnchorPos;
     this.grappleFlightProgress = 0;
     this.grappleCurrentTip.copy(this.dwarf.root.position);
     this.grappleCurrentTip.y += 0.85;
@@ -613,12 +618,12 @@ export class MountainTraversalManager {
       }
     }
 
-    for (const g of this.speedGates) {
-      // Pulse animation on runic arch
-      g.pulsePhase += dt * 3.5;
-      const emissiveLevel = 0.55 + Math.sin(g.pulsePhase) * 0.35;
-      (g.archMesh.material as THREE.MeshStandardMaterial).emissiveIntensity = emissiveLevel;
+    // Pulse animation once on shared runic gate material
+    if (this.sharedGateMat) {
+      this.sharedGateMat.emissiveIntensity = 0.55 + Math.sin(_elapsedTime * 3.5) * 0.35;
+    }
 
+    for (const g of this.speedGates) {
       if (!g.passed) {
         const dx = playerPos.x - g.pos.x;
         const dz = playerPos.z - g.pos.z;
@@ -648,9 +653,13 @@ export class MountainTraversalManager {
 
           if (this.slalomHudEl) {
             this.slalomHudEl.style.display = 'block';
-            this.slalomHudEl.textContent = `⚡ SLALOM COMBO x${this.activeSlalomCombo} (+${Math.round(
+            const hudText = `⚡ SLALOM COMBO x${this.activeSlalomCombo} (+${Math.round(
               (this.speedBoostMultiplier - 1.0) * 100
             )}% MACH SPEED)`;
+            if (hudText !== this.lastSlalomHudText) {
+              this.lastSlalomHudText = hudText;
+              this.slalomHudEl.textContent = hudText;
+            }
           }
 
           // Reset gate after 18 seconds

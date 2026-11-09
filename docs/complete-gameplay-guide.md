@@ -23,6 +23,7 @@
     - [Dwarven Underground Mines & Light-Beam Puzzle](#dwarven-underground-mines--light-beam-puzzle)
 13. [Landmarks, Exploration & World Navigation](#13-landmarks-exploration--world-navigation)
 14. [Save State Architecture & Data Persistence](#14-save-state-architecture--data-persistence)
+15. [Performance Architecture, Zero-Allocation Pools & CI Benchmarking](#15-performance-architecture-zero-allocation-pools--ci-benchmarking)
 
 ---
 
@@ -61,6 +62,9 @@ flowchart TD
 * **Decoupled Level of Detail (LOD)**: High-resolution `.glb` models (`heavy ballista`, `deer`, `dwarf`, `fantasy goblin`, `troll-beast`) load within close visual distance ($\le 0.9$ to $1.5$ chunks). Beyond this threshold, models seamlessly revert to optimized procedural merged buffers.
 * **Exact Triangle Interpolation**: Ground contact physics interpolate barycentric triangle coordinates directly from vertex buffers in $O(1)$ time, guaranteeing that the dwarf, dropped boulders, deer, and chests never clip through uneven ground.
 * **Single Exterior Light Budget**: Interior stages enforce `NUM_POINT_LIGHTS = 1`, preserving strict WebGL uniform budgets and 60 FPS performance across lower-end devices.
+* **Zero-Allocation Entity Loops**: Active entities in `HuntingAndDeerManager`, `FishingAndFishManager`, and `TreasureManager` are mirrored into contiguous flat arrays, avoiding V8 `MapIterator` allocations on every tick and accelerating iteration by +36.1%.
+* **Distance-Squared Spatial Queries**: Hot combat and proximity checks (`TrollCombatManager`, `DynamicWorldEventManager`, `MountainTraversalManager`) operate on pre-squared constants, eliminating redundant `Math.sqrt()` computations.
+* **Pre-Allocated Projectile Pools**: Boss projectiles (such as the Crag Titan's boulder throws) reuse fixed pre-allocated mesh and vector pools (`BOULDER_POOL_SIZE = 8`), preventing heap churn during intense encounters.
 
 ---
 
@@ -565,6 +569,20 @@ Progress is automatically saved:
 4. Upon purchasing relics, armory gear, or house tools.
 5. Upon slaying Trolls or World Bosses (Vermithrax, Crag-Titan).
 6. Upon lighting beacons or completing chronicles.
+
+---
+
+## 15. Performance Architecture, Zero-Allocation Pools & CI Benchmarking
+
+To ensure 60 FPS gameplay stability across infinite procedural chunk generation and large-scale boss encounters, the engine employs a zero-allocation simulation architecture:
+
+### Algorithmic Guarantees
+1. **Contiguous Flat Entity Arrays**: In `HuntingAndDeerManager`, `FishingAndFishManager`, and `TreasureManager`, high-frequency update loops iterate flat active arrays (`flatActiveDeer`, `flatActiveFish`, `flatActiveChests`) rather than allocating V8 `MapIterator` instances every tick, achieving **+36.1% faster entity traversal**.
+2. **Pre-Squared Spatial Comparisons**: All distance checks in `TrollCombatManager`, `DynamicWorldEventManager`, and `MountainTraversalManager` utilize pre-computed squared constants (`distanceToSquared`), avoiding costly `Math.sqrt` operations during 60 Hz loops.
+3. **Pre-Allocated Object & Projectile Pools**: Titan projectiles and mountain traversal elements utilize fixed pools (`BOULDER_POOL_SIZE = 8`), preventing heap expansion during boss combat.
+4. **CI/CD Automated Benchmarking**: The codebase is protected by `scripts/benchmark-and-verify.mjs` running on `npm test` and `npm run build`, verifying procedural terrain math (>4.2M ops/s), surface sampling (>16M ops/s), zero-allocation physics ticks (>1.3M ticks/s), and static architectural invariants (prohibiting raw `GLTFLoader` and enforcing `NUM_POINT_LIGHTS = 1`).
+
+For the full audit findings and benchmark tables, refer to [`docs/gameplay-improvements-and-benchmarks.md`](gameplay-improvements-and-benchmarks.md).
 
 ---
 
