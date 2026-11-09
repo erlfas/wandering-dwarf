@@ -1,5 +1,6 @@
 import { ActiveGuildContract } from './AssignmentManager';
 import { SavedCastleSite, SavedQuarrySite } from './CastleAndQuarryManager';
+import { SavedTombstone } from './TombstoneManager';
 
 const STORAGE_KEY = 'procedural_world_progress_v1';
 const SLOT_KEY_PREFIX = 'procedural_world_save_slot_v1_';
@@ -64,6 +65,7 @@ export interface SavedProgress {
   dragonSlain?: boolean;
   dragonScales?: number;
   hasDragonEgg?: boolean;
+  tombstone?: SavedTombstone;
 }
 
 function parseSavedProgress(raw: string | null): SavedProgress | null {
@@ -171,6 +173,13 @@ function parseSavedProgress(raw: string | null): SavedProgress | null {
         typeof data.unclaimedTributeGold === 'number'
           ? Math.max(0, data.unclaimedTributeGold)
           : 0,
+      tombstone:
+        data.tombstone &&
+        typeof data.tombstone.x === 'number' &&
+        typeof data.tombstone.z === 'number' &&
+        typeof data.tombstone.gold === 'number'
+          ? data.tombstone
+          : undefined,
     };
   } catch {
     return null;

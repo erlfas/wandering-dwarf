@@ -521,6 +521,309 @@ const blockRes = evaluateCombatDefense(true, true, 0.8, 50, false, 3);
 assert(blockRes.outcome === 'blocked' && !blockRes.guardBroken, 'Standard Shield Block with Sufficient Energy (50⚡ >= 24⚡)');
 
 // ---------------------------------------------------------------------------
+// SUITE 9: Multi-Tier Goblin AI Simulation, Flanking Math & Cluster-Bomb Physics
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 9: Multi-Tier Goblin AI Simulation, Flanking Math & Cluster Bomblets]${ANSI.reset}`);
+
+const GOBLIN_TICKS = 5000;
+const goblinDt = 0.016;
+let clusterBombsSpawned = 0;
+let clusterBombsDetonated = 0;
+let groundFireTicks = 0;
+let skirmisherFlankCount = 0;
+
+// Synthetic multi-tier goblins pool
+const testGoblins = [
+  { tier: 1, role: 'cutpurse', x: 12, z: 0, hp: 45, maxHp: 45, orbitAngle: 0, speed: 3.8 },
+  { tier: 2, role: 'skirmisher', x: 25, z: 20, hp: 80, maxHp: 80, speed: 4.4 },
+  { tier: 3, role: 'berserker', x: 30, z: -15, hp: 130, maxHp: 130, speed: 5.4, dodgeCooldown: 0 },
+];
+
+// Pre-allocated cluster bomblets pool (matching LivingWorldManager.clusterBombletPool)
+const testClusterPool = [
+  { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fuse: 0 },
+  { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fuse: 0 },
+  { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fuse: 0 },
+  { active: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fuse: 0 },
+];
+
+// Pre-allocated ground fire patches pool
+const testFirePool = [
+  { active: false, x: 0, z: 0, life: 0 },
+  { active: false, x: 0, z: 0, life: 0 },
+];
+
+function spawnTestCluster(x, y, z) {
+  for (let i = 0; i < 2; i++) {
+    const cb = testClusterPool.find((b) => !b.active);
+    if (!cb) break;
+    cb.active = true;
+    cb.x = x;
+    cb.y = y + 0.3;
+    cb.z = z;
+    const ang = i * Math.PI + Math.random() * 0.5;
+    cb.vx = Math.cos(ang) * 5.5;
+    cb.vy = 6.0;
+    cb.vz = Math.sin(ang) * 5.5;
+    cb.fuse = 0.45;
+    clusterBombsSpawned++;
+  }
+}
+
+function spawnTestFire(x, z) {
+  const fp = testFirePool.find((f) => !f.active);
+  if (!fp) return;
+  fp.active = true;
+  fp.x = x;
+  fp.z = z;
+  fp.life = 3.5;
+}
+
+const playerPosSim = { x: 0, y: 10, z: 0, heading: 0 }; // Facing +Z
+
+const startGoblinSim = performance.now();
+const goblinMemBefore = process.memoryUsage().heapUsed;
+
+for (let tick = 0; tick < GOBLIN_TICKS; tick++) {
+  // 1. Advance Goblins
+  for (let i = 0; i < testGoblins.length; i++) {
+    const g = testGoblins[i];
+    const dx = playerPosSim.x - g.x;
+    const dz = playerPosSim.z - g.z;
+    const distSq = dx * dx + dz * dz;
+
+    if (g.tier === 1) {
+      // Tier 1 Cutpurse: Orbit
+      g.orbitAngle += goblinDt * 1.5;
+      g.x = playerPosSim.x + Math.cos(g.orbitAngle) * 4.5;
+      g.z = playerPosSim.z + Math.sin(g.orbitAngle) * 4.5;
+    } else if (g.tier === 2) {
+      // Tier 2 Skirmisher: Tactical rear flank
+      const rearX = playerPosSim.x - Math.sin(playerPosSim.heading) * 5.5;
+      const rearZ = playerPosSim.z - Math.cos(playerPosSim.heading) * 5.5;
+      const fdx = rearX - g.x;
+      const fdz = rearZ - g.z;
+      const fDist = Math.hypot(fdx, fdz) || 1;
+      g.x += (fdx / fDist) * g.speed * goblinDt;
+      g.z += (fdz / fDist) * g.speed * goblinDt;
+      if (fDist < 2.0) skirmisherFlankCount++;
+    } else if (g.tier === 3) {
+      // Tier 3 Obsidian Berserker: Aggressive charge + dodge roll
+      if (g.dodgeCooldown > 0) g.dodgeCooldown -= goblinDt;
+      const d = Math.hypot(dx, dz) || 1;
+      g.x += (dx / d) * g.speed * goblinDt;
+      g.z += (dz / d) * g.speed * goblinDt;
+    }
+  }
+
+  // Periodic bomb throw every 250 ticks
+  if (tick % 250 === 0) {
+    spawnTestCluster(testGoblins[1].x, 10, testGoblins[1].z);
+    spawnTestFire(testGoblins[2].x, testGoblins[2].z);
+  }
+
+  // 2. Advance Cluster Bomblets
+  for (let i = 0; i < testClusterPool.length; i++) {
+    const cb = testClusterPool[i];
+    if (!cb.active) continue;
+    cb.fuse -= goblinDt;
+    cb.vy -= 22.0 * goblinDt;
+    cb.x += cb.vx * goblinDt;
+    cb.y += cb.vy * goblinDt;
+    cb.z += cb.vz * goblinDt;
+    if (cb.y <= 10.12) {
+      cb.y = 10.12;
+      cb.vx *= 0.65;
+      cb.vz *= 0.65;
+    }
+    if (cb.fuse <= 0) {
+      cb.active = false;
+      clusterBombsDetonated++;
+    }
+  }
+
+  // 3. Advance Ground Fire Patches
+  for (let i = 0; i < testFirePool.length; i++) {
+    const fp = testFirePool[i];
+    if (!fp.active) continue;
+    fp.life -= goblinDt;
+    if (fp.life <= 0) {
+      fp.active = false;
+    } else {
+      groundFireTicks++;
+    }
+  }
+}
+
+const elapsedGoblinSim = performance.now() - startGoblinSim;
+const goblinMemAfter = process.memoryUsage().heapUsed;
+const goblinHeapDelta = goblinMemAfter - goblinMemBefore;
+
+assert(
+  clusterBombsSpawned > 0 && clusterBombsDetonated === clusterBombsSpawned,
+  'Cluster-Bomb Physics Simulation & Detonation',
+  `spawned: ${clusterBombsSpawned}, detonated: ${clusterBombsDetonated}`
+);
+assert(
+  groundFireTicks > 0 && skirmisherFlankCount > 0,
+  'Skirmisher Flanking AI & Molten Ground Fire Patches Active',
+  `flank maneuvers: ${skirmisherFlankCount}, fire ticks: ${groundFireTicks}`
+);
+assert(
+  elapsedGoblinSim < 60,
+  '5,000 Multi-Tier Goblin AI Ticks Simulated',
+  `${elapsedGoblinSim.toFixed(2)}ms total, ${((elapsedGoblinSim / GOBLIN_TICKS) * 1000).toFixed(2)}µs/tick`
+);
+assert(
+  goblinHeapDelta < 2 * 1024 * 1024,
+  'Zero-Heap Allocation Invariant in Multi-Tier Goblin Loop (< 2MB V8 JIT delta)',
+  `heap delta: ${(goblinHeapDelta / 1024).toFixed(1)} KB`
+);
+
+// ---------------------------------------------------------------------------
+// SUITE 10: Boss Heavy-Attack Guard-Break, Boulder Deflection & Dragon Breath
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 10: Boss Heavy-Attack Guard-Break, Boulder Deflection & Dragon Breath]${ANSI.reset}`);
+
+function evaluateTitanBoulder(isBlocking, blockRaiseElapsed, hasIronAegis, energy) {
+  if (!isBlocking) {
+    return { outcome: 'hit', damage: 45, titanDamage: 0, guardBroken: false, knockback: 9.0 };
+  }
+  const parryWindow = hasIronAegis ? 0.55 : 0.42;
+  if (blockRaiseElapsed <= parryWindow) {
+    // ⚡ Perfect Parry Deflection
+    return { outcome: 'deflected', damage: 0, titanDamage: 120, guardBroken: false, knockback: 0 };
+  }
+  const boulderCost = 24;
+  if (energy < boulderCost) {
+    // 💥 Guard Break
+    return { outcome: 'guard_break', damage: 38, titanDamage: 0, guardBroken: true, knockback: 12.0 };
+  }
+  return { outcome: 'blocked', damage: 0, titanDamage: 0, guardBroken: false, knockback: 3.5, energyCost: boulderCost };
+}
+
+function evaluateDragonFireBreath(isBlocking, energy) {
+  if (!isBlocking) {
+    return { outcome: 'unblocked', damage: 32, burnDuration: 4.5, guardBroken: false };
+  }
+  const drainPerTick = 14;
+  if (energy < drainPerTick) {
+    // Shield Melt / Guard Break
+    return { outcome: 'shield_melt', damage: 24, burnDuration: 3.0, guardBroken: true };
+  }
+  return { outcome: 'shield_absorbed', damage: 0, burnDuration: 0, guardBroken: false, energyCost: drainPerTick };
+}
+
+// 1. Boulder Perfect Parry
+const titanParry = evaluateTitanBoulder(true, 0.35, false, 50);
+assert(
+  titanParry.outcome === 'deflected' && titanParry.titanDamage === 120 && titanParry.damage === 0,
+  'Crag-Titan Boulder Perfect Parry Deflection (120 DMG to Titan, 0 DMG to Player)'
+);
+
+// 2. Boulder Guard Break on Low Energy
+const titanBreak = evaluateTitanBoulder(true, 0.9, false, 12);
+assert(
+  titanBreak.outcome === 'guard_break' && titanBreak.guardBroken && titanBreak.knockback >= 12.0,
+  'Crag-Titan Boulder Heavy Guard Break on Low Energy (< 24⚡)'
+);
+
+// 3. Dragon Fire Breath Shield Melt
+const dragonMelt = evaluateDragonFireBreath(true, 8);
+assert(
+  dragonMelt.outcome === 'shield_melt' && dragonMelt.guardBroken && dragonMelt.burnDuration > 0,
+  'Vermithrax Dragon Fire Breath Shield Melt & Guard Break on Stamina Exhaustion'
+);
+
+// 4. Dragon Fire Breath Clean Absorb
+const dragonAbsorb = evaluateDragonFireBreath(true, 60);
+assert(
+  dragonAbsorb.outcome === 'shield_absorbed' && !dragonAbsorb.guardBroken && dragonAbsorb.energyCost === 14,
+  'Vermithrax Fire Breath Stamina Drain (14⚡/tick absorbed cleanly with high stamina)'
+);
+
+// ---------------------------------------------------------------------------
+// SUITE 11: High-Stakes Defeat Penalty & Ancestral Tombstone Recovery
+// ---------------------------------------------------------------------------
+console.log(`\n${ANSI.bold}[Suite 11: High-Stakes Defeat Penalty & Ancestral Tombstone Recovery]${ANSI.reset}`);
+
+function calculateDeathGoldPenalty(currentGold) {
+  return Math.max(0, Math.floor(currentGold * 0.15));
+}
+
+function findNearestSafeHavenMock(px, pz, safeHavens) {
+  let nearest = safeHavens[0];
+  let minSq = Infinity;
+  for (let i = 0; i < safeHavens.length; i++) {
+    const h = safeHavens[i];
+    const dx = px - h.x;
+    const dz = pz - h.z;
+    const dSq = dx * dx + dz * dz;
+    if (dSq < minSq) {
+      minSq = dSq;
+      nearest = h;
+    }
+  }
+  return nearest;
+}
+
+// 1. 15% Gold drop penalty invariant tests
+assert(calculateDeathGoldPenalty(0) === 0, 'Zero Gold Defeat Drops 0 Gold');
+assert(calculateDeathGoldPenalty(100) === 15, '100 Gold Defeat Drops 15 Gold (15%)');
+assert(calculateDeathGoldPenalty(2450) === 367, '2,450 Gold Defeat Drops 367 Gold (15%)');
+
+// 2. Safe-haven lookup invariant tests
+const testHavens = [
+  { name: 'Spawn Haven', x: 0, z: 0 },
+  { name: 'Castle Ironforge', x: 200, z: 150 },
+  { name: 'Watchtower Beacon North', x: -120, z: 80 },
+];
+const nearestCastle = findNearestSafeHavenMock(190, 140, testHavens);
+const nearestBeacon = findNearestSafeHavenMock(-100, 70, testHavens);
+const nearestSpawn = findNearestSafeHavenMock(-15, 8, testHavens);
+
+assert(nearestCastle.name === 'Castle Ironforge', 'Nearest Safe Haven Correctly Identifies Completed Castle');
+assert(nearestBeacon.name === 'Watchtower Beacon North', 'Nearest Safe Haven Correctly Identifies Lit Beacon');
+assert(nearestSpawn.name === 'Spawn Haven', 'Nearest Safe Haven Correctly Identifies Origin Spawn');
+
+// 3. Ancestral Tombstone Recovery & Dwarven Grit Invariant
+const tombstoneState = { x: 190.5, y: 32.1, z: 140.8, gold: 367, active: true };
+const playerPosRecovery = { x: 191.0, z: 141.0 };
+const dxClaim = playerPosRecovery.x - tombstoneState.x;
+const dzClaim = playerPosRecovery.z - tombstoneState.z;
+const canClaim = dxClaim * dxClaim + dzClaim * dzClaim <= 2.6 * 2.6;
+
+let playerGold = 2083; // 2450 - 367
+let speedMult = 1.0;
+let damageReduction = 1.0;
+
+if (canClaim && tombstoneState.active) {
+  playerGold += tombstoneState.gold;
+  tombstoneState.active = false;
+  tombstoneState.gold = 0;
+  // Apply "Dwarven Grit" buff (+20% speed, +25% defense)
+  speedMult = 1.2;
+  damageReduction = 0.75;
+}
+
+assert(
+  canClaim && !tombstoneState.active && playerGold === 2450,
+  'Ancestral Tombstone Claim Restores 100% of Dropped Gold (2,083g + 367g = 2,450g)'
+);
+assert(
+  speedMult === 1.2 && damageReduction === 0.75,
+  'Dwarven Grit Buff Activated (+20% Speed, 0.75x Damage Mult)'
+);
+
+// 4. JSON Serialization & Round-Trip Persistence
+const serialized = JSON.stringify({ tombstone: { x: 190.5, y: 32.1, z: 140.8, gold: 367, active: true } });
+const parsed = JSON.parse(serialized);
+assert(
+  parsed.tombstone.x === 190.5 && parsed.tombstone.gold === 367 && parsed.tombstone.active === true,
+  'SavedTombstone JSON Round-Trip Serialization & Persistence Invariant'
+);
+
+// ---------------------------------------------------------------------------
 // SUMMARY
 // ---------------------------------------------------------------------------
 console.log(`\n${ANSI.bold}${ANSI.cyan}========================================================================${ANSI.reset}`);

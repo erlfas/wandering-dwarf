@@ -206,6 +206,10 @@ export class DynamicWorldEventManager {
   public onCameraShake?: (intensity: number, duration: number) => void;
   public onGrantBonusGold?: (amount: number, message: string) => void;
   public onApplyPlayerDamage?: (damage: number, source: string) => void;
+  public onConsumeEnergy?: (amount: number) => { hadEnough: boolean; remainingEnergy: number };
+  public onKnockbackPlayer?: (distance: number, lift: number, staggerDuration: number) => void;
+  public onApplyBurn?: (duration: number) => void;
+  public hasIronAegisFn?: () => boolean;
 
   constructor(
     _config: WorldConfig,
@@ -1203,9 +1207,22 @@ export class DynamicWorldEventManager {
   }
 
   private spawnRollingBoulder(playerPos: THREE.Vector3): void {
-    let boulder = this.boulderPool.find((b) => !b.active);
+    let boulder: (typeof this.boulderPool)[0] | undefined;
+    let oldestIdx = 0;
+    let minLife = Infinity;
+    for (let i = 0; i < this.boulderPool.length; i++) {
+      const b = this.boulderPool[i];
+      if (!b.active) {
+        boulder = b;
+        break;
+      }
+      if (b.life < minLife) {
+        minLife = b.life;
+        oldestIdx = i;
+      }
+    }
     if (!boulder) {
-      boulder = this.boulderPool.reduce((oldest, b) => (b.life < oldest.life ? b : oldest), this.boulderPool[0]);
+      boulder = this.boulderPool[oldestIdx];
     }
     boulder.active = true;
     boulder.life = 5.5;
@@ -1231,9 +1248,33 @@ export class DynamicWorldEventManager {
       // Hit player check (distance squared <= 2.8^2 = 7.84)
       if (playerPos.distanceToSquared(b.pos) <= 7.84) {
         if (this.dwarf.isShieldBlocking()) {
-          this.dwarf.triggerBlockImpact();
-          this.relicStore.playShieldBashSound();
-          this.onGrantBonusGold?.(0, '🛡️ Shield Deflected Titan Boulder!');
+          const elapsed = this.dwarf.getBlockRaiseElapsed();
+          const parryWindow = this.hasIronAegisFn && this.hasIronAegisFn() ? 0.55 : 0.42;
+          if (elapsed <= parryWindow) {
+            // Perfect Boulder Deflection!
+            this.dwarf.triggerBlockImpact();
+            this.relicStore.playShieldBashSound();
+            this.relicStore.playTitanRoarSound();
+            this.onCameraShake?.(0.65, 0.4);
+            this.titan.hp = Math.max(0, this.titan.hp - 120);
+            this.titan.staggerTimer = 2.0;
+            this.dwarf.spawnBurst(b.pos.x, b.pos.y, b.pos.z, 24);
+            this.onGrantBonusGold?.(0, '⚡ PERFECT PARRY! Boulder Deflected into Crag-Titan (-120 HP)!');
+          } else {
+            const boulderCost = 24;
+            const energyRes = this.onConsumeEnergy ? this.onConsumeEnergy(boulderCost) : { hadEnough: true, remainingEnergy: 50 };
+            if (!energyRes.hadEnough || energyRes.remainingEnergy < 0) {
+              this.dwarf.triggerGuardBreak();
+              this.relicStore.playGuardBreakSound();
+              this.onCameraShake?.(0.7, 0.45);
+              this.onApplyPlayerDamage?.(38, 'Crag-Titan Boulder (Guard Broken)');
+              this.onKnockbackPlayer?.(12.0, 3.2, 1.4);
+            } else {
+              this.dwarf.triggerBlockImpact();
+              this.relicStore.playShieldBashSound();
+              this.onGrantBonusGold?.(0, `🛡️ Shield Absorbed Heavy Boulder (-${boulderCost}⚡ Strength)!`);
+            }
+          }
         } else {
           this.onApplyPlayerDamage?.(30, 'Crag-Titan Boulder');
         }
@@ -1336,13 +1377,23 @@ export class DynamicWorldEventManager {
         if (this.dragon.fireBreathTimer >= 0.7) {
           this.dragon.fireBreathTimer = 0;
           this.relicStore.playDragonFireBreathSound();
-          if (playerPos.distanceTo(this.dragon.pos) <= 28.0) {
+          if (playerPos.distanceToSquared(this.dragon.pos) <= 784.0) {
             if (this.dwarf.isShieldBlocking()) {
-              this.dwarf.triggerBlockImpact();
-              this.relicStore.playShieldBashSound();
-              this.onGrantBonusGold?.(0, '🛡️ Shield Deflected Dragon Fire Breath!');
+              const breathCost = 14;
+              const energyRes = this.onConsumeEnergy ? this.onConsumeEnergy(breathCost) : { hadEnough: true, remainingEnergy: 50 };
+              if (!energyRes.hadEnough || energyRes.remainingEnergy < 0) {
+                this.dwarf.triggerGuardBreak();
+                this.relicStore.playGuardBreakSound();
+                this.onApplyPlayerDamage?.(42, 'Dragon Fire Breath (Shield Melted)');
+                this.onApplyBurn?.(4.0);
+              } else {
+                this.dwarf.triggerBlockImpact();
+                this.relicStore.playShieldBashSound();
+                this.onGrantBonusGold?.(0, `🛡️ Shield Absorbing Dragon Flame (-${breathCost}⚡ Strength)!`);
+              }
             } else {
               this.onApplyPlayerDamage?.(35, 'Dragon Fire Breath');
+              this.onApplyBurn?.(3.5);
             }
           }
         }

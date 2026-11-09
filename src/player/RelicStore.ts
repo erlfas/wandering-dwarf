@@ -435,6 +435,31 @@ export class RelicStore {
     osc.stop(now + 0.26);
   }
 
+  public playGuardBreakSound(): void {
+    const ctx = this.ensureAudio();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const crash = ctx.createOscillator();
+    const crashGain = ctx.createGain();
+    crash.type = 'sawtooth';
+    crash.frequency.setValueAtTime(140, now);
+    crash.frequency.exponentialRampToValueAtTime(35, now + 0.35);
+
+    crashGain.gain.setValueAtTime(0.001, now);
+    crashGain.gain.exponentialRampToValueAtTime(0.32, now + 0.01);
+    crashGain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+
+    crash.connect(crashGain);
+    crashGain.connect(ctx.destination);
+    crash.onended = () => {
+      crash.disconnect();
+      crashGain.disconnect();
+    };
+    crash.start(now);
+    crash.stop(now + 0.45);
+  }
+
   public playShieldBashSound(): void {
     const ctx = this.ensureAudio();
     if (!ctx) return;

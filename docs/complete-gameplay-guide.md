@@ -374,10 +374,24 @@ Trolls and Goblins cannot cross into Sanctuary zones:
 * Inside any completed Castle gate or Dwarven Hut.
 * Within the radiant perimeter of a lit Watchtower Beacon.
 
-### 3. Goblin Cutpurses & Bombardiers (`fantasy goblin 3d model.glb`)
-* Roam forest edges in ambush parties.
-* **Cutpurses:** Rapid dagger strikes that steal gold if not blocked.
-* **Bombardiers:** Fling explosive incendiary pots that create lingering ground fire.
+### 3. Multi-Tier Goblin Raider Ambush Squads (`fantasy goblin 3d model.glb`)
+Goblins dynamically scale according to the active Frontier Ring:
+* **Tier 1 (The Hearthlands - Ring I):**
+  * *Cutpurses (45 HP, 3.8 m/s):* Circular orbiting maneuvers ($r=4.5\text{m}$) with melee mallets.
+  * *Bombardiers:* Fling standard explosive pots with a 1.35s fuse.
+* **Tier 2 (Ironwood Highlands - Ring II):**
+  * *Skirmishers (80 HP, 4.4 m/s):* Tactical rear-flanking AI calculating an offset vector $5.5\text{m}$ behind the player.
+  * *Sappers:* Throw **Cluster Bombs** that split on primary detonation into 2 bouncy sub-munitions with parabolic trajectories and secondary delayed fuses.
+* **Tier 3 (The Shattered Peaks - Ring III):**
+  * *Obsidian Berserkers (130 HP, 5.4 m/s):* Relentless forward chargers with tactical dodge-rolls (evading incoming melee swings during a 0.35s window on 3.5s CD).
+  * *Pyromancers:* Throw molten firebombs that ignite **Molten Ground Fire Patches** burning for 3.5s and inflicting Burning DoT (4 damage/sec).
+* **Frontier Ambush Horn Events (`📯 GOBLIN RAIDERS AMBUSH!`):** Periodic horn-heralded ambush strikes from high ridges while traversing outer wilderness rings.
+
+### 4. High-Stakes Defeat & Ancestral Tombstone Recovery
+* **15% Hoard Drop Penalty:** When the dwarf falls in battle (to Trolls, Goblins, Dragon, Crag-Titan, or Lava), exactly $15\%$ of carried gold hoard drops into an **Ancestral Tombstone** at the point of death.
+* **Safe-Haven Respawn:** The dwarf respawns at the nearest completed Castle Sanctuary, lit Watchtower Beacon, or Origin Camp with fully restored Health and Strength.
+* **Tombstone Beacon & Sky-Beam:** The tombstone is marked by a 3D stone plinth, floating spirit crystal, and a 64m ethereal azure sky-beam with continuous distance tracking on the compass HUD.
+* **"Dwarven Grit" Recovery Buff:** Interacting with or stepping upon the tombstone recovers 100% of the dropped gold and bestows the **Dwarven Grit** buff ($+20\%$ movement speed and $+25\%$ damage reduction against all hazards for 60 seconds).
 
 ---
 
@@ -453,7 +467,9 @@ stateDiagram-v2
 
 ### The Crag-Titan World Boss
 * A colossal stone automaton wandering mountain ridges.
-* Attacks by stomping the earth to launch shockwaves and hurling massive boulders ($30\text{ DMG}$, deflectable by shield).
+* Attacks by stomping the earth to launch fissure shockwaves and hurling massive 2-ton rolling boulders ($45\text{ DMG}$, traveling at $18\text{ m/s}$).
+* **⚡ Perfect Parry Deflection:** Raising your shield within $\le 0.42\text{s}$ ($\le 0.55\text{s}$ with *Iron Aegis*) perfectly parries and deflects the boulder directly back into the Crag-Titan, inflicting **$120\text{ Damage}$** and triggering a **$2.0\text{s}$ Stagger**.
+* **💥 Heavy Guard Break:** Sustained blocking against a rolling boulder consumes **$24⚡\text{ Strength}$**. If the player's stamina falls below $24⚡$, a devastating guard break occurs (dealing $38\text{ DMG}$, depleting remaining stamina, and launching the dwarf back $12\text{m}$).
 * Defeating the Titan exposes its glowing chest core, which can be mined for $+500\text{ Gold}$ and Star-Metal ore.
 
 ---

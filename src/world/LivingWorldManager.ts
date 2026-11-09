@@ -7,6 +7,7 @@ import { getSharedAudioContext } from '../player/RelicStore';
 import { WorldConfig } from './Config';
 import { createOptimizedGlbLoader } from './ForestField';
 import { createSeededRandom, TerrainNoise } from './TerrainNoise';
+import { getFrontierTier } from './TrollCombatManager';
 
 interface StarFragmentInstance {
   worldPos: THREE.Vector3;
@@ -46,16 +47,23 @@ export interface GoblinBones {
 }
 
 export type GoblinRole = 'cutpurse' | 'bombardier';
+export type GoblinTier = 1 | 2 | 3;
 
 export interface GoblinHazardInstance {
   role: GoblinRole;
+  tier: GoblinTier;
+  hp: number;
+  maxHp: number;
   centerPos: THREE.Vector3;
   pos: THREE.Vector3;
+  vel: THREE.Vector3;
   orbitAngle: number;
   orbitRadius: number;
   bombCooldown: number;
+  dodgeCooldown: number;
   defeated: boolean;
   flyTime: number;
+  hitFlashTimer: number;
   mesh: THREE.Group;
   bodyMesh: THREE.Mesh;
   headMesh: THREE.Mesh;
@@ -67,12 +75,32 @@ export interface GoblinHazardInstance {
 
 export interface GoblinBomb {
   active: boolean;
+  tier: GoblinTier;
+  isCluster: boolean;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   fuseTimer: number;
   mesh: THREE.Group;
   bodyMesh: THREE.Mesh;
   sparkMesh: THREE.Mesh;
+}
+
+export interface ClusterBomblet {
+  active: boolean;
+  tier: GoblinTier;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  fuseTimer: number;
+  mesh: THREE.Group;
+  bodyMesh: THREE.Mesh;
+}
+
+export interface GroundFirePatch {
+  active: boolean;
+  pos: THREE.Vector3;
+  life: number;
+  maxLife: number;
+  mesh: THREE.Mesh;
 }
 
 interface ChunkLivingEntities {
@@ -419,13 +447,18 @@ export class LivingWorldManager {
   private getSurfaceHeightFn?: (wx: number, wz: number) => number;
   private readonly skyHorizonColor: THREE.Color;
 
-  // Active Goblin Bombs Pool
+  // Active Goblin Bombs, Cluster Bomblets & Ground Fire Pools
   private bombPool: GoblinBomb[] = [];
+  private clusterBombletPool: ClusterBomblet[] = [];
+  private groundFirePool: GroundFirePatch[] = [];
 
   public cameraShakeFn?: (intensity: number, duration: number) => void;
   public onApplyPlayerDamage?: (damage: number, sourceTitle: string) => void;
   public onShieldBlockSound?: () => void;
   public onGrantFoodRation?: (count: number) => void;
+  public onApplyBurn?: (duration: number) => void;
+  public onConsumeEnergy?: (amount: number) => { hadEnough: boolean; remainingEnergy: number };
+  public onKnockbackPlayer?: (distance: number, lift: number, staggerDuration: number) => void;
 
   constructor(
     private config: WorldConfig,
@@ -460,12 +493,62 @@ export class LivingWorldManager {
       this.group.add(bombGroup);
       this.bombPool.push({
         active: false,
+        tier: 1,
+        isCluster: false,
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         fuseTimer: 0,
         mesh: bombGroup,
         bodyMesh: body,
         sparkMesh: spark,
+      });
+    }
+
+    // Initialize 12 reusable Cluster Bomblets in pool
+    const clusterMat = new THREE.MeshStandardMaterial({
+      color: 0xd90429,
+      roughness: 0.45,
+      metalness: 0.8,
+      emissive: 0xef233c,
+      emissiveIntensity: 0.65,
+    });
+    const clusterGeo = new THREE.SphereGeometry(0.14, 8, 6);
+    for (let i = 0; i < 12; i++) {
+      const g = new THREE.Group();
+      g.visible = false;
+      const m = new THREE.Mesh(clusterGeo, clusterMat);
+      g.add(m);
+      this.group.add(g);
+      this.clusterBombletPool.push({
+        active: false,
+        tier: 2,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        fuseTimer: 0,
+        mesh: g,
+        bodyMesh: m,
+      });
+    }
+
+    // Initialize 8 reusable Ground Fire Patches in pool
+    const fireGeo = new THREE.RingGeometry(0.2, 1.4, 16);
+    fireGeo.rotateX(-Math.PI / 2);
+    const fireMat = new THREE.MeshBasicMaterial({
+      color: 0xff5722,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+    });
+    for (let i = 0; i < 8; i++) {
+      const m = new THREE.Mesh(fireGeo, fireMat.clone());
+      m.visible = false;
+      this.group.add(m);
+      this.groundFirePool.push({
+        active: false,
+        pos: new THREE.Vector3(),
+        life: 0,
+        maxLife: 3.5,
+        mesh: m,
       });
     }
 
@@ -791,17 +874,23 @@ export class LivingWorldManager {
             const dSq = dx * dx + dz * dz;
             const dist = Math.sqrt(dSq);
 
+            if (g.dodgeCooldown > 0) g.dodgeCooldown -= dt;
+            if (g.hitFlashTimer > 0) g.hitFlashTimer -= dt;
+
             if (g.role === 'bombardier') {
               // Bombardier faces player and maintains tactical medium range
               g.mesh.rotation.y = Math.atan2(dx, dz);
-              if (dist < 10.0) {
+              const retreatDist = g.tier === 3 ? 12.0 : 10.0;
+              const approachDist = g.tier === 3 ? 24.0 : 22.0;
+              const moveSpd = g.tier === 3 ? 3.6 : g.tier === 2 ? 3.1 : 2.6;
+              if (dist < retreatDist) {
                 // Back away from player
-                g.pos.x -= (dx / (dist || 1)) * dt * 2.8;
-                g.pos.z -= (dz / (dist || 1)) * dt * 2.8;
-              } else if (dist > 22.0) {
+                g.pos.x -= (dx / (dist || 1)) * dt * moveSpd;
+                g.pos.z -= (dz / (dist || 1)) * dt * moveSpd;
+              } else if (dist > approachDist) {
                 // Step closer into throwing range
-                g.pos.x += (dx / (dist || 1)) * dt * 2.2;
-                g.pos.z += (dz / (dist || 1)) * dt * 2.2;
+                g.pos.x += (dx / (dist || 1)) * dt * (moveSpd * 0.85);
+                g.pos.z += (dz / (dist || 1)) * dt * (moveSpd * 0.85);
               }
               g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
               g.mesh.position.set(g.pos.x, g.pos.y, g.pos.z);
@@ -810,21 +899,51 @@ export class LivingWorldManager {
 
               if (g.bombCooldown > 0) {
                 g.bombCooldown -= dt;
-              } else if (dist >= 7.5 && dist <= 26.0) {
+              } else if (dist >= 7.0 && dist <= 28.0) {
                 this.throwGoblinBomb(g, playerPos);
               }
             } else {
-              // Cutpurse patrols and darts around
-              g.orbitAngle += dt * 1.65;
-              g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
-              g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
-              g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
-
-              const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
-              g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
-              g.mesh.rotation.y = -g.orbitAngle;
-              g.mesh.updateMatrix();
-              g.mesh.updateMatrixWorld(true);
+              // Cutpurse / Berserker mobility
+              if (g.tier === 3) {
+                // Tier 3: Obsidian Berserker charges relentlessly
+                g.mesh.rotation.y = Math.atan2(dx, dz);
+                const chargeSpeed = 5.4;
+                g.pos.x += (dx / (dist || 1)) * dt * chargeSpeed;
+                g.pos.z += (dz / (dist || 1)) * dt * chargeSpeed;
+                g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
+                const hop = Math.abs(Math.sin(elapsedTime * 12.0)) * 0.22;
+                g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
+                g.mesh.updateMatrix();
+                g.mesh.updateMatrixWorld(true);
+              } else if (g.tier === 2) {
+                // Tier 2: Ironwood Skirmisher flanks around to the rear
+                g.orbitAngle += dt * 2.2;
+                const flankDist = 4.2;
+                const targetX = playerPos.x + Math.cos(g.orbitAngle) * flankDist;
+                const targetZ = playerPos.z + Math.sin(g.orbitAngle) * flankDist;
+                const fdx = targetX - g.pos.x;
+                const fdz = targetZ - g.pos.z;
+                const fDist = Math.hypot(fdx, fdz) || 1;
+                g.pos.x += (fdx / fDist) * dt * 4.4;
+                g.pos.z += (fdz / fDist) * dt * 4.4;
+                g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
+                g.mesh.rotation.y = Math.atan2(dx, dz);
+                const hop = Math.abs(Math.sin(elapsedTime * 9.5)) * 0.18;
+                g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
+                g.mesh.updateMatrix();
+                g.mesh.updateMatrixWorld(true);
+              } else {
+                // Tier 1: Hearthland Scout standard patrol orbit
+                g.orbitAngle += dt * 1.65;
+                g.pos.x = g.centerPos.x + Math.cos(g.orbitAngle) * g.orbitRadius;
+                g.pos.z = g.centerPos.z + Math.sin(g.orbitAngle) * g.orbitRadius;
+                g.pos.y = this.sampleGroundHeight(g.pos.x, g.pos.z);
+                const hop = Math.abs(Math.sin(elapsedTime * 8.5)) * 0.18;
+                g.mesh.position.set(g.pos.x, g.pos.y + hop, g.pos.z);
+                g.mesh.rotation.y = -g.orbitAngle;
+                g.mesh.updateMatrix();
+                g.mesh.updateMatrixWorld(true);
+              }
             }
 
             // Close-range GLB LOD toggle (dist <= 45m): animated 3D goblin model, procedural fallback for far range
@@ -882,23 +1001,42 @@ export class LivingWorldManager {
 
             if (dSq < 1.75 * 1.75) {
               if (isPlayerAttackingOrAirborne) {
-                this.defeatGoblin(
-                  g,
-                  `🛡️ Smashed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Cutpurse'}! +125 Gold & +1 Food Ration`
-                );
+                g.hp -= 90;
+                if (g.hp <= 0) {
+                  this.defeatGoblin(g);
+                } else {
+                  g.hitFlashTimer = 0.25;
+                  this.playHazardBumpSound();
+                  this.dwarf.spawnBurst(g.pos.x, g.pos.y + 0.6, g.pos.z, 12);
+                }
               } else if (this.hazardHitCooldown <= 0) {
                 if (this.dwarf.isShieldBlocking()) {
                   this.hazardHitCooldown = 1.0;
-                  this.dwarf.triggerBlockImpact();
-                  this.onShieldBlockSound?.();
-                  this.onGrantOrDeductGold(0, '🛡️ Shield Deflected Goblin Dagger Strike!', true);
+                  const energyCost = g.tier === 3 ? 18 : g.tier === 2 ? 12 : 6;
+                  const energyRes = this.onConsumeEnergy ? this.onConsumeEnergy(energyCost) : { hadEnough: true, remainingEnergy: 50 };
+                  if (!energyRes.hadEnough || energyRes.remainingEnergy < 0) {
+                    this.dwarf.triggerGuardBreak();
+                    const brokenDmg = Math.round((g.tier === 3 ? 32 : g.tier === 2 ? 22 : 12) * 1.25);
+                    this.onApplyPlayerDamage?.(brokenDmg, `${g.tier === 3 ? 'Obsidian Berserker' : g.tier === 2 ? 'Ironwood Goblin' : 'Goblin Raider'} (Guard Broken)`);
+                    this.onKnockbackPlayer?.(8.0, 2.5, 1.2);
+                  } else {
+                    this.dwarf.triggerBlockImpact();
+                    this.onShieldBlockSound?.();
+                    this.onGrantOrDeductGold(0, `🛡️ Shield Deflected Goblin Dagger Strike! (-${energyCost}⚡ Strength)`, true);
+                  }
                 } else {
                   this.hazardHitCooldown = 2.4;
                   this.playHazardBumpSound();
-                  this.onApplyPlayerDamage?.(12, 'Goblin Raider');
+                  const dmg = g.tier === 3 ? 32 : g.tier === 2 ? 22 : 12;
+                  const stolen = g.tier === 3 ? 120 : g.tier === 2 ? 65 : 25;
+                  const title = g.tier === 3 ? 'Obsidian Goblin Berserker' : g.tier === 2 ? 'Ironwood Goblin' : 'Goblin Raider';
+                  this.onApplyPlayerDamage?.(dmg, title);
+                  if (g.tier === 3) {
+                    this.onApplyBurn?.(3.5);
+                  }
                   this.onGrantOrDeductGold(
-                    -25,
-                    '👺 Goblin Raider Stole 25 Gold! (-12 ❤️) Hold Shield (Shift) to Block!',
+                    -stolen,
+                    `👺 ${title} Stole ${stolen} Gold! (-${dmg} ❤️) Hold Shield (Shift) to Block!`,
                     false
                   );
                 }
@@ -964,6 +1102,107 @@ export class LivingWorldManager {
         this.detonateBomb(bomb, playerPos);
       }
     }
+
+    // 6. Update Bouncing Cluster Bomblets
+    for (let i = 0; i < this.clusterBombletPool.length; i++) {
+      const cb = this.clusterBombletPool[i];
+      if (!cb.active) continue;
+      cb.fuseTimer -= dt;
+      cb.vel.y -= 22.0 * dt;
+      cb.pos.x += cb.vel.x * dt;
+      cb.pos.y += cb.vel.y * dt;
+      cb.pos.z += cb.vel.z * dt;
+
+      const gy = this.sampleGroundHeight(cb.pos.x, cb.pos.z);
+      if (cb.pos.y <= gy + 0.12) {
+        cb.pos.y = gy + 0.12;
+        cb.vel.x *= 0.65;
+        cb.vel.z *= 0.65;
+      }
+      cb.mesh.position.copy(cb.pos);
+      cb.mesh.updateMatrix();
+      cb.mesh.updateMatrixWorld(true);
+
+      if (cb.fuseTimer <= 0) {
+        cb.active = false;
+        cb.mesh.visible = false;
+        this.playBombExplosionSound();
+        this.dwarf.spawnBurst(cb.pos.x, cb.pos.y + 0.1, cb.pos.z, 14);
+        const cdx = playerPos.x - cb.pos.x;
+        const cdz = playerPos.z - cb.pos.z;
+        if (cdx * cdx + cdz * cdz <= 2.8 * 2.8) {
+          if (this.dwarf.isShieldBlocking()) {
+            this.dwarf.triggerBlockImpact();
+            this.onShieldBlockSound?.();
+          } else {
+            this.onApplyPlayerDamage?.(16, 'Goblin Cluster Shrapnel');
+          }
+        }
+      }
+    }
+
+    // 7. Update Burning Ground Fire Patches
+    for (let i = 0; i < this.groundFirePool.length; i++) {
+      const fp = this.groundFirePool[i];
+      if (!fp.active) continue;
+      fp.life -= dt;
+      const opacity = Math.max(0, (fp.life / fp.maxLife) * 0.85);
+      (fp.mesh.material as THREE.MeshBasicMaterial).opacity = opacity;
+      fp.mesh.rotation.z += dt * 1.5;
+      fp.mesh.updateMatrix();
+      fp.mesh.updateMatrixWorld(true);
+
+      if (fp.life <= 0) {
+        fp.active = false;
+        fp.mesh.visible = false;
+      } else {
+        const fdx = playerPos.x - fp.pos.x;
+        const fdz = playerPos.z - fp.pos.z;
+        if (fdx * fdx + fdz * fdz <= 1.4 * 1.4) {
+          this.onApplyBurn?.(3.0);
+        }
+      }
+    }
+  }
+
+  private spawnClusterBomblet(x: number, y: number, z: number, tier: GoblinTier, rngAngle: number): void {
+    const cb = this.clusterBombletPool.find((b) => !b.active);
+    if (!cb) return;
+    cb.active = true;
+    cb.tier = tier;
+    cb.pos.set(x, y + 0.3, z);
+    cb.vel.set(Math.cos(rngAngle) * 5.5, 6.0, Math.sin(rngAngle) * 5.5);
+    cb.fuseTimer = 0.45;
+    cb.mesh.position.copy(cb.pos);
+    cb.mesh.visible = true;
+  }
+
+  private spawnGroundFire(x: number, y: number, z: number): void {
+    const fp = this.groundFirePool.find((f) => !f.active);
+    if (!fp) return;
+    fp.active = true;
+    fp.pos.set(x, y + 0.05, z);
+    fp.life = 3.5;
+    fp.maxLife = 3.5;
+    fp.mesh.position.copy(fp.pos);
+    fp.mesh.visible = true;
+  }
+
+  public triggerFrontierAmbush(playerPos: THREE.Vector3): void {
+    this.playBombExplosionSound();
+    this.cameraShakeFn?.(0.5, 0.35);
+    const count = 3;
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const dist = 16.0 + Math.random() * 6.0;
+      const wx = playerPos.x + Math.cos(ang) * dist;
+      const wz = playerPos.z + Math.sin(ang) * dist;
+      const wy = this.sampleGroundHeight(wx, wz);
+      const role: GoblinRole = i === 0 ? 'bombardier' : 'cutpurse';
+      const g = this.createGoblinHazard(wx, wy, wz, role, Math.random);
+      this.activeGoblins.push(g);
+    }
+    this.onGrantOrDeductGold(0, '📯 GOBLIN RAIDERS AMBUSH! A strike squad descended from the ridges! Defend yourself!', false);
   }
 
   private throwGoblinBomb(g: GoblinHazardInstance, playerPos: THREE.Vector3): void {
@@ -971,6 +1210,8 @@ export class LivingWorldManager {
     if (!bomb) return;
     g.bombCooldown = 4.2 + Math.random() * 1.6;
     bomb.active = true;
+    bomb.tier = g.tier;
+    bomb.isCluster = g.tier >= 2;
     bomb.pos.set(g.pos.x, g.pos.y + 0.88, g.pos.z);
     const dx = playerPos.x - bomb.pos.x;
     const dz = playerPos.z - bomb.pos.z;
@@ -986,9 +1227,10 @@ export class LivingWorldManager {
     bomb.mesh.position.copy(bomb.pos);
     bomb.mesh.visible = true;
     this.playBombFuseSizzleSound();
+    const bombTitle = g.tier === 3 ? 'Molten Firebomb' : g.tier === 2 ? 'Cluster Bomb' : 'Explosive Bomb';
     this.onGrantOrDeductGold(
       0,
-      '💣 Goblin Bombardier threw an Explosive Bomb! Move or Block with Shield!',
+      `💣 Goblin threw a ${bombTitle}! Move or Block with Shield!`,
       false
     );
   }
@@ -1009,17 +1251,40 @@ export class LivingWorldManager {
 
     if (distSq <= 4.2 * 4.2 && Math.abs(dy) <= 3.0) {
       if (this.dwarf.isShieldBlocking()) {
-        this.dwarf.triggerBlockImpact();
-        this.onShieldBlockSound?.();
-        this.onGrantOrDeductGold(0, '🛡️ Shield Blocked Goblin Bomb Blast! (0 ❤️ damage)', true);
+        const bombBlockCost = bomb.tier === 3 ? 18 : bomb.tier === 2 ? 12 : 8;
+        const energyRes = this.onConsumeEnergy ? this.onConsumeEnergy(bombBlockCost) : { hadEnough: true, remainingEnergy: 50 };
+        if (!energyRes.hadEnough || energyRes.remainingEnergy < 0) {
+          this.dwarf.triggerGuardBreak();
+          this.onApplyPlayerDamage?.(Math.round(28 * 1.25), 'Goblin Bomb (Guard Broken)');
+          this.onKnockbackPlayer?.(8.5, 2.5, 1.2);
+        } else {
+          this.dwarf.triggerBlockImpact();
+          this.onShieldBlockSound?.();
+          this.onGrantOrDeductGold(0, `🛡️ Shield Blocked Goblin Bomb Blast! (-${bombBlockCost}⚡ Strength)`, true);
+        }
       } else {
-        this.onApplyPlayerDamage?.(22, 'Goblin Bomb Explosion');
+        const dmg = bomb.tier === 3 ? 34 : bomb.tier === 2 ? 26 : 22;
+        this.onApplyPlayerDamage?.(dmg, 'Goblin Bomb Explosion');
+        if (bomb.tier === 3) {
+          this.onApplyBurn?.(3.5);
+        }
         this.onGrantOrDeductGold(
           -15,
-          '💥 Goblin Bomb Explosion! (-22 ❤️) Hold Shield (Shift) to Block Bombs!',
+          `💥 Goblin Bomb Explosion! (-${dmg} ❤️) Hold Shield (Shift) to Block Bombs!`,
           false
         );
       }
+    }
+
+    // Secondary Cluster Bomblets for Sappers & Pyromancers
+    if (bomb.isCluster) {
+      this.spawnClusterBomblet(bomb.pos.x, bomb.pos.y, bomb.pos.z, bomb.tier, Math.random() * Math.PI * 2);
+      this.spawnClusterBomblet(bomb.pos.x, bomb.pos.y, bomb.pos.z, bomb.tier, Math.random() * Math.PI * 2 + Math.PI);
+    }
+
+    // Molten Ground Fire for Tier 3 Pyromancers
+    if (bomb.tier === 3) {
+      this.spawnGroundFire(bomb.pos.x, bomb.pos.y, bomb.pos.z);
     }
 
     // Damage any other nearby goblins in blast radius
@@ -1028,19 +1293,26 @@ export class LivingWorldManager {
         const gdx = g.pos.x - bomb.pos.x;
         const gdz = g.pos.z - bomb.pos.z;
         if (gdx * gdx + gdz * gdz <= 4.2 * 4.2) {
-          this.defeatGoblin(g, '💥 Friendly-Fire: Goblin Blown Up by Bomb! +125 Gold');
+          g.hp -= 85;
+          if (g.hp <= 0) {
+            this.defeatGoblin(g, '💥 Friendly-Fire: Goblin Blown Up by Bomb!');
+          }
         }
       }
     }
   }
 
-  private defeatGoblin(g: GoblinHazardInstance, message: string): void {
+  private defeatGoblin(g: GoblinHazardInstance, message?: string): void {
     g.defeated = true;
     g.flyTime = 0;
     this.playStarChime();
     this.dwarf.spawnBurst(g.pos.x, g.pos.y + 0.8, g.pos.z, 20);
-    this.onGrantOrDeductGold(125, message, true);
-    this.onGrantFoodRation?.(1);
+    const gold = g.tier === 3 ? 450 : g.tier === 2 ? 250 : 125;
+    const rations = g.tier === 3 ? 3 : g.tier === 2 ? 2 : 1;
+    const title = g.tier === 3 ? 'Obsidian Goblin Berserker' : g.tier === 2 ? 'Ironwood Goblin' : 'Goblin Raider';
+    const msg = message ?? `🛡️ Defeated ${title}! +${gold} Gold & +${rations} Food Rations`;
+    this.onGrantOrDeductGold(gold, msg, true);
+    this.onGrantFoodRation?.(rations);
   }
 
   public tryHitGoblinWithArrow(arrowPos: THREE.Vector3, _damage = 50): boolean {
@@ -1063,10 +1335,14 @@ export class LivingWorldManager {
         const dz = arrowPos.z - g.pos.z;
         const dy = arrowPos.y - (g.pos.y + 0.55);
         if (dx * dx + dz * dz <= 1.35 * 1.35 && Math.abs(dy) <= 1.2) {
-          this.defeatGoblin(
-            g,
-            `🏹 Marksman Bow Shot Defeated Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
-          );
+          g.hp -= _damage;
+          if (g.hp <= 0) {
+            this.defeatGoblin(g);
+          } else {
+            g.hitFlashTimer = 0.25;
+            this.playHazardBumpSound();
+            this.onGrantOrDeductGold(0, `🏹 Arrow Pierced Goblin (-${_damage} HP, ${g.hp}/${g.maxHp} HP remaining)`, true);
+          }
           return true;
         }
       }
@@ -1074,22 +1350,36 @@ export class LivingWorldManager {
     return false;
   }
 
-  public tryHitGoblinWithMelee(playerPos: THREE.Vector3, heading: number, _damage = 40): boolean {
+  public tryHitGoblinWithMelee(playerPos: THREE.Vector3, heading: number, damage = 40): boolean {
     for (const g of this.activeGoblins) {
       if (!g.defeated && g.mesh.visible) {
         const dx = g.pos.x - playerPos.x;
         const dz = g.pos.z - playerPos.z;
-        const d = Math.hypot(dx, dz);
-        if (d <= 3.4) {
+        const dSq = dx * dx + dz * dz;
+        if (dSq <= 3.4 * 3.4) {
           const angleToGoblin = Math.atan2(dx, dz);
           const angleDiff = Math.abs(
             THREE.MathUtils.euclideanModulo(angleToGoblin - heading + Math.PI, Math.PI * 2) - Math.PI
           );
           if (angleDiff <= Math.PI * 0.58) {
-            this.defeatGoblin(
-              g,
-              `⚔️ Melee Strike Crushed Goblin ${g.role === 'bombardier' ? 'Bombardier' : 'Raider'}! +125 Gold & +1 Food Ration`
-            );
+            // Evasive backward leap for Tier 3 Berserkers attacked from the front!
+            if (g.tier === 3 && g.dodgeCooldown <= 0 && angleDiff <= Math.PI * 0.35) {
+              g.dodgeCooldown = 3.5;
+              g.pos.x += Math.sin(heading) * 4.5;
+              g.pos.z += Math.cos(heading) * 4.5;
+              g.mesh.position.set(g.pos.x, g.pos.y, g.pos.z);
+              this.onGrantOrDeductGold(0, '💨 Obsidian Berserker Dodge-Rolled away from your swing!', false);
+              return true;
+            }
+
+            g.hp -= damage;
+            if (g.hp <= 0) {
+              this.defeatGoblin(g);
+            } else {
+              g.hitFlashTimer = 0.25;
+              this.playHazardBumpSound();
+              this.onGrantOrDeductGold(0, `⚔️ Struck Goblin (-${damage} HP, ${g.hp}/${g.maxHp} HP remaining)`, true);
+            }
             return true;
           }
         }
@@ -1109,14 +1399,18 @@ export class LivingWorldManager {
         const dx = playerPos.x - g.pos.x;
         const dz = playerPos.z - g.pos.z;
         if (dx * dx + dz * dz <= rSq) {
-          this.defeatGoblin(g, '💥 Ground-Slam Smashed Goblin Raider! +125 Gold & +1 Food Ration');
-          count++;
+          g.hp -= 95;
+          if (g.hp <= 0) {
+            this.defeatGoblin(g, '💥 Ground-Slam Smashed Goblin Raider!');
+            count++;
+          } else {
+            g.hitFlashTimer = 0.3;
+          }
         }
       }
     }
     return count;
   }
-
   /**
    * Smashes any Goblin colliding during high-speed downhill surf-ramming.
    */
@@ -1419,18 +1713,42 @@ export class LivingWorldManager {
       mesh.add(sack);
     }
 
+    const frontier = getFrontierTier(wx, wz, this.config.chunkSize);
+    const tier: GoblinTier = frontier.ring;
+    const maxHp = tier === 3 ? 220 : tier === 2 ? 120 : 45;
+    const scale = tier === 3 ? 1.25 : tier === 2 ? 1.12 : 1.0;
+    mesh.scale.setScalar(scale);
+
+    if (tier === 3) {
+      body.material = assets.matGoblinTunic.clone();
+      (body.material as THREE.MeshStandardMaterial).color.setHex(0x3a0ca3);
+      (body.material as THREE.MeshStandardMaterial).emissive.setHex(0xb5179e);
+      (body.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.45;
+    } else if (tier === 2) {
+      body.material = assets.matGoblinTunic.clone();
+      (body.material as THREE.MeshStandardMaterial).color.setHex(0x1b4332);
+      (body.material as THREE.MeshStandardMaterial).emissive.setHex(0x2d6a4f);
+      (body.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.25;
+    }
+
     this.group.add(mesh);
     mesh.updateMatrixWorld(true);
 
     return {
       role,
+      tier,
+      hp: maxHp,
+      maxHp,
       centerPos: new THREE.Vector3(wx, wy, wz),
       pos: new THREE.Vector3(wx, wy, wz),
+      vel: new THREE.Vector3(),
       orbitAngle: rng() * Math.PI * 2,
       orbitRadius: role === 'bombardier' ? 1.5 + rng() * 1.5 : 3.8 + rng() * 2.5,
       bombCooldown: 2.0 + rng() * 3.0,
+      dodgeCooldown: 0,
       defeated: false,
       flyTime: 0,
+      hitFlashTimer: 0,
       mesh,
       bodyMesh: body,
       headMesh: head,

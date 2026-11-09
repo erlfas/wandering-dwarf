@@ -1094,8 +1094,17 @@ export class DwarfCharacter {
     return this.meleeSwingTimer > 0;
   }
 
+  private blockStartTime = 0;
+
   public setShieldBlocking(blocking: boolean): void {
+    if (blocking && !this.shieldBlocking) {
+      this.blockStartTime = performance.now() * 0.001;
+    }
     this.shieldBlocking = blocking;
+  }
+
+  public getBlockRaiseElapsed(): number {
+    return performance.now() * 0.001 - this.blockStartTime;
   }
 
   public isShieldBlocking(): boolean {
@@ -1104,6 +1113,11 @@ export class DwarfCharacter {
 
   public triggerBlockImpact(): void {
     this.shieldImpactTimer = 0.26;
+  }
+
+  public triggerGuardBreak(): void {
+    this.shieldBlocking = false;
+    this.shieldImpactTimer = 0.35;
   }
 
   public setFishingMode(active: boolean): void {

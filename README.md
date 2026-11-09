@@ -5,8 +5,8 @@
 An endless, deterministic 3D procedural world adventure built with **TypeScript**, **Three.js**, **Simplex Noise**, and **Vite**. Explore sweeping hills, winding forest footpaths, meandering rivers, natural pond basins, wind-swept meadows, and airy forest groves as a traveling dwarf—complete with expressive traversal (jumping, valley wind-gliding, downhill shield-surfing), **Backpack Fishing & 3D River Fish**, **Backpack Bow & Arrow Deer Hunting**, diegetic firefly treasure tracking, rune-sealed mythic chests, ancient stone circles & fast-travel watchtower beacons, and a **Dwarven Relic Forge**.
 
 📖 **Complete Gameplay Guide:** For a deep dive into every mechanic, boss encounter (Vermithrax the Smoldering, Crag-Titan), castle masonry system, weapon catalog, and dwarven rank progression, see the [Complete Gameplay & Systems Guide](docs/complete-gameplay-guide.md).  
-⚡ **Gameplay Improvements & Performance Benchmarks:** For detailed proposals on 5 major endgame gameplay packages, our V8 garbage collection audit, and automated CI benchmark metrics, see the [Gameplay Improvements & Benchmarks Report](docs/gameplay-improvements-and-benchmarks.md).  
-🔍 **Gameplay Challenge & Performance Audit Report:** For our comprehensive analysis of gameplay challenge, radial frontier leveling, multi-tier troll AI, guard-break physics, and automated benchmark verification (Suites 1–8), see the [Gameplay Challenge & Performance Audit Report](docs/gameplay-challenge-and-performance-audit.md).
+⚡ **Major Gameplay Challenge & Threat Dynamics:** For the complete breakdown of Multi-Tier Goblin Raider Ambush Squads, Boss Boulder Deflections, Dragon Shield Melts, Ancestral Tombstone Recovery, and 36 automated verification benchmarks (Suites 1–11), see the [Gameplay Challenge & Threat Dynamics Report](docs/gameplay-challenge-and-major-improvements.md).  
+🔍 **Performance Audits & Benchmarks:** For detailed proposals on endgame gameplay packages, our V8 garbage collection audit, and automated CI benchmark metrics, see the [Gameplay Improvements & Benchmarks Report](docs/gameplay-improvements-and-benchmarks.md) and [Gameplay Challenge & Performance Audit Report](docs/gameplay-challenge-and-performance-audit.md).
 
 ---
 
@@ -56,7 +56,8 @@ npm run preview
 | **`Space`** (Press / Hold in air) | **Jump** / **Double-Jump** (*Skyforge Greaves*) / Hold while descending to **Wind-Glide** (glide into lit **Watchtower Beacons** or volcano vents to catch soaring **Thermal Updrafts** $+24\text{m/s}$) |
 | **`C`** or **`Ctrl`** (Press / Hold) | **Dodge-Dash** on flat ground, **Airborne Ground-Slam** in mid-air (shockwave shatters rocks, staggers Trolls & defeats Goblins), or **Downhill Surf-Ramming** on the *Ironbelly Surf-Shield* |
 | **`F`** (or **🎣 Fish** HUD Button) | Equip / stow the **3D Fishing Rod** from the dwarf's backpack (`Click` / `Space` to cast & reel in fish) |
-| **`E`** | **Lift** Natural Stones / mine **Mithril Veins**, chisel blocks at a Quarry, build Castle blocks, or enter Keep Drawbridge |
+| **`E`** | **Lift** Natural Stones / mine **Mithril Veins**, chisel blocks at a Quarry, build Castle blocks, enter Keep Drawbridge, or **Claim Ancestral Tombstone** (recovering dropped gold + activating *Dwarven Grit* $+20\%$ Speed & $+25\%$ DEF) |
+| **Right-Click** (Hold / Release) | Raise equipped **Round Shield** or **Mithril Aegis** to block; timing within $\le 0.42\text{s}$ ($\le 0.55\text{s}$ with *Iron Aegis*) triggers a **⚡ Perfect Shield Parry** (deflecting boss boulders & staggering enemies); holding block drains stamina on heavy attacks |
 | **`Q`** | Set up a new **Stonemason Quarry** on level clearing |
 | **`U`** | Upgrade Quarry to **Tier II Automaton Quarry** (300g — double cutting speed, 24 stockpile, automated block dispatch) |
 | **`K`** | Stake a new **Castle Construction Site** on level clearing |
@@ -98,10 +99,13 @@ procedural-world/
     │   ├── FishingAndFishManager.ts  # 3D swimming fish schools, flee behavior & interactive backpack Fishing Rod mode
     │   ├── HuntingAndDeerManager.ts  # 3D wild deer herds (close GLB + distant procedural LOD) & backpack Bow & Arrow hunting mode
     │   ├── LandmarkManager.ts  # Ancient Stone Circles, Campfire warmth buffs, Wooden Bridges & fast-travel Watchtower Beacons
-    │   ├── LivingWorldManager.ts     # Dynamic day/night cycle, dwarven lantern, starfragments, bird flocks, spirit rabbits & goblins
+    │   ├── LivingWorldManager.ts     # Multi-tier goblin raiders, cluster bombs, ground fire, day/night cycle, animals
+    │   ├── TrollCombatManager.ts     # Multi-tier Night Trolls, enrage frenzy, guard breaks, shield parries & castle sieges
+    │   ├── DynamicWorldEventManager.ts # Crag-Titan world boss, Vermithrax the Dragon, rolling boulder parries & meteorites
+    │   ├── TombstoneManager.ts       # High-stakes defeat recovery, 3D spirit crystal plinth, sky-beam & Dwarven Grit buff
     │   ├── ChallengeManager.ts # Timed Dwarven Ring-Sprint trials across hillsides
     │   ├── TreasureManager.ts  # Standard/Rare/Mythic chests, Standing Runestones, Buried Map Hoards, Guiding Fireflies & Streak Multiplier
-    │   └── ProgressStorage.ts  # LocalStorage persistence for seed, player pose, gold, collected chests, beacons & unlocked relics
+    │   └── ProgressStorage.ts  # LocalStorage persistence for seed, player pose, gold, collected chests, beacons, tombstone & relics
     ├── player/
     │   ├── DwarfCharacter.ts   # Animated 3D dwarf rig with Explorer Backpack, Fishing Rod, Bow & Quiver, Wind-Glider & Surf-Shield
     │   └── RelicStore.ts       # Dwarven Relic Forge catalog, upgrade state, HUD shop & synthesized Web Audio SFX

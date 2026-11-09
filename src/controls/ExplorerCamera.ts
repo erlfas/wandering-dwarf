@@ -88,7 +88,11 @@ export class ExplorerCamera {
 
   // Combat status effects & impact physics
   private chillTimer = 0;
+  private burnTimer = 0;
+  private burnAccum = 0;
+  private gritTimer = 0;
   private staggerTimer = 0;
+  public onBurnTick?: () => void;
 
   // Screen shake and dynamic FOV zoom
   private shakeTimer = 0;
@@ -219,12 +223,36 @@ export class ExplorerCamera {
     this.chillTimer = Math.max(this.chillTimer, duration);
   }
 
+  public applyBurnDebuff(duration = 3.5): void {
+    this.burnTimer = Math.max(this.burnTimer, duration);
+    this.burnAccum = 0;
+  }
+
+  public applyGritBuff(duration = 60.0): void {
+    this.gritTimer = Math.max(this.gritTimer, duration);
+  }
+
   public isChilled(): boolean {
     return this.chillTimer > 0;
   }
 
+  public isBurning(): boolean {
+    return this.burnTimer > 0;
+  }
+
+  public hasGritBuff(): boolean {
+    return this.gritTimer > 0;
+  }
+
   public isStaggered(): boolean {
     return this.staggerTimer > 0;
+  }
+
+  public resetStatusEffects(): void {
+    this.chillTimer = 0;
+    this.burnTimer = 0;
+    this.burnAccum = 0;
+    this.staggerTimer = 0;
   }
 
   public getMovementStatus(): string {
@@ -232,8 +260,14 @@ export class ExplorerCamera {
       return '';
     }
     if (this.staggerTimer > 0) return '💫 Staggered!';
+    if (this.burnTimer > 0) {
+      return `🔥 Burning (${Math.ceil(this.burnTimer)}s • -4 ❤️/s)`;
+    }
     if (this.chillTimer > 0) {
       return `❄️ Chilled (${Math.ceil(this.chillTimer)}s • -28% Spd)`;
+    }
+    if (this.gritTimer > 0) {
+      return `💪 Dwarven Grit (${Math.ceil(this.gritTimer)}s • +20% Spd & +25% DEF)`;
     }
     if (this.mountainTraversalManager?.isGrappleActive()) return '🪝 Grapple Reel!';
     if (this.mountainTraversalManager?.isZiplineRiding()) return '🚠 Zipline!';
@@ -545,9 +579,21 @@ export class ExplorerCamera {
     if (this.castleManager) {
       baseSpeed *= this.castleManager.getCarrySpeedMultiplier();
     }
+    if (this.gritTimer > 0) {
+      this.gritTimer = Math.max(0, this.gritTimer - dt);
+      baseSpeed *= 1.2;
+    }
     if (this.chillTimer > 0) {
       this.chillTimer = Math.max(0, this.chillTimer - dt);
       baseSpeed *= 0.72;
+    }
+    if (this.burnTimer > 0) {
+      this.burnTimer = Math.max(0, this.burnTimer - dt);
+      this.burnAccum += dt;
+      if (this.burnAccum >= 1.0) {
+        this.burnAccum -= 1.0;
+        this.onBurnTick?.();
+      }
     }
 
     if (this.mouseOverrideTimer > 0 && !this.isDragging) {

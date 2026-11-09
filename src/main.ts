@@ -21,6 +21,7 @@ import { TrollCombatManager, getFrontierTier } from './world/TrollCombatManager'
 import { MountainTraversalManager } from './world/MountainTraversalManager';
 import { DynamicWorldEventManager } from './world/DynamicWorldEventManager';
 import { DwarvenUndergroundManager } from './world/DwarvenUndergroundManager';
+import { TombstoneManager } from './world/TombstoneManager';
 import { VOLCANO_HEAT_HAZARD_RADIUS, VolcanoManager } from './world/VolcanoManager';
 import {
   AssignmentManager,
@@ -336,25 +337,104 @@ volcanoManager.isHeatImmuneFn = () => castleAndQuarryManager.hasWyrmCloak();
 volcanoManager.onSpawnScorchBurst = (x, y, z, count) => {
   dwarf.spawnBurst(x, y, z, count);
 };
-volcanoManager.onPlayerDiedInVolcano = (reason) => {
+
+const tombstoneManager = new TombstoneManager(dwarf, relicStore);
+scene.add(tombstoneManager.group);
+
+tombstoneManager.onTombstoneClaimed = (gold) => {
+  explorer.applyGritBuff(60.0);
+  treasureManager.grantBonusGold(
+    gold,
+    `✨ RECOVERED ANCESTRAL TOMBSTONE! +${gold} Gold & Dwarven Grit (+20% Speed & +25% DEF for 60s)!`,
+    true
+  );
+  persistCurrentProgress(false);
+};
+
+function findNearestSafeHaven(wx: number, wz: number): { x: number; y: number; z: number; name: string } {
+  const candidates: Array<{ x: number; y: number; z: number; name: string; distSq: number }> = [
+    { x: 0, y: noise.getHeight(0, 0), z: 0, name: '🏕️ Hearthlands Spawn Valley', distSq: wx * wx + wz * wz },
+  ];
+
+  if (castleAndQuarryManager) {
+    const castles = castleAndQuarryManager.getCompletedCastlePositions();
+    for (const c of castles) {
+      const dx = c.x - wx;
+      const dz = c.z - wz;
+      candidates.push({
+        x: c.x,
+        y: noise.getHeight(c.x, c.z) + 0.4,
+        z: c.z,
+        name: '🏰 Castle Keep Sanctuary',
+        distSq: dx * dx + dz * dz,
+      });
+    }
+  }
+
+  if (landmarkManager) {
+    const beacons = landmarkManager.getLitBeacons();
+    for (const b of beacons) {
+      const dx = b.x - wx;
+      const dz = b.z - wz;
+      candidates.push({
+        x: b.x,
+        y: b.y,
+        z: b.z,
+        name: `🔥 ${b.name}`,
+        distSq: dx * dx + dz * dz,
+      });
+    }
+  }
+
+  let best = candidates[0];
+  for (let i = 1; i < candidates.length; i++) {
+    if (candidates[i].distSq < best.distSq) {
+      best = candidates[i];
+    }
+  }
+  return best;
+}
+
+function handlePlayerDefeated(source: string): void {
   fishingManager.exitFishingMode();
   huntingManager.exitHuntingMode();
   volcanoManager.resetHazardState();
-  const saved = loadProgress() ?? loadProgressFromSlot(1);
-  if (saved) {
-    sanitizeSafePlayerPos(saved.playerPos);
-    applyLoadedGameState(saved);
-    castleAndQuarryManager.healAndRestoreFull();
-    persistCurrentProgress(true);
+  explorer.resetStatusEffects();
+
+  const px = explorer.playerPos.x;
+  const py = explorer.playerPos.y;
+  const pz = explorer.playerPos.z;
+
+  const currentGold = treasureManager.score;
+  const lostGold = Math.max(0, Math.floor(currentGold * 0.15));
+  if (lostGold > 0) {
+    treasureManager.grantBonusGold(-lostGold, '', false);
+    tombstoneManager.placeTombstone(px, py, pz, lostGold);
+  }
+
+  const safeHaven = findNearestSafeHaven(px, pz);
+  explorer.setPose(safeHaven.x, safeHaven.z, 0, 0.35, 0.46, 11.5);
+  castleAndQuarryManager.healAndRestoreFull();
+
+  if (lostGold > 0) {
     treasureManager.grantBonusGold(
       0,
-      reason === 'bottom'
-        ? '🛡️ Rescued from the Volcano Crater! Restored to safe ground with full ❤️ Health & ⚡ Strength!'
-        : '🛡️ Rescued from Mount Doomforge’s Heat! Restored to safe ground with full ❤️ Health & ⚡ Strength!'
+      `☠️ DEFEATED BY ${source.toUpperCase()}! Dropped ${lostGold} Gold at your Ancestral Tombstone. Return to ${safeHaven.name} or venture back to recover your hoard!`,
+      false
     );
   } else {
-    restartNewGame();
+    treasureManager.grantBonusGold(
+      0,
+      `☠️ DEFEATED BY ${source.toUpperCase()}! Restored to safety at ${safeHaven.name} with full ❤️ Health & ⚡ Strength!`,
+      true
+    );
   }
+
+  persistCurrentProgress(true);
+}
+
+volcanoManager.onPlayerDiedInVolcano = (reason) => {
+  handlePlayerDefeated(reason === 'bottom' ? 'Volcano Lava' : 'Volcanic Heat');
 };
 
 // Wire O(1) loaded-chunk surface height lookup into managers to eliminate per-frame Simplex calls
@@ -370,7 +450,17 @@ const trollCombatManager = new TrollCombatManager(
   () => castleAndQuarryManager.getCompletedCastlePositions(),
   () => castleAndQuarryManager.getCombatStats(),
   (cost) => castleAndQuarryManager.consumeCombatEnergy(cost),
-  (damage, sourceTitle) => castleAndQuarryManager.applyPlayerDamage(damage, sourceTitle),
+  (damage, sourceTitle) => {
+    const res = castleAndQuarryManager.applyPlayerDamage(
+      damage,
+      sourceTitle,
+      explorer.hasGritBuff() ? 0.75 : 1.0
+    );
+    if (res.defeated) {
+      handlePlayerDefeated(sourceTitle);
+    }
+    return res;
+  },
   () => {
     castleAndQuarryManager.eatFood(false);
   },
@@ -388,21 +478,7 @@ const trollCombatManager = new TrollCombatManager(
     persistCurrentProgress(true);
   },
   () => {
-    // Dwarf defeated by Troll -> Restore to Last Saved Location with full Health & Strength!
-    volcanoManager.resetHazardState();
-    const saved = loadProgress() ?? loadProgressFromSlot(1);
-    if (saved) {
-      sanitizeSafePlayerPos(saved.playerPos);
-      applyLoadedGameState(saved);
-      castleAndQuarryManager.healAndRestoreFull();
-      persistCurrentProgress(true);
-      treasureManager.grantBonusGold(
-        0,
-        '🛡️ Restored to your Last Saved Location with full Health & Strength!'
-      );
-    } else {
-      restartNewGame();
-    }
+    handlePlayerDefeated('Night Troll');
   },
   () => {
     fishingManager.interruptFishingFromTroll();
@@ -440,8 +516,24 @@ dynamicEventManager.onCameraShake = (intensity, duration) =>
   explorer.triggerCameraShake(intensity, duration);
 dynamicEventManager.onGrantBonusGold = (amt, msg) =>
   treasureManager.grantBonusGold(amt, msg);
-dynamicEventManager.onApplyPlayerDamage = (damage, source) =>
-  castleAndQuarryManager.applyPlayerDamage(damage, source);
+dynamicEventManager.onConsumeEnergy = (amt) =>
+  castleAndQuarryManager.consumeCombatEnergy(amt);
+dynamicEventManager.onKnockbackPlayer = (dist, lift, dur) => {
+  const heading = explorer.getHeading();
+  explorer.applyKnockback(-Math.sin(heading), -Math.cos(heading), dist, lift, dur);
+};
+dynamicEventManager.onApplyBurn = (dur) => explorer.applyBurnDebuff(dur);
+dynamicEventManager.onApplyPlayerDamage = (damage, source) => {
+  const res = castleAndQuarryManager.applyPlayerDamage(
+    damage,
+    source,
+    explorer.hasGritBuff() ? 0.75 : 1.0
+  );
+  if (res.defeated) {
+    handlePlayerDefeated(source);
+  }
+};
+dynamicEventManager.hasIronAegisFn = () => hutManager?.hasArtefact('iron_aegis') ?? false;
 
 treasureManager.onDragonAwakenedByNoise = () => {
   const dragon = dynamicEventManager.getDragon();
@@ -467,6 +559,7 @@ const exteriorSceneGroups: THREE.Object3D[] = [
   trollCombatManager.group,
   mountainTraversalManager.group,
   dynamicEventManager.group,
+  tombstoneManager.group,
 ];
 
 hutManager = new HutManager(
@@ -723,11 +816,36 @@ explorer.onGroundSlamImpact = (pos) => {
 
 livingWorldManager.cameraShakeFn = (intensity, duration) =>
   explorer.triggerCameraShake(intensity, duration);
-livingWorldManager.onApplyPlayerDamage = (damage, source) =>
-  castleAndQuarryManager.applyPlayerDamage(damage, source);
 livingWorldManager.onShieldBlockSound = () => relicStore.playShieldBashSound();
 livingWorldManager.onGrantFoodRation = (count) =>
   castleAndQuarryManager.addFoodRations(count, 'troll');
+livingWorldManager.onConsumeEnergy = (amt) =>
+  castleAndQuarryManager.consumeCombatEnergy(amt);
+livingWorldManager.onKnockbackPlayer = (dist, lift, dur) => {
+  const heading = explorer.getHeading();
+  explorer.applyKnockback(-Math.sin(heading), -Math.cos(heading), dist, lift, dur);
+};
+livingWorldManager.onApplyBurn = (dur) => explorer.applyBurnDebuff(dur);
+livingWorldManager.onApplyPlayerDamage = (damage, source) => {
+  const res = castleAndQuarryManager.applyPlayerDamage(
+    damage,
+    source,
+    explorer.hasGritBuff() ? 0.75 : 1.0
+  );
+  if (res.defeated) {
+    handlePlayerDefeated(source);
+  }
+};
+explorer.onBurnTick = () => {
+  const res = castleAndQuarryManager.applyPlayerDamage(
+    4,
+    'Burning Fire',
+    explorer.hasGritBuff() ? 0.75 : 1.0
+  );
+  if (res.defeated) {
+    handlePlayerDefeated('Burning Fire');
+  }
+};
 
 let windAndSlopeFeats = savedProgress?.windAndSlopeFeats ?? 0;
 explorer.onCatchThermalUpdraft = () => {
@@ -870,6 +988,7 @@ if (savedProgress) {
   relicStore.restoreUnlocked(savedProgress.unlockedRelics);
   landmarkManager.restoreLitBeacons(savedProgress.litBeacons);
   trollCombatManager.restoreProgress(savedProgress.trollsSlain);
+  tombstoneManager.loadFromSaved(savedProgress.tombstone);
   fishingManager.fishCaughtCount = savedProgress.fishCaughtTotal ?? 0;
   huntingManager.setDeerHuntedCount(savedProgress.deerHuntedTotal ?? 0);
   assignmentManager.loadState({
@@ -1017,6 +1136,7 @@ function populateSaveState(): SavedProgress {
   reusableSaveState.windAndSlopeFeats = windAndSlopeFeats;
   reusableSaveState.dragonSlain = dynamicEventManager.getDragonInfo().hp <= 0;
   reusableSaveState.hasDragonEgg = treasureManager.getHasDragonEgg();
+  reusableSaveState.tombstone = tombstoneManager.getSavedState();
   return reusableSaveState;
 }
 
@@ -1114,6 +1234,7 @@ function restartNewGame(): void {
   castleInteriorManager.exitCurrentCastle(true);
   trollCombatManager.reset();
   castleAndQuarryManager.reset();
+  tombstoneManager.clearTombstone();
   fishingManager.fishCaughtCount = 0;
   huntingManager.setDeerHuntedCount(0);
   windAndSlopeFeats = 0;
@@ -1163,6 +1284,7 @@ function applyLoadedGameState(loaded: SavedProgress): void {
   challengeManager.reset();
   trollCombatManager.despawnAllTrolls(false);
   trollCombatManager.restoreProgress(loaded.trollsSlain);
+  tombstoneManager.loadFromSaved(loaded.tombstone);
   fishingManager.fishCaughtCount = loaded.fishCaughtTotal ?? 0;
   huntingManager.setDeerHuntedCount(loaded.deerHuntedTotal ?? 0);
   windAndSlopeFeats = loaded.windAndSlopeFeats ?? 0;
@@ -1561,6 +1683,23 @@ window.addEventListener('keydown', (e) => {
     toggleControlsHelpPopover();
   } else if (e.code === 'KeyV' && !e.shiftKey) {
     assignmentManager.tryBlowWarhorn();
+  } else if (e.code === 'KeyE') {
+    const tomb = tombstoneManager.getActiveTombstone();
+    if (tomb) {
+      const dx = explorer.playerPos.x - tomb.x;
+      const dz = explorer.playerPos.z - tomb.z;
+      if (dx * dx + dz * dz <= 2.6 * 2.6) {
+        const gold = tombstoneManager.claim();
+        if (gold > 0) {
+          treasureManager.grantBonusGold(
+            gold,
+            `🪦 ANCESTRAL TOMBSTONE CLAIMED! Recovered ${gold}g & Gained Dwarven Grit (+20% Speed, +25% DEF for 60s)!`
+          );
+          explorer.applyGritBuff(60.0);
+          persistCurrentProgress(true);
+        }
+      }
+    }
   } else if (e.code === 'Escape') {
     if (isGameMenuOpen()) {
       setGameMenuOpen(false);
@@ -1603,6 +1742,7 @@ let lastQTimeMins = -1;
 let lastActiveChunks = -1;
 let lastMoveStatusText = '';
 let wasInsideInterior = false;
+let ambushAccum = 0;
 
 function animate(): void {
   requestAnimationFrame(animate);
@@ -1706,6 +1846,28 @@ function animate(): void {
     huntingManager.update(dt, elapsedTime, explorer.playerPos);
     mountainTraversalManager.update(simDt, elapsedTime, explorer.playerPos, camera, false);
     dynamicEventManager.update(simDt, elapsedTime, explorer.playerPos, false);
+
+    const tombStatus = tombstoneManager.update(dt, elapsedTime, explorer.playerPos);
+    if (tombStatus.canClaim && tombStatus.dist <= 1.5) {
+      const gold = tombstoneManager.claim();
+      if (gold > 0) {
+        treasureManager.grantBonusGold(
+          gold,
+          `🪦 ANCESTRAL TOMBSTONE CLAIMED! Recovered ${gold}g & Gained Dwarven Grit (+20% Speed, +25% DEF for 60s)!`
+        );
+        explorer.applyGritBuff(60.0);
+        persistCurrentProgress(true);
+      }
+    }
+
+    ambushAccum += simDt;
+    if (ambushAccum >= 60.0) {
+      ambushAccum = 0;
+      const tier = getFrontierTier(px, pz, config.chunkSize);
+      if (tier.ring >= 2 && Math.random() < 0.4) {
+        livingWorldManager.triggerFrontierAmbush(explorer.playerPos);
+      }
+    }
   } else {
     mountainTraversalManager.update(simDt, elapsedTime, explorer.playerPos, camera, true);
     dynamicEventManager.update(simDt, elapsedTime, explorer.playerPos, true);
@@ -1764,7 +1926,14 @@ function animate(): void {
     const nearest = treasureManager.getNearestChest(explorer.playerPos);
     const hutHint = hutManager.getNearestHutHint(explorer.playerPos);
     const activeCastleVisit = castleInteriorManager.getActiveCastleVisit();
-    const nextHint = activeCastleVisit
+    const activeTomb = tombstoneManager.getActiveTombstone();
+    let tombHint = '';
+    if (activeTomb) {
+      const tDist = Math.hypot(activeTomb.x - px, activeTomb.z - pz);
+      tombHint = tDist <= 2.6 ? `[E] Claim Tombstone (+${activeTomb.gold}g)` : `🪦 Tombstone (${activeTomb.gold}g) ${Math.round(tDist)}m`;
+    }
+
+    let nextHint = activeCastleVisit
       ? `🏰 ${activeCastleVisit.name} (Tier ${activeCastleVisit.tier})`
       : hutManager.isInsideHut()
         ? (hutHint ?? '🏠 Inside Dwarven House')
@@ -1773,6 +1942,9 @@ function animate(): void {
             ? `${nearest.label} • ${hutHint}`
             : nearest.label
           : (hutHint ?? 'Explore further!');
+    if (tombHint) {
+      nextHint = `${tombHint} • ${nextHint}`;
+    }
     if (nextHint !== lastChestHintText) {
       lastChestHintText = nextHint;
       nearestChestHint.textContent = nextHint;

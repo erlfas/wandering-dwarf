@@ -3354,8 +3354,9 @@ export class CastleAndQuarryManager {
     return { hadEnough, remainingEnergy: this.energy };
   }
 
-  public applyPlayerDamage(damage: number, _sourceTitle: string): { defeated: boolean } {
-    this.health = Math.max(0, this.health - damage);
+  public applyPlayerDamage(damage: number, _sourceTitle: string, damageReductionMult = 1.0): { defeated: boolean } {
+    const effectiveDamage = Math.max(1, Math.round(damage * damageReductionMult));
+    this.health = Math.max(0, this.health - effectiveDamage);
     this.syncEnergyAndFoodHUD();
     if (this.health <= 0) {
       return { defeated: true };
